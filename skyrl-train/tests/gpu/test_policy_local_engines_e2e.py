@@ -40,8 +40,8 @@ def get_test_actor_config() -> DictConfig:
 @pytest.mark.parametrize(
     ("colocate_all", "weight_sync_backend", "strategy", "backend", "tp_size"),
     [
-        # pytest.param(False, "nccl", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
-        pytest.param(True, "nccl", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
+        pytest.param(False, "nccl", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
+        # pytest.param(True, "nccl", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
         # pytest.param(False, "gloo", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
         # pytest.param(True, "gloo", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
         # pytest.param(False, "nccl", "deepspeed", "vllm", 2, marks=pytest.mark.vllm),
@@ -57,8 +57,8 @@ def get_test_actor_config() -> DictConfig:
         # pytest.param(True, "gloo", "fsdp", "sglang", 1, marks=pytest.mark.sglang),
     ],
     ids=[
-        # "no_colocate_nccl_fsdp_vllm",
-        "colocate_nccl_fsdp_vllm",
+        "no_colocate_nccl_fsdp_vllm",
+        # "colocate_nccl_fsdp_vllm",
         # "no_colocate_gloo_fsdp_vllm",
         # "colocate_gloo_fsdp_vllm",
         # "no_colocate_nccl_deepspeed_vllm",
