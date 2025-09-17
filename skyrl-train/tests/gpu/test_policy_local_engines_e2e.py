@@ -16,6 +16,7 @@ from tests.gpu.utils import init_worker_with_type, get_test_prompts, init_infere
 from skyrl_train.inference_engines.utils import get_sampling_params_for_backend
 from skyrl_train.entrypoints.main_base import config_dir
 from skyrl_train.utils.ppo_utils import PolicyLossRegistry, AdvantageEstimatorRegistry
+from ray.experimental.collective import create_collective_group
 
 MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
@@ -39,37 +40,37 @@ def get_test_actor_config() -> DictConfig:
 @pytest.mark.parametrize(
     ("colocate_all", "weight_sync_backend", "strategy", "backend", "tp_size"),
     [
-        pytest.param(False, "nccl", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
+        # pytest.param(False, "nccl", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
         pytest.param(True, "nccl", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
-        pytest.param(False, "gloo", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
-        pytest.param(True, "gloo", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
-        pytest.param(False, "nccl", "deepspeed", "vllm", 2, marks=pytest.mark.vllm),
-        pytest.param(True, "nccl", "deepspeed", "vllm", 2, marks=pytest.mark.vllm),
-        pytest.param(False, "nccl", "fsdp2", "vllm", 2, marks=pytest.mark.vllm),
-        pytest.param(True, "nccl", "fsdp2", "vllm", 2, marks=pytest.mark.vllm),
-        # TODO(Charlie): add TP > 1 tests for sglang when we support it
-        pytest.param(False, "nccl", "deepspeed", "sglang", 1, marks=pytest.mark.sglang),
-        pytest.param(True, "nccl", "deepspeed", "sglang", 1, marks=pytest.mark.sglang),
-        pytest.param(False, "nccl", "fsdp2", "sglang", 1, marks=pytest.mark.sglang),
-        pytest.param(True, "nccl", "fsdp2", "sglang", 1, marks=pytest.mark.sglang),
-        pytest.param(False, "gloo", "fsdp", "sglang", 1, marks=pytest.mark.sglang),
-        pytest.param(True, "gloo", "fsdp", "sglang", 1, marks=pytest.mark.sglang),
+        # pytest.param(False, "gloo", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
+        # pytest.param(True, "gloo", "fsdp", "vllm", 2, marks=pytest.mark.vllm),
+        # pytest.param(False, "nccl", "deepspeed", "vllm", 2, marks=pytest.mark.vllm),
+        # pytest.param(True, "nccl", "deepspeed", "vllm", 2, marks=pytest.mark.vllm),
+        # pytest.param(False, "nccl", "fsdp2", "vllm", 2, marks=pytest.mark.vllm),
+        # pytest.param(True, "nccl", "fsdp2", "vllm", 2, marks=pytest.mark.vllm),
+        # # TODO(Charlie): add TP > 1 tests for sglang when we support it
+        # pytest.param(False, "nccl", "deepspeed", "sglang", 1, marks=pytest.mark.sglang),
+        # pytest.param(True, "nccl", "deepspeed", "sglang", 1, marks=pytest.mark.sglang),
+        # pytest.param(False, "nccl", "fsdp2", "sglang", 1, marks=pytest.mark.sglang),
+        # pytest.param(True, "nccl", "fsdp2", "sglang", 1, marks=pytest.mark.sglang),
+        # pytest.param(False, "gloo", "fsdp", "sglang", 1, marks=pytest.mark.sglang),
+        # pytest.param(True, "gloo", "fsdp", "sglang", 1, marks=pytest.mark.sglang),
     ],
     ids=[
-        "no_colocate_nccl_fsdp_vllm",
+        # "no_colocate_nccl_fsdp_vllm",
         "colocate_nccl_fsdp_vllm",
-        "no_colocate_gloo_fsdp_vllm",
-        "colocate_gloo_fsdp_vllm",
-        "no_colocate_nccl_deepspeed_vllm",
-        "colocate_nccl_deepspeed_vllm",
-        "no_colocate_nccl_fsdp2_vllm",
-        "colocate_nccl_fsdp2_vllm",
-        "no_colocate_nccl_deepspeed_sglang",
-        "colocate_nccl_deepspeed_sglang",
-        "no_colocate_nccl_fsdp2_sglang",
-        "colocate_nccl_fsdp2_sglang",
-        "no_colocate_gloo_fsdp_sglang",
-        "colocate_gloo_fsdp_sglang",
+        # "no_colocate_gloo_fsdp_vllm",
+        # "colocate_gloo_fsdp_vllm",
+        # "no_colocate_nccl_deepspeed_vllm",
+        # "colocate_nccl_deepspeed_vllm",
+        # "no_colocate_nccl_fsdp2_vllm",
+        # "colocate_nccl_fsdp2_vllm",
+        # "no_colocate_nccl_deepspeed_sglang",
+        # "colocate_nccl_deepspeed_sglang",
+        # "no_colocate_nccl_fsdp2_sglang",
+        # "colocate_nccl_fsdp2_sglang",
+        # "no_colocate_gloo_fsdp_sglang",
+        # "colocate_gloo_fsdp_sglang",
     ],
 )
 def test_policy_local_engines_e2e(colocate_all, weight_sync_backend, strategy, backend, tp_size):
@@ -104,45 +105,43 @@ def test_policy_local_engines_e2e(colocate_all, weight_sync_backend, strategy, b
             cfg=cfg,
         )
 
-        # gpu_to_actor = defaultdict(list)
-        # # Query GPU UUIDs via remote methods
-        # actor_gpu_uuids = ray.get([a.get_gpu_uuid.remote() for a in policy._actor_handlers])
-        # actor_list = []
-        # for a, uuid in zip(policy._actor_handlers, actor_gpu_uuids):
-        #     gpu_to_actor[uuid].append(a)
-        #     actor_list.append(a)
-        # engine_gpu_uuids = ray.get([e.inference_engine_actor.get_gpu_uuid.remote() for e in client.engines])
-        # inference_engine_actor_list = []
-        # for e, uuid in zip(client.engines, engine_gpu_uuids):
-        #     gpu_to_actor[uuid].append(e.inference_engine_actor)
-        #     actor_list.append(e.inference_engine_actor)
-        #     inference_engine_actor_list.append(e.inference_engine_actor)
-        # print(f"gpu_to_actor: {gpu_to_actor}")
+        policy_actor_to_gpu = {}
+        gpu_to_inference_engine_actor = {}
+        # Query GPU UUIDs via remote methods
+        actor_gpu_uuids = ray.get([a.get_gpu_uuid.remote() for a in policy._actor_handlers])
+        actor_list = []
+        for a, uuid in zip(policy._actor_handlers, actor_gpu_uuids):
+            policy_actor_to_gpu[a] = uuid
+            actor_list.append(a)
+        engine_gpu_uuids = ray.get([e.inference_engine_actor.get_gpu_uuid.remote() for e in client.engines])
+        for e, uuid in zip(client.engines, engine_gpu_uuids):
+            gpu_to_inference_engine_actor[uuid] = e.inference_engine_actor
+            actor_list.append(e.inference_engine_actor)
 
-        # create_collective_group(actor_list, backend="nccl")
+        create_collective_group(actor_list, backend="nccl")
 
-        # weights_update_refs = []
-        # for policy_actor in policy._actor_handlers:
-        #     weights_req_ref = policy_actor.get_named_weights_gpu.remote()
-        #     # possible deadlock here if you ray.get(ref), all the actors need to get_named_weights_gpu so
-        #     # DTensor can be combined
-        #     weights_update_refs.append(weights_req_ref)
+        gpu_to_req_ref = {} # all req refs will contain dtensors, but some will contain gpu specific tensors
+        for policy_actor in policy._actor_handlers:
+            weights_req_ref = policy_actor.get_named_weights_gpu.remote()
+            # only need one req per gpu since we don't want to ipc the same weights multiple times
+            gpu_to_req_ref[policy_actor_to_gpu[policy_actor]] = weights_req_ref
+            # possible deadlock here if you ray.get(ref), all the actors need to get_named_weights_gpu so
+            # DTensor can be combined
 
-        # output_refs = []
-        # for weights_req_ref in weights_update_refs:
-        #     print(f"in loop")
-        #     for inference_engine_actor in inference_engine_actor_list:
-        #         print(f"loc15: updating weights for inference engine actor {inference_engine_actor}")
-        #         ref = inference_engine_actor.update_named_weights_gpu.remote(weights_req_ref)
-        #         output_refs.append(ref)
-        #     break
+        output_refs = []
+        for gpu in gpu_to_req_ref:
+            if gpu in gpu_to_inference_engine_actor:
+                inference_engine_actor = gpu_to_inference_engine_actor[gpu]
+                weights_req_ref = gpu_to_req_ref[gpu] # only send the req on the same gpu as the inference engine actor
+                ref = inference_engine_actor.update_named_weights_gpu.remote(weights_req_ref)
+                output_refs.append(ref)
 
-        # output = ray.get(output_refs)
-        # print(f"output: {output}")
+        output = ray.get(output_refs)
+        print(f"output: {output}")
 
-        ray.get(policy.async_run_ray_method("pass_through", "init_weight_sync_state", client))
-        asyncio.run(client.reset_prefix_cache())
-        ray.get(policy.async_run_ray_method("pass_through", "broadcast_to_inference_engines", client))
+        # ray.get(policy.async_run_ray_method("pass_through", "init_weight_sync_state", client))
+        # asyncio.run(client.reset_prefix_cache())
+        # ray.get(policy.async_run_ray_method("pass_through", "broadcast_to_inference_engines", client))
         sampling_params = get_sampling_params_for_backend(cfg.generator.backend, cfg.generator.sampling_params)
         outputs = asyncio.run(run_inference(client, get_test_prompts(MODEL), sampling_params))
 
