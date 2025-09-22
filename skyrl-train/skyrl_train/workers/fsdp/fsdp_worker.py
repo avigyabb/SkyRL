@@ -214,38 +214,6 @@ class FSDPPolicyRayActorBase(PolicyWorkerBase):
         torch.cuda.empty_cache()
         torch.distributed.barrier()
 
-    async def debug_print_update_group(self):
-        """Print debug info for the weight-update process group membership and devices."""
-        import torch
-        import torch.distributed as dist
-
-        if not hasattr(self, "_model_update_group") or self._model_update_group is None:
-            print("[debug_update_group] No _model_update_group on policy worker")
-            return
-
-        try:
-            ws = dist.get_world_size(group=self._model_update_group)
-            rk = dist.get_rank(group=self._model_update_group)
-        except Exception as e:
-            print(f"[debug_update_group] Failed to query group: {e}")
-            return
-
-        device = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
-        dev_uuid = None
-        if torch.cuda.is_available():
-            dev_uuid = str(torch.cuda.get_device_properties(device).uuid)
-        print(f"[debug_update_group] policy local rank={rk} world_size={ws} device={device} uuid={dev_uuid}")
-
-        if torch.cuda.is_available():
-            my = torch.tensor([rk], device="cuda")
-            gathered = [torch.empty_like(my) for _ in range(ws)]
-            try:
-                dist.all_gather(gathered, my, group=self._model_update_group)
-                ranks = [int(t.item()) for t in gathered]
-                print(f"[debug_update_group] ranks seen: {ranks}")
-            except Exception as e:
-                print(f"[debug_update_group] all_gather failed: {e}")
-
     @ray.method(tensor_transport="nccl")
     def get_named_weights_gpu(self) -> Dict[str, List]:
         print(f"loc14: get_named_weights_gpu in fsdp_worker")
