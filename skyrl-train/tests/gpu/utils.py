@@ -421,13 +421,14 @@ def init_remote_inference_servers(
     tokenizer: PreTrainedTokenizerBase,
     config: DictConfig,
     model: str,
+    gpu_ids: list[int] | None = None,
 ) -> Tuple[InferenceEngineClient, subprocess.Popen]:
     available_gpus = get_available_gpus()
+    selected_gpus = gpu_ids if gpu_ids is not None else available_gpus[:tp_size]
     assert (
-        len(available_gpus) >= tp_size
-    ), f"Not enough GPUs available. Need {tp_size}, but only {len(available_gpus)} available: {available_gpus}"
+        len(selected_gpus) >= tp_size
+    ), f"Not enough GPUs selected. Need {tp_size}, but got {len(selected_gpus)} selected: {selected_gpus} (visible={available_gpus})"
 
-    selected_gpus = available_gpus[:tp_size]
     gpu_ids_str = ",".join(map(str, selected_gpus))
     print(f"Using GPUs {gpu_ids_str} for vLLM server (tensor_parallel_size={tp_size})")
 
@@ -502,6 +503,12 @@ def init_remote_inference_servers(
     # Set CUDA_VISIBLE_DEVICES environment variable for the subprocess
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = gpu_ids_str
+    # Align NCCL transport with policy process for stable communicator topology
+    env.setdefault("NCCL_DEBUG", "INFO")
+    env["NCCL_IB_DISABLE"] = "1"
+    env["NCCL_P2P_DISABLE"] = "1"
+    env["NCCL_SHM_DISABLE"] = "1"
+    env.setdefault("NCCL_SOCKET_IFNAME", "lo")
 
     # Start the vLLM server process
     server_process = subprocess.Popen(remote_server_command, env=env)

@@ -3510,7 +3510,7 @@ requires-dist = [
     { name = "virtualenv", marker = "extra == 'serve'", specifier = ">=20.0.24,!=20.21.1" },
     { name = "virtualenv", marker = "extra == 'serve-async-inference'", specifier = ">=20.0.24,!=20.21.1" },
     { name = "virtualenv", marker = "extra == 'serve-grpc'", specifier = ">=20.0.24,!=20.21.1" },
-    { name = "vllm", marker = "extra == 'llm'", specifier = ">=0.10.0" },
+    { name = "vllm", marker = "extra == 'llm'", specifier = ">=0.10.1.1" },
     { name = "watchfiles", marker = "extra == 'air'" },
     { name = "watchfiles", marker = "extra == 'all'" },
     { name = "watchfiles", marker = "extra == 'llm'" },
