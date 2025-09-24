@@ -241,6 +241,15 @@ class Worker(DistributedTorchRayActor):
         """
         assert inference_engine_client is not None
 
+        # Ensure consistent NCCL transport settings between policy and remote engines
+        # so both sides build identical communicator topology.
+        os.environ["NCCL_DEBUG"] = os.environ.get("NCCL_DEBUG", "INFO")
+        os.environ["NCCL_IB_DISABLE"] = "1"
+        os.environ["NCCL_P2P_DISABLE"] = "1"
+        os.environ["NCCL_SHM_DISABLE"] = "1"
+        # Single-host comms: bind to loopback for TCP store/socket
+        os.environ["NCCL_SOCKET_IFNAME"] = os.environ.get("NCCL_SOCKET_IFNAME", "lo")
+
         if torch.distributed.get_rank() == 0:
             master_addr = ray._private.services.get_node_ip_address()
             with socket.socket() as sock:
@@ -252,6 +261,9 @@ class Worker(DistributedTorchRayActor):
                 self.cfg.generator.inference_engine_tensor_parallel_size,
             )
             world_size = num_inference_engines * tensor_parallel_size + 1
+            print(f"loc17: world_size: {world_size}")
+            print(f"loc17: num_inference_engines: {num_inference_engines}")
+            print(f"loc17: tensor_parallel_size: {tensor_parallel_size}")
 
             backend = self.cfg.generator.weight_sync_backend
 
