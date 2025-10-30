@@ -2,13 +2,14 @@ import os
 import copy
 import uuid
 import pandas as pd
-import torch
 
 from skyrl_agent.agents.base import BaseTrajectory
 
-# Biomni CodeAct runtime + group (ported in)
-from verl import DataProto
-from verl.workers.agentic.biomni.biomni_codeact import BiomniCodeActAgentGroup
+# Biomni CodeAct runtime + agent (ported in)
+from verl.workers.agentic.biomni.biomni_codeact import (
+    BiomniRuntimeClient,
+    BiomniCodeActAgent,
+)
 
 
 class BiomniCodeActTrajectory(BaseTrajectory):
@@ -48,33 +49,33 @@ class BiomniCodeActTrajectory(BaseTrajectory):
 
         engine_adapter = _BackendAsEngine(self.infer_engine)
 
-        # Prepare a single-instance DataProto batch
-        batch_dp = DataProto.from_dict(
-            tensors={"input_ids": torch.zeros(1, 1, dtype=torch.long)},
-            non_tensors={
-                "raw_prompt": [prompt_str],
-                "instance_id": [instance_id],
-                "task_name": [self.task.__class__.__name__],
-            },
-        )
+        runtime_url = os.getenv("BIOMNI_RUNTIME_URL") or "http://localhost:8000"
+        # Ensure stop tokens are set similarly to Biomni group
+        sampling_params = copy.deepcopy(self.cfg.sampling_params)
+        sampling_params.update({
+            "stop": ["</execute>", "</solution>"],
+            "no_stop_trim": True,
+        })
 
-        runtime_url = os.getenv("BIOMNI_RUNTIME_URL") or self.cfg.tools.get("biomni_runtime_url", "http://localhost:8000")
+        # Run single Biomni agent within dispatcher-managed trajectory
+        async with BiomniRuntimeClient(runtime_url) as rt:
+            self.agent = BiomniCodeActAgent(
+                prompt=prompt_str,
+                instance_id=instance_id,
+                task_name=self.task.__class__.__name__,
+                runtime=rt,
+                infer_engine=engine_adapter,
+                tokenizer=self.tokenizer,
+                sampling_params=sampling_params,
+                max_prompt_len=self.cfg.max_prompt_length,
+                max_iterations=self.cfg.max_iterations,
+                qwen3_enable_thinking=self.cfg.qwen3_enable_thinking,
+            )
+            result = await self.agent.run()
 
-        grp = BiomniCodeActAgentGroup(
-            batch=batch_dp,
-            num_trajectories=1,
-            infer_engine=engine_adapter,
-            tokenizer=self.tokenizer,
-            sampling_params=copy.deepcopy(self.cfg.sampling_params),
-            runtime_url=runtime_url,
-        )
-
-        dp = grp.run()
-
-        # Extract first (and only) trajectory output
-        msgs_out = dp.non_tensor_batch["messages"][0]
-        solution = dp.non_tensor_batch.get("solution", [None])[0]
-        iterations = dp.non_tensor_batch.get("iterations", [None])[0]
+        msgs_out = result.get("messages", [])
+        solution = result.get("solution")
+        iterations = result.get("iterations")
 
         finish_reason = "FINISH_TOOL" if solution else ("max_iterations_reached" if iterations and iterations >= self.cfg.max_iterations else None)
 
