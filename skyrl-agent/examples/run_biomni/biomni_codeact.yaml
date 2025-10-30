@@ -1,8 +1,8 @@
 agent_cls: skyrl_agent.agents.biomni_codeact.BiomniCodeActAgent
 
-# task: skyrl_agent.tasks.general_react.utils.GeneralReactTask
+task: skyrl_agent.tasks.general_react.utils.DummyReactTask
 
-tools: ["finish", "code_interpreter"]
+tools: []
 
 
 data:
