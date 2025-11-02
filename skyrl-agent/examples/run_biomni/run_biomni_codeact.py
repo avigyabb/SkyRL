@@ -22,7 +22,11 @@ def build_demo_dataset():
                     ),
                 }
             ],
+            # used by the evaluator to pick the codegen reward path
             "data_source": "codegen.demo",
+            # minimal reward payload expected by GeneralReactTask.evaluate_result
+            "reward_model": {"ground_truth": "2"},
+            "extra_info": {},
         }
     ]
 
