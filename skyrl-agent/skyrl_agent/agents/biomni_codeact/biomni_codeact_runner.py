@@ -6,10 +6,12 @@ import pandas as pd
 from skyrl_agent.agents.base import BaseTrajectory
 
 # Biomni CodeAct runtime + agent (ported in)
-from verl.workers.agentic.biomni.biomni_codeact import (
-    BiomniRuntimeClient,
-    BiomniCodeActAgent,
-)
+# from verl.workers.agentic.biomni.biomni_codeact import (
+#     BiomniRuntimeClient,
+#     BiomniCodeActAgent,
+# )
+
+from skyrl_agent.agents.biomni_codeact.biomni_codeact_agent import BiomniCodeActAgent, BiomniRuntimeClient
 
 
 class BiomniCodeActTrajectory(BaseTrajectory):
