@@ -63,11 +63,12 @@ dependencies=[
   "wandb",
   "vllm>=0.8.5",
   "together",
+  "langchain-core",
 ]
 
 [project.optional-dependencies]
 skyrl-train = ["skyrl-train[vllm]"]
-verl = ["verl[vllm,gpu]","vllm==0.8.5"]
+# verl = ["verl[vllm,gpu]","vllm==0.8.5"]
 
 
 [tool.uv]

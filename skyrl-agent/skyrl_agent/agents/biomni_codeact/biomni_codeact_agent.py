@@ -6,12 +6,13 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Tuple
 
 import torch
-from tensordict import TensorDict
-from verl import DataProto
-from verl.utils.model import compute_position_id_with_mask
-import verl.utils.torch_functional as verl_F
-from verl.workers.agentic.biomni.prompt_manager import PromptManager
-from torch.nn.utils.rnn import pad_sequence
+# from tensordict import TensorDict
+# from verl import DataProto
+# from verl.utils.model import compute_position_id_with_mask
+# import verl.utils.torch_functional as verl_F
+# from verl.workers.agentic.biomni.prompt_manager import PromptManager
+from skyrl_agent.agents.biomni_codeact.prompt_manager import PromptManager
+# from torch.nn.utils.rnn import pad_sequence
 from transformers import PreTrainedTokenizerBase
 
 logger = logging.getLogger(__name__)
@@ -366,7 +367,8 @@ class BiomniCodeActAgent:
         self.max_prompt_len = max_prompt_len
         self.max_iterations = max_iterations
         self.qwen3_enable_thinking = qwen3_enable_thinking
-        self.prompt_manager = PromptManager(tool_path="verl/workers/agentic/biomni/tool")
+        # self.prompt_manager = PromptManager(tool_path="verl/workers/agentic/biomni/tool")
+        self.prompt_manager = PromptManager(tool_path="/home/ray/default/SkyRL/skyrl-agent/skyrl_agent/agents/biomni_codeact/tool")
 
         # -- conversation memory ------------------------------------------------
         self.messages = self.prompt_manager.get_initial_messages(prompt, task_name)
@@ -531,262 +533,262 @@ class BiomniCodeActAgent:
 #     return torch.nn.functional.pad(t, pad, value=val)
 
 
-class BiomniCodeActAgentGroup:
-    """
-    Generate num_trajectories rollouts for each DataProto item in batch.
+# class BiomniCodeActAgentGroup:
+#     """
+#     Generate num_trajectories rollouts for each DataProto item in batch.
 
-    Each item in batch must carry `non_tensor_batch['raw_prompt']`
-    (string with the initial task prompt).  Nothing else is required.
-    """
-    def __init__(
-        self,
-        batch: DataProto,
-        num_trajectories: int,
-        infer_engine,
-        tokenizer: PreTrainedTokenizerBase,
-        sampling_params: Dict[str, Any],
-        *,
-        runtime_url: str = "http://localhost:8000",
-        device: str | torch.device = "cpu",
-        max_prompt_length: int = 31744,
-        max_response_length: int = 3072,
-        max_starting_message_length: int = 12000,
-        max_iterations: int = 32,
-        max_parallel_agents: int = 256,
-        qwen3_enable_thinking: bool = True,
-        remove_think_tokens: bool = False,
-    ):
-        self.orig_batch = batch
-        self.nt = num_trajectories
-        self.engine = infer_engine
-        self.tok = tokenizer
-        self.sampling_params = sampling_params
+#     Each item in batch must carry `non_tensor_batch['raw_prompt']`
+#     (string with the initial task prompt).  Nothing else is required.
+#     """
+#     def __init__(
+#         self,
+#         batch: DataProto,
+#         num_trajectories: int,
+#         infer_engine,
+#         tokenizer: PreTrainedTokenizerBase,
+#         sampling_params: Dict[str, Any],
+#         *,
+#         runtime_url: str = "http://localhost:8000",
+#         device: str | torch.device = "cpu",
+#         max_prompt_length: int = 31744,
+#         max_response_length: int = 3072,
+#         max_starting_message_length: int = 12000,
+#         max_iterations: int = 32,
+#         max_parallel_agents: int = 256,
+#         qwen3_enable_thinking: bool = True,
+#         remove_think_tokens: bool = False,
+#     ):
+#         self.orig_batch = batch
+#         self.nt = num_trajectories
+#         self.engine = infer_engine
+#         self.tok = tokenizer
+#         self.sampling_params = sampling_params
         
-        self.sampling_params.update({
-            "stop": ["</execute>", "</solution>"],
-            "no_stop_trim": True,
-        })
+#         self.sampling_params.update({
+#             "stop": ["</execute>", "</solution>"],
+#             "no_stop_trim": True,
+#         })
 
-        self.runtime_url = runtime_url
-        self.device = device
-        self.max_prompt_len = max_prompt_length
-        self.max_resp_len = max_response_length
-        self.total_len = self.max_prompt_len + self.max_resp_len
-        self.max_iters = max_iterations
-        self.max_parallel = max_parallel_agents
-        self.qwen_think = qwen3_enable_thinking
-        self.remove_think_tokens = remove_think_tokens
-        self.max_starting_message_length = max_starting_message_length
-    # ------------------------------------------------------------------
-    # public API
-    # ------------------------------------------------------------------
-    def run(self) -> DataProto:
-        """
-        Run the async pipeline on the current thread. If there is already a
-        running event loop, we create a fresh one; otherwise we reuse the
-        default loop.
-        """
-        try:
-            loop = asyncio.get_event_loop()
-            # If that loop is already running, we cannot call run_until_complete on it.
-            if loop.is_running():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-        except RuntimeError:
-            # No event loop exists in this thread, so make a brand‐new one.
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+#         self.runtime_url = runtime_url
+#         self.device = device
+#         self.max_prompt_len = max_prompt_length
+#         self.max_resp_len = max_response_length
+#         self.total_len = self.max_prompt_len + self.max_resp_len
+#         self.max_iters = max_iterations
+#         self.max_parallel = max_parallel_agents
+#         self.qwen_think = qwen3_enable_thinking
+#         self.remove_think_tokens = remove_think_tokens
+#         self.max_starting_message_length = max_starting_message_length
+#     # ------------------------------------------------------------------
+#     # public API
+#     # ------------------------------------------------------------------
+#     def run(self) -> DataProto:
+#         """
+#         Run the async pipeline on the current thread. If there is already a
+#         running event loop, we create a fresh one; otherwise we reuse the
+#         default loop.
+#         """
+#         try:
+#             loop = asyncio.get_event_loop()
+#             # If that loop is already running, we cannot call run_until_complete on it.
+#             if loop.is_running():
+#                 loop = asyncio.new_event_loop()
+#                 asyncio.set_event_loop(loop)
+#         except RuntimeError:
+#             # No event loop exists in this thread, so make a brand‐new one.
+#             loop = asyncio.new_event_loop()
+#             asyncio.set_event_loop(loop)
 
-        try:
-            return loop.run_until_complete(self._async_run_group())
-        finally:
-            # Any cleanup (if you have open handles, etc.)
-            self.close()
+#         try:
+#             return loop.run_until_complete(self._async_run_group())
+#         finally:
+#             # Any cleanup (if you have open handles, etc.)
+#             self.close()
     
-    def close(self):
-        pass
+#     def close(self):
+#         pass
 
-    # ------------------------------------------------------------------
-    # asyncio helpers
-    # ------------------------------------------------------------------
-    async def _async_run_group(self) -> DataProto:
-        """
-        Launch at most `self.max_parallel` roll-outs concurrently and
-        **return results in canonical (instance, trajectory) order**.
+#     # ------------------------------------------------------------------
+#     # asyncio helpers
+#     # ------------------------------------------------------------------
+#     async def _async_run_group(self) -> DataProto:
+#         """
+#         Launch at most `self.max_parallel` roll-outs concurrently and
+#         **return results in canonical (instance, trajectory) order**.
 
-        We attach (batch_idx, traj_idx) to every coroutine so that after
-        `asyncio.gather` we can sort deterministically, no matter which
-        tasks finished first.
-        """
-        sem = asyncio.Semaphore(self.max_parallel)
-        tasks: list[asyncio.Task] = []
+#         We attach (batch_idx, traj_idx) to every coroutine so that after
+#         `asyncio.gather` we can sort deterministically, no matter which
+#         tasks finished first.
+#         """
+#         sem = asyncio.Semaphore(self.max_parallel)
+#         tasks: list[asyncio.Task] = []
 
-        async def _run_single(batch_idx: int, traj_idx: int, instance_id: int, prompt: str, task_name: str):
-            async with sem, BiomniRuntimeClient(self.runtime_url) as rt:
-                agent = BiomniCodeActAgent(
-                    prompt=prompt,
-                    instance_id=instance_id,
-                    task_name=task_name,
-                    runtime=rt,
-                    infer_engine=self.engine,
-                    tokenizer=self.tok,
-                    sampling_params=copy.deepcopy(self.sampling_params),
-                    max_prompt_len=self.max_prompt_len,
-                    max_iterations=self.max_iters,
-                    qwen3_enable_thinking=self.qwen_think,
-                )
-                result = await agent.run()
-                # **Return the key together with the payload**
-                return (batch_idx, traj_idx, result)
+#         async def _run_single(batch_idx: int, traj_idx: int, instance_id: int, prompt: str, task_name: str):
+#             async with sem, BiomniRuntimeClient(self.runtime_url) as rt:
+#                 agent = BiomniCodeActAgent(
+#                     prompt=prompt,
+#                     instance_id=instance_id,
+#                     task_name=task_name,
+#                     runtime=rt,
+#                     infer_engine=self.engine,
+#                     tokenizer=self.tok,
+#                     sampling_params=copy.deepcopy(self.sampling_params),
+#                     max_prompt_len=self.max_prompt_len,
+#                     max_iterations=self.max_iters,
+#                     qwen3_enable_thinking=self.qwen_think,
+#                 )
+#                 result = await agent.run()
+#                 # **Return the key together with the payload**
+#                 return (batch_idx, traj_idx, result)
 
-        # schedule (deterministic order)
-        for batch_idx, data_item in enumerate(self.orig_batch):
-            prompt = data_item.non_tensor_batch["raw_prompt"]
-            instance_id = data_item.non_tensor_batch["instance_id"]
-            task_name = data_item.non_tensor_batch["task_name"]
-            for traj_idx in range(self.nt):
-                tasks.append(asyncio.create_task(_run_single(batch_idx, traj_idx, instance_id, prompt, task_name)))
+#         # schedule (deterministic order)
+#         for batch_idx, data_item in enumerate(self.orig_batch):
+#             prompt = data_item.non_tensor_batch["raw_prompt"]
+#             instance_id = data_item.non_tensor_batch["instance_id"]
+#             task_name = data_item.non_tensor_batch["task_name"]
+#             for traj_idx in range(self.nt):
+#                 tasks.append(asyncio.create_task(_run_single(batch_idx, traj_idx, instance_id, prompt, task_name)))
 
-        # run all tasks
-        gathered: list[tuple[int, int, dict]] = await asyncio.gather(*tasks)
+#         # run all tasks
+#         gathered: list[tuple[int, int, dict]] = await asyncio.gather(*tasks)
 
-        # --------------------------------------------------------------
-        # Re-order into canonical layout expected by _pack_results
-        # --------------------------------------------------------------
-        # shape: [|batch| * nt] where fast-changing index is trajectory
-        ordered: list[dict] = [None] * len(gathered)      # type: ignore
-        for batch_idx, traj_idx, payload in gathered:
-            ordinal = batch_idx * self.nt + traj_idx      # flat index
-            ordered[ordinal] = payload
+#         # --------------------------------------------------------------
+#         # Re-order into canonical layout expected by _pack_results
+#         # --------------------------------------------------------------
+#         # shape: [|batch| * nt] where fast-changing index is trajectory
+#         ordered: list[dict] = [None] * len(gathered)      # type: ignore
+#         for batch_idx, traj_idx, payload in gathered:
+#             ordinal = batch_idx * self.nt + traj_idx      # flat index
+#             ordered[ordinal] = payload
 
-        # sanity
-        assert all(x is not None for x in ordered)
+#         # sanity
+#         assert all(x is not None for x in ordered)
 
-        return self._pack_results(ordered)
+#         return self._pack_results(ordered)
     
     
-    # async def _async_run_group(self) -> DataProto:
-    #     sem = asyncio.Semaphore(self.max_parallel)
-    #     tasks = []  # type: List[asyncio.Task]
+#     # async def _async_run_group(self) -> DataProto:
+#     #     sem = asyncio.Semaphore(self.max_parallel)
+#     #     tasks = []  # type: List[asyncio.Task]
 
-    #     async def _run_single(prompt: str, instance_id):
-    #         """Run one trajectory and return its result.
+#     #     async def _run_single(prompt: str, instance_id):
+#     #         """Run one trajectory and return its result.
 
-    #         Returning the result instead of mutating a shared list preserves
-    #         the original ordering when we later await `asyncio.gather`, which
-    #         guarantees that the gathered outputs correspond index-wise to the
-    #         order in which the tasks were created.
-    #         """
-    #         async with sem, BiomniRuntimeClient(self.runtime_url) as rt:
-    #             agent = BiomniCodeActAgent(
-    #                 prompt=prompt,
-    #                 instance_id=instance_id,
-    #                 runtime=rt,
-    #                 infer_engine=self.engine,
-    #                 tokenizer=self.tok,
-    #                 sampling_params=self.sampling_params,
-    #                 max_prompt_len=self.max_prompt_len,
-    #                 max_iterations=self.max_iters,
-    #                 qwen3_enable_thinking=self.qwen_think,
-    #             )
-    #             return await agent.run()
+#     #         Returning the result instead of mutating a shared list preserves
+#     #         the original ordering when we later await `asyncio.gather`, which
+#     #         guarantees that the gathered outputs correspond index-wise to the
+#     #         order in which the tasks were created.
+#     #         """
+#     #         async with sem, BiomniRuntimeClient(self.runtime_url) as rt:
+#     #             agent = BiomniCodeActAgent(
+#     #                 prompt=prompt,
+#     #                 instance_id=instance_id,
+#     #                 runtime=rt,
+#     #                 infer_engine=self.engine,
+#     #                 tokenizer=self.tok,
+#     #                 sampling_params=self.sampling_params,
+#     #                 max_prompt_len=self.max_prompt_len,
+#     #                 max_iterations=self.max_iters,
+#     #                 qwen3_enable_thinking=self.qwen_think,
+#     #             )
+#     #             return await agent.run()
 
-    #     # schedule
-    #     for data_item in self.orig_batch:
-    #         instr, instance_id = data_item.non_tensor_batch["raw_prompt"], data_item.non_tensor_batch["instance_id"]
-    #         for _ in range(self.nt):
-    #             tasks.append(asyncio.create_task(_run_single(instr, instance_id)))
+#     #     # schedule
+#     #     for data_item in self.orig_batch:
+#     #         instr, instance_id = data_item.non_tensor_batch["raw_prompt"], data_item.non_tensor_batch["instance_id"]
+#     #         for _ in range(self.nt):
+#     #             tasks.append(asyncio.create_task(_run_single(instr, instance_id)))
 
-    #     # Gather returns results in the same order as *tasks* were added,
-    #     # which matches the order of `orig_batch` expansion (deterministic).
-    #     outputs: List[Dict[str, Any]] = await asyncio.gather(*tasks)
-    #     return self._pack_results(outputs)
+#     #     # Gather returns results in the same order as *tasks* were added,
+#     #     # which matches the order of `orig_batch` expansion (deterministic).
+#     #     outputs: List[Dict[str, Any]] = await asyncio.gather(*tasks)
+#     #     return self._pack_results(outputs)
 
-    # ------------------------------------------------------------------
-    # packing into DataProto (same tensor layout as CodeAct) ------------
-    # ------------------------------------------------------------------
-    def _pack_results(self, outputs: List[Dict[str, Any]]) -> DataProto:
-        # 1) split conversation into PROMPT (up to just before first assistant)
-        #    and RESPONSE (from first assistant on)
-        # prompts, responses = [], []
-        # for convo in outputs:
-        #     msgs = convo["messages"]
-        #     split_at = next(
-        #         (i for i, m in enumerate(msgs) if m["role"] == "assistant"), len(msgs)
-        #     )
-        #     prompts.append(msgs[:split_at])
-        #     responses.append(msgs[split_at:])
-        prompts, responses = [], []
+#     # ------------------------------------------------------------------
+#     # packing into DataProto (same tensor layout as CodeAct) ------------
+#     # ------------------------------------------------------------------
+#     def _pack_results(self, outputs: List[Dict[str, Any]]) -> DataProto:
+#         # 1) split conversation into PROMPT (up to just before first assistant)
+#         #    and RESPONSE (from first assistant on)
+#         # prompts, responses = [], []
+#         # for convo in outputs:
+#         #     msgs = convo["messages"]
+#         #     split_at = next(
+#         #         (i for i, m in enumerate(msgs) if m["role"] == "assistant"), len(msgs)
+#         #     )
+#         #     prompts.append(msgs[:split_at])
+#         #     responses.append(msgs[split_at:])
+#         prompts, responses = [], []
 
-        for convo in outputs:
-            msgs = convo["messages"]
-            split_at = next(
-                (i for i, m in enumerate(msgs) if m["role"] == "assistant"),
-                len(msgs),
-            )
-            prompts.append(msgs[:split_at])
-            responses.append(msgs[split_at:])
+#         for convo in outputs:
+#             msgs = convo["messages"]
+#             split_at = next(
+#                 (i for i, m in enumerate(msgs) if m["role"] == "assistant"),
+#                 len(msgs),
+#             )
+#             prompts.append(msgs[:split_at])
+#             responses.append(msgs[split_at:])
 
-        # 2) tokenizer encode with chat template
-        prompt_enc = self.tok.apply_chat_template(
-            prompts, add_generation_prompt=False, return_dict=True, padding=True
-        )
-        resp_enc = self.tok.apply_chat_template(
-            responses, add_generation_prompt=False, return_dict=True,
-            chat_template=resp_chat_template_qwen3_thinking if self.remove_think_tokens else resp_chat_template,
-            return_assistant_tokens_mask=True, padding=True
-        )
+#         # 2) tokenizer encode with chat template
+#         prompt_enc = self.tok.apply_chat_template(
+#             prompts, add_generation_prompt=False, return_dict=True, padding=True
+#         )
+#         resp_enc = self.tok.apply_chat_template(
+#             responses, add_generation_prompt=False, return_dict=True,
+#             chat_template=resp_chat_template_qwen3_thinking if self.remove_think_tokens else resp_chat_template,
+#             return_assistant_tokens_mask=True, padding=True
+#         )
 
-        pad_id = self.tok.pad_token_id or self.tok.eos_token_id
-        # left-pad prompt to fixed len
-        pr_ids = torch.tensor(prompt_enc["input_ids"], device=self.device)
-        pr_mask = torch.tensor(prompt_enc["attention_mask"], device=self.device)
-        pr_ids, pr_mask = convert_right_padding_to_left(
-            self.tok, pr_ids, pr_mask, self.device, max_len=self.max_starting_message_length
-        )
+#         pad_id = self.tok.pad_token_id or self.tok.eos_token_id
+#         # left-pad prompt to fixed len
+#         pr_ids = torch.tensor(prompt_enc["input_ids"], device=self.device)
+#         pr_mask = torch.tensor(prompt_enc["attention_mask"], device=self.device)
+#         pr_ids, pr_mask = convert_right_padding_to_left(
+#             self.tok, pr_ids, pr_mask, self.device, max_len=self.max_starting_message_length
+#         )
 
-        # right-pad response to fixed len using shared helper
-        rsp_ids, rsp_mask, rsp_ass_mask = pad_to_max_length_right(
-            self.tok, resp_enc, self.total_len, self.device
-        )
+#         # right-pad response to fixed len using shared helper
+#         rsp_ids, rsp_mask, rsp_ass_mask = pad_to_max_length_right(
+#             self.tok, resp_enc, self.total_len, self.device
+#         )
 
-        # concat
-        input_ids = torch.cat([pr_ids, rsp_ids], dim=1)              # (B, total_len)
-        attn_mask = torch.cat([pr_mask, rsp_mask], dim=1)
-        pos_ids = compute_position_id_with_mask(attn_mask)
+#         # concat
+#         input_ids = torch.cat([pr_ids, rsp_ids], dim=1)              # (B, total_len)
+#         attn_mask = torch.cat([pr_mask, rsp_mask], dim=1)
+#         pos_ids = compute_position_id_with_mask(attn_mask)
         
-        # Repeat instance_id and task_name for each trajectory to match the number of outputs
-        orig_instance_ids = self.orig_batch.non_tensor_batch["instance_id"].tolist()
-        orig_task_names = self.orig_batch.non_tensor_batch["task_name"].tolist()
+#         # Repeat instance_id and task_name for each trajectory to match the number of outputs
+#         orig_instance_ids = self.orig_batch.non_tensor_batch["instance_id"].tolist()
+#         orig_task_names = self.orig_batch.non_tensor_batch["task_name"].tolist()
         
-        # Each original instance generates self.nt trajectories
-        repeated_instance_ids = []
-        repeated_task_names = []
-        for instance_id, task_name in zip(orig_instance_ids, orig_task_names):
-            repeated_instance_ids.extend([instance_id] * self.nt)
-            repeated_task_names.extend([task_name] * self.nt)
+#         # Each original instance generates self.nt trajectories
+#         repeated_instance_ids = []
+#         repeated_task_names = []
+#         for instance_id, task_name in zip(orig_instance_ids, orig_task_names):
+#             repeated_instance_ids.extend([instance_id] * self.nt)
+#             repeated_task_names.extend([task_name] * self.nt)
 
-        batch = TensorDict(
-            {
-                "input_ids": input_ids,
-                "responses": rsp_ids,
-                "attention_mask": attn_mask,
-                "position_ids": pos_ids,
-                "loss_mask": rsp_ass_mask,        # train only on assistant tokens
-            },
-            batch_size=input_ids.size(0),
-        )
+#         batch = TensorDict(
+#             {
+#                 "input_ids": input_ids,
+#                 "responses": rsp_ids,
+#                 "attention_mask": attn_mask,
+#                 "position_ids": pos_ids,
+#                 "loss_mask": rsp_ass_mask,        # train only on assistant tokens
+#             },
+#             batch_size=input_ids.size(0),
+#         )
 
-        # non-tensor info (solution string, iterations, raw messages)
-        non_tensor = {
-            "solution": [o["solution"] for o in outputs],
-            "iterations": [o["iterations"] for o in outputs],
-            "messages": [o["messages"] for o in outputs],
-            "instance_id": repeated_instance_ids,
-            "task_name": repeated_task_names,
-        }
+#         # non-tensor info (solution string, iterations, raw messages)
+#         non_tensor = {
+#             "solution": [o["solution"] for o in outputs],
+#             "iterations": [o["iterations"] for o in outputs],
+#             "messages": [o["messages"] for o in outputs],
+#             "instance_id": repeated_instance_ids,
+#             "task_name": repeated_task_names,
+#         }
 
-        return DataProto.from_dict(tensors=batch, non_tensors=non_tensor)
+#         return DataProto.from_dict(tensors=batch, non_tensors=non_tensor)
 
 
 
