@@ -48,9 +48,9 @@ CLIP_RATIO_HIGH=0.28
 
 # Parallelism
 GPU_MEM_UTIL=0.8
-TP_SIZE=2                 # tensor parallel for inference engine
+TP_SIZE=1                 # tensor parallel for inference engine (remote engines; keep 1)
 SP_SIZE=2                 # sequence parallel for policy & ref
-NUM_GPUS_PER_NODE=8
+NUM_GPUS_PER_NODE=4
 NNODES=1
 
 TEMPERATURE=0.6
@@ -67,6 +67,12 @@ AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rl_
 # Ensure uv runs in the skyrl-agent project directory so --extra skyrl-train is resolvable
 SKYRL_AGENT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 pushd "$SKYRL_AGENT_DIR" >/dev/null
+
+# Set logger: enable wandb only if WANDB_API_KEY is available
+LOGGER="['console']"
+if [ -n "${WANDB_API_KEY:-}" ]; then
+  LOGGER="['console','wandb']"
+fi
 
 # If local SFT checkpoint isn't available on Ray workers, fall back to an HF repo id.
 # Override with: export HF_MODEL_ID="namespace/repo"
@@ -103,9 +109,10 @@ uv run --no-build-isolation --extra skyrl-train -m skyrl_agent.integrations.skyr
   trainer.ref.sequence_parallel_size=$SP_SIZE \
   trainer.gradient_checkpointing=true \
   trainer.strategy=fsdp2 \
-  trainer.placement.colocate_all=true \
-  trainer.placement.policy_num_gpus_per_node=$NUM_GPUS_PER_NODE \
-  trainer.placement.ref_num_gpus_per_node=$NUM_GPUS_PER_NODE \
+  trainer.placement.colocate_all=false \
+  trainer.placement.policy_num_gpus_per_node=2 \
+  trainer.placement.ref_num_gpus_per_node=2 \
+  trainer.placement.critic_num_gpus_per_node=0 \
   trainer.epochs=100 \
   trainer.train_batch_size=$BATCH_SIZE \
   trainer.policy_mini_batch_size=$BATCH_SIZE \
@@ -114,18 +121,19 @@ uv run --no-build-isolation --extra skyrl-train -m skyrl_agent.integrations.skyr
   trainer.max_prompt_length=31744 \
   trainer.eval_before_train=true \
   trainer.eval_interval=-1 \
-  trainer.ckpt_interval=$SAVE_FREQ \
+  trainer.ckpt_interval=-1 \
   trainer.project_name="$PROJECT_NAME" \
   trainer.run_name="$EXPERIMENT_NAME" \
-  trainer.ckpt_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME" \
-  trainer.export_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME/exports" \
-  trainer.logger="['console','wandb']" \
-  trainer.resume_mode=from_path \
-  trainer.resume_path="/dfs/scratch0/lansong/models/qwen/biomni-training-qwen3-8b-grpo/biomni-training-qwen3-8b-32bsz-temp0.6-clip-0.28-32turn-grpo-reward2/global_step_4" \
+  trainer.logger="$LOGGER" \
+  # trainer.ckpt_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME" \
+  # trainer.export_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME/exports" \
+  # trainer.resume_mode=from_path \
+  # trainer.resume_path="/dfs/scratch0/lansong/models/qwen/biomni-training-qwen3-8b-grpo/biomni-training-qwen3-8b-32bsz-temp0.6-clip-0.28-32turn-grpo-reward2/global_step_4" \
   generator.backend=vllm \
   generator.run_engines_locally=false \
   generator.remote_inference_engine_urls="['$RUNTIME_HOSTPORT']" \
-  generator.inference_engine_tensor_parallel_size=$NUM_GPUS_PER_NODE \
+  generator.inference_engine_tensor_parallel_size=1 \
+  generator.num_inference_engines=1 \
   generator.gpu_memory_utilization=$GPU_MEM_UTIL \
   generator.sampling_params.temperature=$TEMPERATURE \
   generator.sampling_params.top_p=$TOP_P \
