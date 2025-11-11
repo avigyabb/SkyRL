@@ -36,7 +36,6 @@ dependencies=[
   'transformers',
   "hf_transfer",
   "torchdata",
-  "openhands-ai",
   "streamlit",
   "whatthepatch",
   "retry",
@@ -70,6 +69,8 @@ dependencies=[
 skyrl-train = ["skyrl-train[vllm]"]
 # verl = ["verl[vllm,gpu]","vllm==0.8.5"]
 
+[tool.uv.extra-build-dependencies]
+flash-attn = [{ requirement = "torch", match-runtime = true }]
 
 [tool.uv]
 override-dependencies = ["ray==2.48.0", "xgrammar==0.1.17",  "opentelemetry-api==1.26.0", "opentelemetry-sdk==1.26.0", "opentelemetry-exporter-otlp==1.26.0", "opentelemetry-exporter-otlp-proto-grpc==1.26.0"]
@@ -81,7 +82,6 @@ conflicts = [
 ]
 
 [tool.uv.sources]
-openhands-ai = { path = "./SkyRL-OpenHands", editable = true }
 verl = { path = "./verl", editable = true }
 skyrl-train = { path = "./skyrl-train", editable = true }
 
