@@ -17,7 +17,52 @@ from transformers.integrations.deepspeed import HfDeepSpeedConfig
 import numpy as np
 from skyrl_train.distributed.ulysses.utils import ulysses_pad_and_slice_inputs, gather_outputs_and_unpad
 from skyrl_train.utils.torch_utils import chunked_entropy_from_logits, logprobs_from_logits
-from flash_attn.bert_padding import pad_input, unpad_input
+try:
+    # Prefer fast varlen utils from FlashAttention if available and compatible
+    from flash_attn.bert_padding import pad_input, unpad_input  # type: ignore
+    _HAS_FLASH_ATTN = True
+except Exception:
+    # Fall back to simple PyTorch implementations when FlashAttention is not
+    # present or its CUDA extensions are incompatible with the current Torch/CUDA.
+    _HAS_FLASH_ATTN = False
+    import torch  # noqa: F401
+
+    def unpad_input(x: torch.Tensor, attention_mask: torch.Tensor):
+        """
+        Fallback: remove padded tokens given attention_mask.
+        Returns a tuple to mimic flash_attn.bert_padding.unpad_input:
+        (unpadded, indices, cu_seqlens, max_seqlen, output_batch_sizes)
+        Only the first two are used downstream in SkyRL.
+        """
+        # Accept shapes (B, S) or (B, S, 1); convert to (B, S)
+        if x.dim() == 3 and x.size(-1) == 1:
+            x2d = x.squeeze(-1)
+        else:
+            x2d = x
+        mask = attention_mask.bool()
+        # Flatten valid positions preserving order
+        values = x2d[mask]
+        # Indices in flattened (B*S) space
+        nnz_indices = mask.view(-1).nonzero(as_tuple=False).view(-1)
+        # Match FA API: return (nnz, 1) so caller can transpose to (1, nnz)
+        unpadded = values.unsqueeze(1)
+        return unpadded, nnz_indices, None, None, None
+
+    def pad_input(x: torch.Tensor, *, indices: torch.Tensor, batch: int, seqlen: int):
+        """
+        Fallback: scatter unpadded values back to (B, S, 1).
+        Matches the minimal interface used by SkyRL.
+        """
+        # Accept shapes (nnz,) or (nnz, 1) or (1, nnz); flatten to (nnz,)
+        if x.dim() == 2:
+            vals = x.view(-1)
+        else:
+            vals = x
+        device = vals.device
+        out = torch.zeros(batch * seqlen, dtype=vals.dtype, device=device)
+        out[indices.to(device)] = vals
+        out = out.view(batch, seqlen).unsqueeze(-1)
+        return out
 from packaging.version import Version
 
 
