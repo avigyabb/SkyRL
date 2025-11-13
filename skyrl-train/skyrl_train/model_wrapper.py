@@ -20,13 +20,12 @@ from skyrl_train.utils.torch_utils import chunked_entropy_from_logits, logprobs_
 try:
     # Prefer fast varlen utils from FlashAttention if available and compatible
     from flash_attn.bert_padding import pad_input, unpad_input  # type: ignore
+    from flash_attn import flash_attn_interface  # type: ignore  # noqa: F401
     _HAS_FLASH_ATTN = True
 except Exception:
     # Fall back to simple PyTorch implementations when FlashAttention is not
     # present or its CUDA extensions are incompatible with the current Torch/CUDA.
     _HAS_FLASH_ATTN = False
-    import torch  # noqa: F401
-
     def unpad_input(x: torch.Tensor, attention_mask: torch.Tensor):
         """
         Fallback: remove padded tokens given attention_mask.
@@ -113,15 +112,30 @@ class HFModelWrapper(nn.Module):
         super().__init__()
         self.temperature = temperature
         self.sequence_parallel_size = sequence_parallel_size
-        self.attn_implementation = "flash_attention_2" if use_flash_attention_2 else "eager"
         self.use_sample_packing = use_sample_packing
-        # packing samples using Flash Attention 2
-        if use_sample_packing:
-            assert (
-                self.attn_implementation == "flash_attention_2"
-            ), "Flash attention 2 should be used for `use_sample_packing`"
+        self._target_dtype = torch.bfloat16 if bf16 else torch.float32
+        can_use_flash_attn = (
+            use_flash_attention_2
+            and _HAS_FLASH_ATTN
+            and self._target_dtype in (torch.float16, torch.bfloat16)
+        )
+        if use_flash_attention_2 and not can_use_flash_attn:
+            logger.warning(
+                "Flash Attention 2 requested but not available for dtype %s. Falling back to eager attention.",
+                self._target_dtype,
+            )
+        self.attn_implementation = "flash_attention_2" if can_use_flash_attn else "eager"
+        if self.use_sample_packing and self.attn_implementation != "flash_attention_2":
+            logger.warning("Sample packing requires Flash Attention 2; disabling sample packing.")
+            self.use_sample_packing = False
 
         if isinstance(pretrain_or_model, str):
+            config = AutoConfig.from_pretrained(pretrain_or_model, trust_remote_code=True)
+            config.torch_dtype = self._target_dtype
+            if hasattr(config, "attn_implementation"):
+                config.attn_implementation = self.attn_implementation
+            if hasattr(config, "attn_config") and isinstance(getattr(config, "attn_config", None), dict):
+                config.attn_config.setdefault("implementation", self.attn_implementation)
             # Note: dschf is defined in function scope to avoid global effects
             # https://huggingface.co/docs/transformers/deepspeed#non-trainer-deepspeed-integration
             if ds_config is not None and ds_config["zero_optimization"]["stage"] == 3:
@@ -157,9 +171,10 @@ class HFModelWrapper(nn.Module):
             self.model = model_class.from_pretrained(
                 pretrain_or_model,
                 trust_remote_code=True,
+                config=config,
                 attn_implementation=self.attn_implementation,
                 quantization_config=nf4_config,
-                torch_dtype=torch.bfloat16 if bf16 else torch.float32,
+                torch_dtype=self._target_dtype,
                 device_map=device_map,
             )
 

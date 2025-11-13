@@ -19,9 +19,21 @@ class BiomniCodeActTrajectory(BaseTrajectory):
         pass
 
     def _messages_to_prompt(self, messages):
-        # Flatten a list of OpenAI-style messages into a single prompt string
+        """
+        Flatten a list of OpenAI-style messages (or a plain string) into a single prompt string.
+
+        Prompt datasets used by biomni currently store the instruction as a single string rather
+        than structured chat turns, so we normalize any str/list[str] inputs here.
+        """
+        if isinstance(messages, str):
+            norm_msgs = [{"role": "user", "content": messages}]
+        elif isinstance(messages, list) and messages and isinstance(messages[0], str):
+            norm_msgs = [{"role": "user", "content": msg} for msg in messages]
+        else:
+            norm_msgs = messages
+
         parts = []
-        for m in messages:
+        for m in norm_msgs:
             role = m.get("role", "user")
             content = m.get("content", "")
             parts.append(f"[{role}]\n{content}")

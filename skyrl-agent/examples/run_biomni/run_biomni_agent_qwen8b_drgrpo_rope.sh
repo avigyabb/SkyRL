@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Colocated GRPO training with skyrl-train + skyrl-agent for Qwen3-8B on Biomni tasks
+# Colocated GRPO training with skyrl-train + skyrl-agent for Qwen2.5-3B on Biomni tasks
 set -euo pipefail
 set -x
 
@@ -8,6 +8,8 @@ set -x
 export PYTHONUNBUFFERED=1
 export RUST_BACKTRACE=1
 export HYDRA_FULL_ERROR=1
+: "${OPENAI_API_KEY:=sc}"
+export OPENAI_API_KEY
 
 # NCCL timeouts/debug (optional)
 export NCCL_TIMEOUT=28800
@@ -23,7 +25,8 @@ EXPERIMENT_NAME="biomni-training-qwen3-8b-32bsz-temp0.6-clip-0.28-32turn-grpo"
 DATA_PATH="/home/ray/default/screen_design_rl"
 TRAIN_FILE="$DATA_PATH/train.parquet"
 VAL_FILE="$DATA_PATH/test.parquet"
-SFT_MODEL_PATH="/dfs/scratch0/lansong/models/qwen/qwen3-8b-sft-v1/global_step_66"
+# Intentionally left blank so we always pull the lighter HF model below. Set to a local path to override.
+SFT_MODEL_PATH=""
 CKPT_PATH="/dfs/scratch1/lansong/models/qwen"
 
 # If using a remote inference runtime (recommended for large TP):
@@ -49,7 +52,7 @@ CLIP_RATIO_HIGH=0.28
 # Parallelism
 GPU_MEM_UTIL=0.8
 TP_SIZE=1                 # tensor parallel for inference engine (remote engines; keep 1)
-SP_SIZE=2                 # sequence parallel for policy & ref
+SP_SIZE=1                 # sequence parallel for policy & ref (set to 1 to fit 4 GPUs)
 NUM_GPUS_PER_NODE=4
 NNODES=1
 
@@ -76,7 +79,7 @@ fi
 
 # If local SFT checkpoint isn't available on Ray workers, fall back to an HF repo id.
 # Override with: export HF_MODEL_ID="namespace/repo"
-: "${HF_MODEL_ID:=Qwen/Qwen2.5-7B-Instruct}"
+: "${HF_MODEL_ID:=Qwen/Qwen2.5-3B-Instruct}"
 if [ -d "$SFT_MODEL_PATH" ]; then
   MODEL_PATH="$SFT_MODEL_PATH"
 else
@@ -110,8 +113,9 @@ uv run --no-build-isolation --extra skyrl-train -m skyrl_agent.integrations.skyr
   trainer.gradient_checkpointing=true \
   trainer.strategy=fsdp2 \
   trainer.placement.colocate_all=false \
-  trainer.placement.policy_num_gpus_per_node=2 \
-  trainer.placement.ref_num_gpus_per_node=2 \
+  trainer.placement.colocate_policy_ref=false \
+  trainer.placement.policy_num_gpus_per_node=1 \
+  trainer.placement.ref_num_gpus_per_node=1 \
   trainer.placement.critic_num_gpus_per_node=0 \
   trainer.epochs=100 \
   trainer.train_batch_size=$BATCH_SIZE \
@@ -125,13 +129,8 @@ uv run --no-build-isolation --extra skyrl-train -m skyrl_agent.integrations.skyr
   trainer.project_name="$PROJECT_NAME" \
   trainer.run_name="$EXPERIMENT_NAME" \
   trainer.logger="$LOGGER" \
-  # trainer.ckpt_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME" \
-  # trainer.export_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME/exports" \
-  # trainer.resume_mode=from_path \
-  # trainer.resume_path="/dfs/scratch0/lansong/models/qwen/biomni-training-qwen3-8b-grpo/biomni-training-qwen3-8b-32bsz-temp0.6-clip-0.28-32turn-grpo-reward2/global_step_4" \
   generator.backend=vllm \
-  generator.run_engines_locally=false \
-  generator.remote_inference_engine_urls="['$RUNTIME_HOSTPORT']" \
+  generator.run_engines_locally=true \
   generator.inference_engine_tensor_parallel_size=1 \
   generator.num_inference_engines=1 \
   generator.gpu_memory_utilization=$GPU_MEM_UTIL \
@@ -140,6 +139,12 @@ uv run --no-build-isolation --extra skyrl-train -m skyrl_agent.integrations.skyr
   generator.sampling_params.max_generate_length=3072 \
   +generator.task="$AGENT_TASK_YAML" \
   $@
+
+# Optional checkpoint / resume overrides (commented out to disable persistence)
+#   trainer.ckpt_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME"
+#   trainer.export_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME/exports"
+#   trainer.resume_mode=from_path
+#   trainer.resume_path="/dfs/scratch0/lansong/models/qwen/biomni-training-qwen3-8b-grpo/biomni-training-qwen3-8b-32bsz-temp0.6-clip-0.28-32turn-grpo-reward2/global_step_4"
 
 popd >/dev/null
 
