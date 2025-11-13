@@ -8,9 +8,9 @@ data:
   data_source_key: data_source
 
 generator:
-  # When running via skyrl_train integration, the LLM backend is provided by the inference engine client.
-  # The fields below are still useful defaults for standalone runs.
-  infer_backend: openai_server
+  # When skyrl-agent is driven via skyrl-train we must use the custom backend so prompts are
+  # delivered through the SkyRLGeneratorInput (instead of the OpenAI-style payloads).
+  infer_backend: skyrl-train
   backend_config:
     model_name: Qwen/Qwen3-8B
     api_url: http://127.0.0.1:8000

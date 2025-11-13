@@ -34,7 +34,7 @@ class SkyRLBackend(AsyncInferBackend):
 
 class SkyRLGeneratorOutput(GeneratorOutput):
     def __init__(self, result: Any):
-        from skyrl_train.generators.utils import get_rollout_metrics
+        from skyrl_train.generators.utils import get_rollout_metrics  # type: ignore[import]
 
         # Add more skyrl-specific rollout metrics.
         assert "rollout_metrics" in result, "rollout_metrics should be in the result"
@@ -45,4 +45,20 @@ class SkyRLGeneratorOutput(GeneratorOutput):
 
 class SkyRLGeneratorInput(GeneratorInput):
     def __init__(self, input_batch: Any):
-        self.input_batch = input_batch["env_extras"]
+        env_extras = input_batch.get("env_extras") or []
+        prompts = input_batch.get("prompts") or []
+
+        if env_extras and len(env_extras) != len(prompts):
+            raise ValueError(
+                f"env_extras length ({len(env_extras)}) must match prompts length ({len(prompts)}) for SkyRLGeneratorInput"
+            )
+
+        merged_batch = []
+        for idx, prompt in enumerate(prompts):
+            extras = env_extras[idx] if idx < len(env_extras) else None
+            payload = dict(extras) if isinstance(extras, dict) else {}
+
+            payload.setdefault("prompt", prompt)
+            merged_batch.append(payload)
+
+        self.input_batch = merged_batch if merged_batch else env_extras

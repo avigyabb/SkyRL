@@ -569,6 +569,14 @@ def prepare_runtime_environment(cfg: DictConfig) -> dict[str, str]:
         logger.info("Exporting wandb api key to ray runtime env")
         env_vars["WANDB_API_KEY"] = os.environ["WANDB_API_KEY"]
 
+    if os.environ.get("OPENAI_API_KEY"):
+        logger.info("Exporting OPENAI_API_KEY to ray runtime env")
+        env_vars["OPENAI_API_KEY"] = os.environ["OPENAI_API_KEY"]
+
+    if os.environ.get("OPENAI_BASE_URL"):
+        logger.info("Exporting OPENAI_BASE_URL to ray runtime env")
+        env_vars["OPENAI_BASE_URL"] = os.environ["OPENAI_BASE_URL"]
+
     if os.environ.get("MLFLOW_TRACKING_URI"):
         logger.info("Exporting mlflow tracking uri to ray runtime env")
         env_vars["MLFLOW_TRACKING_URI"] = os.environ["MLFLOW_TRACKING_URI"]
