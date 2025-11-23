@@ -241,33 +241,44 @@ def pad_to_max_length_right(tokenizer, encodings, max_length, device):
 
 class BiomniRuntimeClient:
     """Thin async wrapper around server.py endpoints."""
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:8000", request_timeout: float = 30.0):
         self.base = base_url.rstrip("/")
         self.session_id: Optional[str] = None
         self._client: Optional[aiohttp.ClientSession] = None
+        self._request_timeout = float(request_timeout)
 
     async def __aenter__(self):
-        self._client = aiohttp.ClientSession()      # one connection pool per runtime
+        timeout = aiohttp.ClientTimeout(total=self._request_timeout)
+        self._client = aiohttp.ClientSession(timeout=timeout)      # one connection pool per runtime
         self.session_id = await self._start()
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        if self.session_id:
-            try:
-                await self._client.post(f"{self.base}/delete_runtime",
-                                        json={"session_id": self.session_id})
-            except (aiohttp.ClientOSError, aiohttp.ServerDisconnectedError, aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.warning(f"Failed to delete runtime session {self.session_id}: {e}")
-                # Don't raise here since we're in cleanup
-            finally:
+        try:
+            if self.session_id and self._client:
+                try:
+                    await self._client.post(
+                        f"{self.base}/delete_runtime",
+                        json={"session_id": self.session_id},
+                        timeout=self._request_timeout,
+                    )
+                except (aiohttp.ClientOSError, aiohttp.ServerDisconnectedError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    logger.warning(f"Failed to delete runtime session {self.session_id}: {e}")
+                    # Don't raise here since we're in cleanup
+        finally:
+            if self._client and not self._client.closed:
                 await self._client.close()
+            self._client = None
+            self.session_id = None
 
     # low-level helpers -------------------------------------------------
     async def _start(self) -> str:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                async with self._client.post(f"{self.base}/start_runtime") as r:
+                async with self._client.post(
+                    f"{self.base}/start_runtime", timeout=self._request_timeout
+                ) as r:
                     r.raise_for_status()
                     return (await r.json())["session_id"]
             except (aiohttp.ClientOSError, aiohttp.ServerDisconnectedError, aiohttp.ClientError) as e:
@@ -374,21 +385,47 @@ class BiomniCodeActAgent:
         self.messages = self.prompt_manager.get_initial_messages(prompt, task_name)
         self.log: List[Dict[str, str]] = []   # optional external logging
 
+    def _build_prompt_input_ids(self) -> List[int]:
+        return self.tok.apply_chat_template(
+            self.messages,
+            add_generation_prompt=True,
+            tokenize=True,
+            chat_template=gen_chat_template,
+            enable_thinking=self.qwen3_enable_thinking,
+        )
+
+    def estimate_initial_prompt_tokens(self) -> int:
+        """Return the token count for the current conversation state (primarily the initial prompt)."""
+        return len(self._build_prompt_input_ids())
+
     # ------------------------------------------------------------------
     # generation & routing
     # ------------------------------------------------------------------
     async def _llm_generate(self) -> str:
         """Call sglang engine asynchronously and return *raw* assistant string."""
-        input_ids = self.tok.apply_chat_template(
-            self.messages, add_generation_prompt=True,
-            tokenize=True, chat_template=gen_chat_template, enable_thinking=self.qwen3_enable_thinking
-        )
-        # input_ids = self.tok.apply_chat_template(
-        #     self.messages, add_generation_prompt=True,
-        #     tokenize=True, enable_thinking=self.qwen3_enable_thinking
-        # )
-        if len(input_ids) >= self.max_prompt_len:
-            return "The context is too long. Exit now."
+        original_ids = self._build_prompt_input_ids()
+        if len(original_ids) > self.max_prompt_len:
+            reserved = self.sampling_params.get("max_tokens") or self.sampling_params.get("max_generate_length") or self.sampling_params.get("max_new_tokens") or 0
+            available = max(self.max_prompt_len - int(reserved), 0)
+            if available <= 0:
+                return "The context is too long. Exit now."
+            input_ids = original_ids[-available:]
+            print(
+                f"[_llm_generate] Truncated prompt for instance {self.instance_id}: "
+                f"original={len(original_ids)} tokens, truncated to {len(input_ids)} tokens, "
+                f"reserved for generation={reserved}"
+            )
+        else:
+            input_ids = original_ids
+        
+        # Final safety check: ensure we never exceed max_prompt_len
+        if len(input_ids) > self.max_prompt_len:
+            print(
+                f"[_llm_generate] EMERGENCY TRUNCATION for instance {self.instance_id}: "
+                f"input_ids={len(input_ids)} exceeds max_prompt_len={self.max_prompt_len}. "
+                f"This should not happen!"
+            )
+            input_ids = input_ids[-self.max_prompt_len:]
         
         max_retries = 1
         for _ in range(max_retries):

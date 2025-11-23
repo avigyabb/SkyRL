@@ -345,7 +345,8 @@ class SkyRLAgentPPOTrainer(RayPPOTrainer):
                         training_input = self.compute_advantages_and_returns(training_input)
                         # remove some unwanted keys
                         for key in ["custom_rewards", "rm_rewards"]:
-                            training_input.pop(key)
+                            if key in training_input: # since biomni doesn't populate this field
+                                training_input.pop(key)
                         training_input.metadata.pop("uids")
 
                         if self.cfg.trainer.algorithm.advantage_batch_normalize:

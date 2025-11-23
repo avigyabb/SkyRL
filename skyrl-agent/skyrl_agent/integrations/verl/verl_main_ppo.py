@@ -17,6 +17,7 @@ Note that we don't combine the main with ray_trainer as ray_trainer is used by o
 
 import os
 import socket
+from typing import Optional
 
 import hydra
 import ray
@@ -97,6 +98,25 @@ class SkyAgentRewardManager:
             }
         else:
             return reward_tensor
+
+
+def _limit_dataset(dataset, limit: Optional[int], label: str) -> None:
+    """Optionally truncate the underlying HuggingFace dataframe to *limit* samples."""
+    if dataset is None or limit is None:
+        return
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        return
+    if limit <= 0:
+        return
+
+    total = len(dataset)
+    if total <= limit:
+        return
+
+    dataset.dataframe = dataset.dataframe.select(range(limit))
+    print(f"[SkyAgent] Clipped {label} dataset from {total} to {limit} samples")
 
 
 @hydra.main(config_path=config_dir, config_name="ppo_trainer", version_base=None)
@@ -314,6 +334,8 @@ class TaskRunner:
         # Create training and validation datasets.
         train_dataset = create_rl_dataset(config.data.train_files, config.data, tokenizer, processor, is_train=True)
         val_dataset = create_rl_dataset(config.data.val_files, config.data, tokenizer, processor, is_train=False)
+        _limit_dataset(train_dataset, config.data.get("max_train_samples"), "train")
+        _limit_dataset(val_dataset, config.data.get("max_val_samples"), "val")
         # hack for using only swe bench hard
         # Dacheng: Delete this hack now, we need to train for other tasks than swe
         # mask = val_dataset.dataframe.apply(lambda x: x['instance']["difficulty"] == "1-4 hours", axis=1)

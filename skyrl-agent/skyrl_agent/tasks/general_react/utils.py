@@ -1,7 +1,8 @@
-from typing import Dict, Any
 import asyncio
+from typing import Any, Dict
 
 from skyrl_agent.tasks.base import BaseTask
+from skyrl_agent.tasks.biomni_reward_adapter import BiomniRewardAdapter
 
 
 class GeneralReactTask(BaseTask):
@@ -74,8 +75,25 @@ class GeneralReactTask(BaseTask):
         cls, result: any, instance: any, data_source: str, instance_id: int, trajectory_id: int
     ) -> float:
         # print(f"Evaluating result: {result=} {instance=} {data_source=} {instance_id=} {trajectory_id=}")
-        ground_truth = instance["reward_model"]["ground_truth"]
-        extra_info = instance["extra_info"]
+        try:
+            reward_model = instance["reward_model"]
+            extra_info = instance["extra_info"]
+            ground_truth = reward_model["ground_truth"]
+        except (KeyError, TypeError):
+            print(f"No reward_model metadata found, using Biomni adapter")
+            biomni_reward = BiomniRewardAdapter.score(
+                instance, result, instance_id=instance_id
+            )
+            if biomni_reward is not None:
+                print(f"Biomni adapter returned reward: {biomni_reward}")
+                return biomni_reward
+            if not result:
+                return 0.0
+            print(
+                "No reward_model metadata found and no Biomni adapter available; returning 0."
+            )
+            return 0.0
+
         print(f"Evaluating result: {result=}")
         if not result:
             return 0.0
