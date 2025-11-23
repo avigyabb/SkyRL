@@ -16,7 +16,7 @@ generator:
     api_url: http://127.0.0.1:8000
 
   # RL rollout settings (mapped from the old script)
-  num_trajectories: 8
+  num_trajectories: 1
   max_iterations: 32
   max_prompt_length: 61440
   sampling_params:

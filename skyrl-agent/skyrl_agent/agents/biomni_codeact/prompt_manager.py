@@ -24,6 +24,7 @@ class PromptManager:
         self.default_tool_dict = module2api
         self.s3_datalake_uri = s3_datalake_uri
         self.tool_path = tool_path
+        self.prompt_limits = self._read_prompt_limits()
         self.configure()
     
     def configure(self, self_critic=False):
@@ -53,24 +54,39 @@ class PromptManager:
         if task_name is None:
             raise ValueError("Task name is required")
         
-        tool_dict = load_pkl(self.tools_pkl_map[task_name]) if task_name in self.tools_pkl_map else self.default_tool_dict
-        data_lake_dict = self.data_lake_dict_tasks[task_name] if task_name in self.data_lake_dict_tasks else self.default_data_lake_dict
-        library_content_dict = self.library_content_dict_tasks[task_name] if task_name in self.library_content_dict_tasks else self.default_library_content_dict
+        tool_dict_src = load_pkl(self.tools_pkl_map[task_name]) if task_name in self.tools_pkl_map else self.default_tool_dict
+        tool_dict = dict(tool_dict_src)
+        tool_dict = self._limit_mapping(tool_dict, self.prompt_limits["tools"])
 
-        tool_desc = {i: [x for x in j if x['name']!='run_python_repl'] for i, j in tool_dict.items()}
+        data_lake_dict_src = self.data_lake_dict_tasks[task_name] if task_name in self.data_lake_dict_tasks else self.default_data_lake_dict
+        data_lake_dict = self._limit_mapping(dict(data_lake_dict_src), self.prompt_limits["data_lake"])
+
+        library_content_dict_src = self.library_content_dict_tasks[task_name] if task_name in self.library_content_dict_tasks else self.default_library_content_dict
+        library_content_dict = self._limit_mapping(dict(library_content_dict_src), self.prompt_limits["library"])
+
+        tool_limit = self.prompt_limits["tools"]
+        tool_desc = {}
+        for idx, (module_name, tools) in enumerate(tool_dict.items()):
+            if tool_limit is not None and idx >= tool_limit:
+                break
+            filtered_tools = [x for x in tools if x['name'] != 'run_python_repl']
+            filtered_tools = self._limit_sequence(filtered_tools, self.prompt_limits["tools_per_section"])
+            tool_desc[module_name] = filtered_tools
         
         # Get all data lake items from the data_lake_dict keys
-        data_lake_items = list(data_lake_dict.keys())
+        data_lake_items = self._limit_sequence(list(data_lake_dict.keys()), self.prompt_limits["data_lake"])
         
         data_lake_with_desc = []
         for item in data_lake_items:
             description = data_lake_dict.get(item, f"Data lake item: {item}")
             data_lake_with_desc.append({"name": item, "description": description})
         
+        library_content_list = self._limit_sequence(list(library_content_dict.keys()), self.prompt_limits["library"])
+
         system_prompt = self._generate_system_prompt(
             tool_desc=tool_desc,
             data_lake_content=data_lake_with_desc,
-            library_content_list=list(library_content_dict.keys()),
+            library_content_list=library_content_list,
             library_content_dict=library_content_dict,
             data_lake_dict=data_lake_dict,
             self_critic=self.self_critic,
@@ -258,3 +274,43 @@ Each library is listed with its description to help you understand its functiona
         )
         
         return formatted_prompt
+
+    def _read_prompt_limits(self):
+        def _env_limit(name):
+            value = os.getenv(name)
+            if value is None:
+                return None
+            try:
+                parsed = int(value)
+                return parsed if parsed > 0 else None
+            except ValueError:
+                return None
+
+        defaults = {
+            "tools": 3,
+            "tools_per_section": 5,
+            "data_lake": 8,
+            "library": 8,
+        }
+
+        limits = {}
+        for key, env_name in (
+            ("tools", "BIOMNI_PROMPT_MAX_TOOL_SECTIONS"),
+            ("tools_per_section", "BIOMNI_PROMPT_MAX_FUNC_PER_SECTION"),
+            ("data_lake", "BIOMNI_PROMPT_MAX_DATALAKE_ITEMS"),
+            ("library", "BIOMNI_PROMPT_MAX_LIBRARY_ITEMS"),
+        ):
+            env_value = _env_limit(env_name)
+            limits[key] = env_value if env_value is not None else defaults[key]
+
+        return limits
+
+    def _limit_mapping(self, mapping, limit):
+        if limit is None or not isinstance(mapping, dict) or limit >= len(mapping):
+            return mapping
+        return dict(list(mapping.items())[:limit])
+
+    def _limit_sequence(self, seq, limit):
+        if limit is None:
+            return seq
+        return seq[:limit]
