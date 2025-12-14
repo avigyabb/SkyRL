@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -28,6 +29,8 @@ class TrajectoryConfig:
     agent_cls: str = "skyrl_agent.agents.react.ReActAgent"
     profile_tools: bool = False
     debug_log: bool = False
+    use_log_heavy: bool = False
+    log_heavy_freq: int = 100
 
 
 # DEPR

@@ -8,6 +8,7 @@ from transformers import AutoConfig
 from torch.distributed.fsdp.api import ShardedStateDictConfig, StateDictType
 from torch.distributed.fsdp.fully_sharded_data_parallel import FullyShardedDataParallel as FSDP
 import io
+from omegaconf import OmegaConf
 
 try:
     # for torch 2.5+
@@ -61,6 +62,9 @@ class FSDPPolicyWorkerBase(PolicyWorkerBase):
         init_context = get_init_weight_context_manager(
             use_meta_tensor=not model_config.tie_word_embeddings, mesh=self.strategy.device_mesh
         )
+        
+        config_override = OmegaConf.to_container(self.cfg.trainer.policy.model.get("override_config", OmegaConf.create({})), resolve=True)
+        
         with init_context():
 
             wrapped_model = HFModelWrapper(
@@ -77,6 +81,7 @@ class FSDPPolicyWorkerBase(PolicyWorkerBase):
                 sequence_parallel_size=self.cfg.trainer.policy.sequence_parallel_size,
                 use_sample_packing=self.cfg.trainer.use_sample_packing,
                 use_torch_compile=self.cfg.trainer.policy.use_torch_compile,
+                config_override=config_override,
             )
             # in-place patch
             self._seq_parallel_monkey_patch(model=wrapped_model.model)
@@ -389,6 +394,11 @@ class FSDPRefWorkerBase(RefWorkerBase):
         init_context = get_init_weight_context_manager(
             use_meta_tensor=not model_config.tie_word_embeddings, mesh=self.strategy.device_mesh
         )
+        
+        config_override = OmegaConf.to_container(self.cfg.trainer.ref.model.get("override_config", OmegaConf.create({})), resolve=True) if self.cfg.trainer.ref.get("model") else {}
+        # If override_config is also present directly under trainer.ref (user's old config style might imply this, but better to stick to model.override_config or just check)
+        if not config_override and self.cfg.trainer.ref.get("override_config"):
+             config_override = OmegaConf.to_container(self.cfg.trainer.ref.override_config, resolve=True)
 
         with init_context():
             wrapped_model = HFModelWrapper(
@@ -397,6 +407,7 @@ class FSDPRefWorkerBase(RefWorkerBase):
                 bf16=self.cfg.trainer.bf16,
                 sequence_parallel_size=self.cfg.trainer.ref.sequence_parallel_size,
                 use_sample_packing=self.cfg.trainer.use_sample_packing,
+                config_override=config_override,
             )
             self._seq_parallel_monkey_patch(model=wrapped_model.model)
 

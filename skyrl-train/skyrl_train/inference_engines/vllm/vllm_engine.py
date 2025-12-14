@@ -398,6 +398,7 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
 
     def _create_engine(self, *args, **kwargs):
         openai_kwargs = pop_openai_kwargs(kwargs)
+        kwargs["disable_cascade_attn"] = True
         # TODO (erictang000): potentially enable log requests for a debugging mode
         engine_args = vllm.AsyncEngineArgs(enable_log_requests=False, **kwargs)
         engine = vllm.AsyncLLMEngine.from_engine_args(engine_args)

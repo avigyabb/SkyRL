@@ -1,225 +1,149 @@
-import importlib
 import logging
-import os
 import re
-import sys
-from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 logger = logging.getLogger(__name__)
 
+from skyrl_agent.agents.biomni_codeact.task.screen_design import screen_design
+from skyrl_agent.agents.biomni_codeact.task.gwas_causal_gene import gwas_causal_gene
+from skyrl_agent.agents.biomni_codeact.task.crispr_delivery import crispr_delivery
+from skyrl_agent.agents.biomni_codeact.task.rare_disease_diagnosis import rare_disease_diagnosis
+from skyrl_agent.agents.biomni_codeact.task.gwas_variant_prioritization import gwas_variant_prioritization
+from skyrl_agent.agents.biomni_codeact.task.patient_gene_detection import patient_gene_detection
+from skyrl_agent.agents.biomni_codeact.task.lab_bench import lab_bench
+from skyrl_agent.agents.biomni_codeact.task.screen_gene_retrieval import screen_gene_retrieval
+
 
 class BiomniRewardAdapter:
-    """
-    Lightweight bridge that reuses the Biomni task implementations shipped with
-    BioAgentOS to compute rule-based rewards (e.g., screen_design precision).
-
-    The adapter lazy-loads task classes on first use and caches the instances.
-    Set the following environment variables to point it at the appropriate data:
-
-        BIOMNI_ENV_SCREEN_ROOT  - path to BioAgentOS/biomni_env_screen checkout
-        BIOMNI_SCREEN_DATA_ROOT - path containing the screen_design CSV assets
-        BIOMNI_SCREEN_TOP_K     - override for screen_design top-k (default 100)
-    """
-
     _initialized: bool = False
-    _builders: Dict[str, Callable[[], Any]] = {}
-    _task_cache: Dict[str, Any] = {}
+    _task_mapping: Dict[str, Any] = {}
 
     @classmethod
-    def score(
+    def _ensure_initialized(cls):
+        if cls._initialized:
+            return
+        
+        benchmark_root = '/dfs/project/bioagentos/biomni_data/benchmark/'
+        
+        cls._task_mapping = {
+            "rare_disease_diagnosis": rare_disease_diagnosis(benchmark_root),
+            "gwas_variant_prioritization": gwas_variant_prioritization(benchmark_root, num_samples=10000),
+            "patient_gene_detection": patient_gene_detection(benchmark_root, num_samples=10000),
+            "lab_bench_dbqa": lab_bench(benchmark_root, dataset="DbQA"),
+            "lab_bench_seqqa": lab_bench(benchmark_root, dataset="SeqQA"),
+            "screen_gene_retrieval": screen_gene_retrieval(),
+            "screen_design": screen_design(top_k=20),
+            "crispr_delivery": crispr_delivery(num_samples=10000),
+        }
+        
+        for data_name in ['opentargets', 'pharmaprojects', 'gwas_catalog']:
+            cls._task_mapping[f"gwas_causal_gene_{data_name}"] = gwas_causal_gene(
+                path=benchmark_root, dataset=data_name, num_samples=100000
+            )
+            
+        cls._initialized = True
+
+    @staticmethod
+    def _validate_format(messages: List[Dict[str, str]]) -> float:
+        """
+        Check formatting rules:
+        1. <think>...</think> ... <execute>...</execute>
+        2. <think>...</think> ... <solution>...</solution>
+        """
+        tag_pattern = re.compile(r"</?(think|execute|solution)>", re.IGNORECASE)
+
+        def _valid_block(content: str, *, is_last: bool) -> bool:
+            if "<execute>" in content and "<solution>" in content:
+                return False
+            
+            tags = [m.group(0) for m in tag_pattern.finditer(content)]
+            if len(tags) != 4:
+                return False
+                
+            if tags[0].lower() != "<think>" or tags[1].lower() != "</think>":
+                return False
+                
+            second_open, second_close = tags[2], tags[3]
+            if second_open.lower() not in ("<execute>", "<solution>"):
+                return False
+                
+            expected_close = second_open.replace("<", "</")
+            if second_close.lower() != expected_close.lower():
+                return False
+                
+            if second_open.lower() == "<solution>" and not is_last:
+                return False
+            elif second_open.lower() != "<solution>" and is_last:
+                return False
+                
+            think_block = content.split(tags[0], 1)[1].split(tags[1], 1)[0]
+            if "<execute>" in think_block or "<solution>" in think_block:
+                return False
+                
+            after_think = content.split(tags[1], 1)[1]
+            if "<think>" in after_think or "</think>" in after_think:
+                return False
+                
+            return True
+
+        assistant_indices = [idx for idx, m in enumerate(messages) if m.get("role") == "assistant"]
+        if not assistant_indices:
+            return 0.0
+            
+        last_assistant_idx = assistant_indices[-1]
+        
+        for idx in assistant_indices:
+            content = messages[idx].get("content", "")
+            is_last_msg = (idx == last_assistant_idx)
+            if not _valid_block(content, is_last=is_last_msg):
+                return 0.0
+                
+        return 1.0
+
+    @classmethod
+    def compute_rewards(
         cls,
         instance: Any,
         solution: Optional[str],
+        messages: List[Dict[str, str]],
         *,
         instance_id: Optional[Any] = None,
-    ) -> Optional[float]:
-        print(f"cls: {cls}, instance: {instance}, solution: {solution}, instance_id: {instance_id}")
-        """Return a float reward if a Biomni task can score this instance."""
-        if not solution:
-            return 0.0
-
+        task_name: Optional[str] = None,
+    ) -> Dict[str, float]:
         cls._ensure_initialized()
-        if not cls._builders:
-            return None
 
-        payload = cls._coerce_instance(instance)
-        task_name = (payload.get("task_name") or payload.get("data_source"))
         if not task_name:
-            return None
-        task_name = str(task_name)
+            if isinstance(instance, dict):
+                task_name = instance.get("task_name")
+            elif hasattr(instance, "get"):
+                task_name = instance.get("task_name")
+        
+        gt_reward = 0.0
+        logger.info("-----------Computing reward for task: %s, instance_id: %s-------------", task_name, instance_id)
+        logger.info("task_name: %s", task_name)
+        logger.info("instance_id: %s", instance_id)
+        logger.info("solution: %s", solution)
+        logger.info(f"last 2 message: {messages[-2]}\n\n{messages[-1]}")
 
-        builder = cls._builders.get(task_name)
-        if not builder:
-            return None
-
-        key = instance_id
-        if key is None:
-            key = payload.get("instance_id") or payload.get("screen_id")
-        if key is None:
-            logger.debug("BiomniRewardAdapter: missing instance_id for %s", task_name)
-            return None
-
-        try:
-            key = int(key)
-        except (TypeError, ValueError):
-            logger.debug(
-                "BiomniRewardAdapter: could not coerce instance_id %r to int for %s",
-                key,
-                task_name,
-            )
-            return None
-
-        task = cls._task_cache.get(task_name)
-        if task is None:
+        if task_name and task_name in cls._task_mapping and solution:
             try:
-                task = builder()
-            except Exception as exc:  # pragma: no cover - best-effort integration
-                logger.warning(
-                    "BiomniRewardAdapter: failed to build task %s (%s)",
-                    task_name,
-                    exc,
-                )
-                return None
-            cls._task_cache[task_name] = task
-
-        solution_text = cls._normalize_solution_for_task(
-            task_name, cls._extract_solution(solution), task
-        )
-        print(f"solution_text: {solution_text}")
-        if not solution_text:
-            return 0.0
-
-        try:
-            reward = task.reward(key, solution_text)
-            return float(reward)
-        except Exception as exc:  # pragma: no cover - depends on external assets
-            logger.warning(
-                "BiomniRewardAdapter: task %s failed to score instance %s (%s)",
-                task_name,
-                key,
-                exc,
-            )
-            return None
-
-    # ------------------------------------------------------------------ helpers
-    @classmethod
-    def _ensure_initialized(cls) -> None:
-        if cls._initialized:
-            return
-        cls._initialized = True
-
-        # Prefer the local BioAgentOS checkout; this avoids relying on env vars when
-        # skyrl-agent is co-located with the biomni runtime checkout.
-        hardcoded_root = Path("/home/ray/default/BioAgentOS/biomni_env_screen")
-        root = os.getenv("BIOMNI_ENV_SCREEN_ROOT")
-        if not root and hardcoded_root.exists():
-            root = str(hardcoded_root)
-        if not root:
-            candidate = (
-                Path(__file__).resolve().parents[3] / "BioAgentOS" / "biomni_env_screen"
-            )
-            if candidate.exists():
-                root = str(candidate)
-        if root and root not in sys.path:
-            sys.path.append(root)
-
-        cls._register_tasks()
-
-    @classmethod
-    def _register_tasks(cls) -> None:
-        """Register Biomni tasks we know how to evaluate."""
-        cls._register_screen_design()
-        cls._register_crispr_delivery()
-        # Additional Biomni tasks can be registered here in the future.
-
-    @classmethod
-    def _register_screen_design(cls) -> None:
-        try:
-            module = importlib.import_module("biomni.task.screen_design")
-            ScreenDesign = getattr(module, "screen_design")
-        except Exception as exc:  # pragma: no cover - optional dependency
-            logger.debug("BiomniRewardAdapter: screen_design import failed (%s)", exc)
-            return
-
-        def _factory():
-            top_k = int(os.getenv("BIOMNI_SCREEN_TOP_K", "100"))
-            return ScreenDesign(top_k=top_k)
-
-        cls._builders["screen_design"] = _factory
-
-    @classmethod
-    def _register_crispr_delivery(cls) -> None:
-        try:
-            module = importlib.import_module("biomni.task.crispr_delivery")
-            CrisprDelivery = getattr(module, "crispr_delivery")
-        except Exception as exc:  # pragma: no cover - optional dependency
-            logger.debug("BiomniRewardAdapter: crispr_delivery import failed (%s)", exc)
-            return
-
-        def _factory():
-            return CrisprDelivery()
-
-        cls._builders["crispr_delivery"] = _factory
-
-    @staticmethod
-    def _coerce_instance(instance: Any) -> Dict[str, Any]:
-        if instance is None:
-            return {}
-        if isinstance(instance, dict):
-            return instance
-        try:
-            # pandas Series supports to_dict()
-            if hasattr(instance, "to_dict"):
-                return instance.to_dict()
-        except Exception:
-            pass
-        return dict(instance) if isinstance(instance, (list, tuple)) else {}
-
-    @staticmethod
-    def _extract_solution(solution: Any) -> Optional[str]:
-        if solution is None:
-            return None
-        if isinstance(solution, str):
-            return solution.strip()
-        return str(solution)
-
-    @classmethod
-    def _normalize_solution_for_task(
-        cls, task_name: str, solution_text: Optional[str], task: Any
-    ) -> Optional[str]:
-        if not solution_text:
-            return None
-        if not task_name:
-            return solution_text
-        task_key = str(task_name).lower()
-        if task_key == "crispr_delivery":
-            return cls._normalize_crispr_delivery_solution(solution_text, task)
-        return solution_text
-
-    @staticmethod
-    def _normalize_crispr_delivery_solution(
-        solution_text: str, task: Any
-    ) -> Optional[str]:
-        """Extract a single-letter answer (a-f) from free-form CRISPR outputs."""
-        if not solution_text:
-            return None
-
-        text = solution_text.strip()
-        match = re.search(r"\b([a-f])\b", text, flags=re.IGNORECASE)
-        if match:
-            return match.group(1).lower()
-
-        delivery_map = getattr(task, "delivery_methods", {}) or {}
-        text_lower = text.lower()
-        for letter, description in delivery_map.items():
-            if description.lower() in text_lower:
-                return str(letter).lower()
-
-        text_lower = text_lower.lstrip("-: ").strip()
-        if text_lower and text_lower[0] in "abcdef":
-            return text_lower[0]
-
-        return None
-
-
+                inp = instance_id
+                # The original code passes instance_id (as int/index) to reward function
+                gt_reward = float(cls._task_mapping[task_name].reward(inp, solution))
+                logger.info("gt_reward: %s", gt_reward)
+            except Exception as e:
+                logger.warning(f"Error computing GT reward for {task_name}: {e}")
+                gt_reward = 0.0
+        else:
+            logger.warning(f"Unexpected task name: {task_name}, or solution is None")
+            gt_reward = 0.0
+        
+        ft_reward = cls._validate_format(messages)
+        logger.info("ft_reward: %s", ft_reward)
+        total_reward = gt_reward + ft_reward
+        
+        return {
+            "score": total_reward,
+            "gt_reward": gt_reward,
+            "ft_reward": ft_reward
+        }

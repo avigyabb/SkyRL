@@ -107,6 +107,7 @@ class HFModelWrapper(nn.Module):
         sequence_parallel_size=1,
         use_sample_packing: bool = False,
         use_torch_compile: bool = False,
+        config_override: Optional[dict] = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -131,7 +132,27 @@ class HFModelWrapper(nn.Module):
 
         if isinstance(pretrain_or_model, str):
             config = AutoConfig.from_pretrained(pretrain_or_model, trust_remote_code=True)
+            
+            if config_override:
+                for k, v in config_override.items():
+                    if isinstance(v, dict):
+                        # Handle nested dict: either update existing or create new
+                        if hasattr(config, k):
+                            existing = getattr(config, k)
+                            if isinstance(existing, dict):
+                                existing.update(v)
+                            else:
+                                # Attribute exists but is not a dict, replace it
+                                setattr(config, k, v)
+                        else:
+                            # Attribute doesn't exist, create it
+                            setattr(config, k, v)
+                    else:
+                        setattr(config, k, v)
+                logger.info(f"Overriding model config with: {config_override}")
+
             config.torch_dtype = self._target_dtype
+
             if hasattr(config, "attn_implementation"):
                 config.attn_implementation = self.attn_implementation
             if hasattr(config, "attn_config") and isinstance(getattr(config, "attn_config", None), dict):

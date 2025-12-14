@@ -202,11 +202,14 @@ class BiomniCodeActTrajectory(BaseTrajectory):
         }
 
     async def evaluate_trajectory(self) -> None:
-        instance_id = self.cfg.instance_id
-        trajectory_id = self.cfg.trajectory_id
+        # instance_id = self.cfg.instance_id
+        # trajectory_id = self.cfg.trajectory_id
         data = self.data
-        instance_id = data["instance_id"] if data["instance_id"] else self.cfg.instance_id
         instance = data["instance"]
+        
+        instance_id = instance["instance_id"]
+        
+        # assert instance_id == instance["instance_id"]
         result = self.result.get("results")
 
         skip_reason = (self.result.get("state") or {}).get("skip_reason")
@@ -216,14 +219,21 @@ class BiomniCodeActTrajectory(BaseTrajectory):
             return
 
         try:
-            eval_result = await self.task.evaluate_result(
-                result,
-                instance,
-                data["data_source"],
-                instance_id,
-                trajectory_id,
+            # Use the new BiomniRewardAdapter.compute_rewards
+            from skyrl_agent.tasks.biomni_reward_adapter import BiomniRewardAdapter
+            
+            metrics = BiomniRewardAdapter.compute_rewards(
+                instance=instance,
+                solution=result,
+                messages=self.result.get("messages", []),
+                instance_id=instance_id,
+                task_name=data.get("task_name")
             )
-            self.result["reward"] = eval_result
+            
+            self.result["reward"] = metrics["score"]
+            self.result["gt_reward"] = metrics["gt_reward"]
+            self.result["ft_reward"] = metrics["ft_reward"]
+            
         except Exception as e:
             print(f"Error evaluating result: {e}")
             self.result["reward"] = 0

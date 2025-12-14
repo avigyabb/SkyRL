@@ -119,6 +119,16 @@ class GeneralReactTask(BaseTask):
             # print(f"Evaluating codegen task with data_source: {data_source}, got {score=} {extracted_model_output=}")
             print(f"Evaluating codegen task with data_source: {data_source}, got {res['score']=}")
             return res["score"]
+        elif data_source.startswith("demo"):
+            from skyrl_agent.tasks.verifiers import naive_em_verifier
+
+            # print(f"Getting result {result}")
+            print(f"Evaluating task by exact string matchwith data_source: {data_source}, got {result=}")
+            res = naive_em_verifier.compute_score(result, ground_truth, extra_info=extra_info)
+            print(f"Evaluated task by exact string match with data_source: {data_source}, got {res=}")
+            # print(f"Evaluating codegen task with data_source: {data_source}, got {score=} {extracted_model_output=}")
+            print(f"Evaluating codegen task with data_source: {data_source}, got {res['score']=}")
+            return res["score"]
         else:
             raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
 
