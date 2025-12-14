@@ -1,3 +1,5 @@
+import json
+import random
 from typing import Any, Dict, TypedDict, List, Optional, Type, Callable
 from collections import defaultdict
 from abc import ABC, abstractmethod
@@ -205,6 +207,9 @@ class AgentRunner:
             debug_log = bool(self.cfg.generator.get("debug_log", False))
             enable_turn_reminder = bool(self.cfg.generator.get("enable_turn_reminder", False))
 
+            use_log_heavy = self.cfg.get("use_log_heavy", True)
+            log_heavy_freq = self.cfg.get("log_heavy_freq", 8)
+
             for traj_id in range(num_trajectories):
                 traj_cfg = TrajectoryConfig(
                     instance_id=instance_id,
@@ -221,6 +226,8 @@ class AgentRunner:
                     debug_log=debug_log,
                     early_step_threshold=self.cfg.generator.get("early_step_threshold", 0),
                     enable_turn_reminder=enable_turn_reminder,
+                    use_log_heavy=use_log_heavy,
+                    log_heavy_freq=log_heavy_freq,
                 )
                 traj: BaseTrajectory = self.traj_cls(
                     cfg=traj_cfg,
@@ -232,7 +239,7 @@ class AgentRunner:
                 )
                 self.trajectories[instance_id][traj_id] = traj
 
-    def _post_process_results(self, return_tensors=False, val_mode: bool = False) -> Dict[str, Any]:
+    def _post_process_results(self, return_tensors=False, val_mode: bool = False, global_step: int = 0) -> Dict[str, Any]:
         """
         Post-process the results to convert them into the appropriate output format.
 
@@ -240,6 +247,8 @@ class AgentRunner:
             A dictionary containing the processed results.
         """
         raw_reward_list = []
+        gt_reward_list = []
+        ft_reward_list = []
         all_results = {}
         matched_results = []
         instance_list = []
@@ -262,7 +271,7 @@ class AgentRunner:
         for batch_idx, content in enumerate(self.batch):
             data = self._get_data(content)
             instance = pd.Series(data["instance"])
-            instance_id = data["instance_id"] if data["instance_id"] else batch_idx
+            instance_id = data["instance_id"] if data["instance_id"] else batch_idx # this is always batch_idx for biomni workloads
             instance["instance_id"] = instance_id  # safe mutation
             trajectories = all_results.get(instance_id, {})
             matched_results.extend(trajectories.values())
@@ -287,6 +296,8 @@ class AgentRunner:
         for idx, result in enumerate(matched_results):
             reward = result.get("reward", False)
             raw_reward_list.append(reward)
+            gt_reward_list.append(result.get("gt_reward", 0.0))
+            ft_reward_list.append(result.get("ft_reward", 0.0))
         raw_reward = sum(raw_reward_list) / len(raw_reward_list)
         num_empty_messages = sum(1 for res in matched_results if not res.get("messages", []))
         # Handle empty messages by copying from another trajectory of the same instance
@@ -494,6 +505,16 @@ class AgentRunner:
 
         # Note: no backward-compat key kept (removed per request)
 
+        # 1. Calculate pass@n using GT reward (strictly task success)
+        total_per_instance_gt = defaultdict(int)
+        resolved_per_instance_gt = defaultdict(int)
+        for instance, reward in zip(instance_list, gt_reward_list):
+            instance_id = instance["instance_id"]
+            total_per_instance_gt[instance_id] += 1
+            if reward > 0:
+                resolved_per_instance_gt[instance_id] += 1
+
+        # 2. Calculate num_resolved using total reward (used for training signals)
         total_per_instance = defaultdict(int)
         resolved_per_instance = defaultdict(int)
         for instance, reward in zip(instance_list, resolved_list):
@@ -545,7 +566,46 @@ class AgentRunner:
             1 for reason in finish_reason_list if reason == "BAD_LLM_RESPONSE"
         ) / len(finish_reason_list)
         rollout_metrics["rollout_metrics/raw_reward"] = raw_reward
+        rollout_metrics["rollout_metrics/gt_reward"] = sum(gt_reward_list) / len(gt_reward_list) if gt_reward_list else 0.0
+        rollout_metrics["rollout_metrics/ft_reward"] = sum(ft_reward_list) / len(ft_reward_list) if ft_reward_list else 0.0
+        
+        # Calculate pass@n (percentage of instances with at least one success)
+        # Note: num_none_resolved counts instances where resolution rate is 0 (meaning 0 successes)
+        # So pass@n = (total_instances - instances_with_0_success) / total_instances
+        num_instances = len(total_per_instance_gt)
+        
+        # Calculate how many instances had 0 GT success
+        num_resolved_0_gt = 0
+        for instance in sorted(total_per_instance_gt):
+            total = total_per_instance_gt[instance]
+            resolved = resolved_per_instance_gt[instance]
+            if resolved == 0:
+                num_resolved_0_gt += 1
+
+        if num_instances > 0:
+            pass_at_n = (num_instances - num_resolved_0_gt) / num_instances
+            rollout_metrics["rollout_metrics/pass_at_n_percentage"] = pass_at_n
+        else:
+            rollout_metrics["rollout_metrics/pass_at_n_percentage"] = 0.0
+            
         rollout_metrics["rollout_metrics/num_empty_messages"] = num_empty_messages
+
+        # Count unique instances per task name (read from instance/task data only)
+        task_counts = defaultdict(int)
+        seen_instance_ids = set()
+        for inst in instance_list:
+            inst_id = inst["instance_id"]
+            if inst_id in seen_instance_ids:
+                continue
+            seen_instance_ids.add(inst_id)
+
+            task_name = inst.get("task_name")
+            if task_name is None:
+                continue
+            task_counts[task_name] += 1
+
+        for task_name, count in task_counts.items():
+            rollout_metrics[f"rollout_metrics/instances_per_task/{task_name}"] = int(count)
 
         # Optional aggregation of tool-call profiling if available
         try:
@@ -609,6 +669,50 @@ class AgentRunner:
         print("rollout metrics:", rollout_metrics)
 
         print(f"Finish reason: {finish_reason_list}")
+
+        use_log_heavy = self.cfg.get("use_log_heavy", True)
+        log_heavy_freq = self.cfg.get("log_heavy_freq", 8)
+        
+        
+        logger.info(f"use_log_heavy: {use_log_heavy}, log_heavy_freq: {log_heavy_freq}")
+        logger.info(f"global_step: {global_step}")
+
+        # global_step is 1-indexed
+        if use_log_heavy and (global_step - 1) % log_heavy_freq == 0:
+            print(f"\n[Log Heavy] Logging samples for global_step {global_step}")
+            # Sample up to 8 instances
+            sample_indices = random.sample(range(len(matched_results)), min(8, len(matched_results)))
+            
+            for idx in sample_indices:
+                res = matched_results[idx]
+                instance_id = res.get("instance_id")
+                trajectory_id = res.get("trajectory_id")
+                
+                # Find the corresponding data source/task name
+                instance_data = instance_list[idx]
+                
+                # Construct log payload
+                log_payload = {
+                    "global_step": global_step,
+                    "instance_id": str(instance_id),
+                    "trajectory_id": str(trajectory_id),
+                    "task_name": instance_data.get("data_source") or instance_data.get("task_name", "unknown"),
+                    "messages": res.get("messages", []),
+                    "reward": res.get("reward", 0.0),
+                    "gt_reward": res.get("gt_reward", 0.0),
+                    "ft_reward": res.get("ft_reward", 0.0),
+                    # "rollout_metrics": rollout_metrics, # Can be verbose to print every time
+                    "finish_reason": res.get("finish_reason"),
+                }
+                
+                print(f"--- Sample {idx} ---")
+                try:
+                    print(json.dumps(log_payload, indent=2, default=str))
+                except Exception as e:
+                    print(f"Failed to json dump payload: {e}")
+                    print(log_payload)
+                print("------------------\n")
+
         # Create tensor dictionary
         output = {
             "prompt_token_ids": prompt_input_ids,
@@ -683,7 +787,7 @@ class AgentRunner:
                 dispatcher_cfg, self.trajectories, init_fn=init_fn, run_fn=run_fn, eval_fn=eval_fn
             )
 
-        output = self._post_process_results(val_mode=val_mode)
+        output = self._post_process_results(val_mode=val_mode, global_step=input_batch.get("batch_metadata").global_step if hasattr(input_batch.get("batch_metadata"), "global_step") else 0)
 
         # reset after run
         self.trajectories = {}

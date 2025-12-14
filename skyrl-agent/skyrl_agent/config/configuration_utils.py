@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -30,6 +31,8 @@ class TrajectoryConfig:
     debug_log: bool = False
     early_step_threshold: int = 0  # Step count threshold for early reminder
     enable_turn_reminder: bool = False
+    use_log_heavy: bool = False
+    log_heavy_freq: int = 100
 
 
 # DEPR

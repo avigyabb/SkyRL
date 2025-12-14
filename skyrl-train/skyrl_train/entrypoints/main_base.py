@@ -134,6 +134,7 @@ class BasePPOExp:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
             tokenizer.pad_token_id = tokenizer.eos_token_id
+        logger.info(f"Tokenizer: {tokenizer}")
         return tokenizer
 
     def get_train_dataset(self):

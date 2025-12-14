@@ -108,6 +108,7 @@ class HFModelWrapper(nn.Module):
         rope_scaling: Dict[str, Any] = {},
         rope_theta: float | None = None,
         model_config_kwargs: dict = {},
+        config_override: Optional[dict] = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -141,6 +142,25 @@ class HFModelWrapper(nn.Module):
                 model_class = AutoModelForCausalLM
 
             model_config = AutoConfig.from_pretrained(pretrain_or_model, trust_remote_code=True, **model_config_kwargs)
+
+            # Apply config overrides if provided
+            if config_override:
+                for k, v in config_override.items():
+                    if isinstance(v, dict):
+                        # Handle nested dict: either update existing or create new
+                        if hasattr(model_config, k):
+                            existing = getattr(model_config, k)
+                            if isinstance(existing, dict):
+                                existing.update(v)
+                            else:
+                                # Attribute exists but is not a dict, replace it
+                                setattr(model_config, k, v)
+                        else:
+                            # Attribute doesn't exist, create it
+                            setattr(model_config, k, v)
+                    else:
+                        setattr(model_config, k, v)
+                logger.info(f"Overriding model config with: {config_override}")
 
             rope_scaling_kwargs = {}
             if rope_scaling:

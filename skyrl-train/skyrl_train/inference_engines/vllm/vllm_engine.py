@@ -297,6 +297,7 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
         openai_kwargs = pop_openai_kwargs(kwargs)
         enable_ray_prometheus_stats = kwargs.pop("enable_ray_prometheus_stats", False)
 
+        kwargs["disable_cascade_attn"] = True
         # TODO (erictang000): potentially enable log requests for a debugging mode
         if version.parse(vllm.__version__) >= version.parse("0.10.0"):
             engine_args = vllm.AsyncEngineArgs(enable_log_requests=False, **kwargs)

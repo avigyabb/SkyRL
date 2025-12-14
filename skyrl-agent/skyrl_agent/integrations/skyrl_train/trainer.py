@@ -238,6 +238,25 @@ def prepare_generator_input(
 class SkyRLAgentPPOTrainer(RayPPOTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # Sync n_samples_per_prompt with SkyAgent config
+        if hasattr(self.generator, "agent_generator") and hasattr(self.generator.agent_generator, "cfg"):
+            agent_cfg = self.generator.agent_generator.cfg
+            
+            # Training
+            if hasattr(agent_cfg.generator, "num_trajectories"):
+                num_traj = agent_cfg.generator.num_trajectories
+                if self.cfg.generator.n_samples_per_prompt != num_traj:
+                    logger.warning(f"Syncing n_samples_per_prompt from {self.cfg.generator.n_samples_per_prompt} to {num_traj} based on SkyAgent config")
+                    self.cfg.generator.n_samples_per_prompt = num_traj
+            
+            # Eval
+            if "val_config" in agent_cfg.generator and hasattr(agent_cfg.generator.val_config, "num_trajectories"):
+                 val_num_traj = agent_cfg.generator.val_config.num_trajectories
+                 if self.cfg.generator.eval_n_samples_per_prompt != val_num_traj:
+                     logger.warning(f"Syncing eval_n_samples_per_prompt from {self.cfg.generator.eval_n_samples_per_prompt} to {val_num_traj} based on SkyAgent config")
+                     self.cfg.generator.eval_n_samples_per_prompt = val_num_traj
+
         # reinitialize with new dataloader function for exact reproducibility across backends
         self.train_dataloader = build_dataloader(self.cfg, self.train_dataset, is_train=True)
         self.total_training_steps = len(self.train_dataloader) * self.cfg.trainer.epochs
@@ -347,7 +366,7 @@ class SkyRLAgentPPOTrainer(RayPPOTrainer):
 
                     # 2. print example just for debugging
                     vis = self.tokenizer.decode(generator_output["response_ids"][0])
-                    logger.info(f"Example:\n" f"  Input: {generator_input['prompts'][0]}\n" f"  Output:\n{vis}")
+                    logger.info(f"Example:\n" f"  Input: {generator_input['prompts'][0]}\n{generator_input['env_extras'][0]}\n" f"  Output:\n{vis}")
 
                     with Timer("convert_to_training_input", self.all_timings):
                         training_input: TrainingInputBatch = self.convert_to_training_input(generator_output, uids)
