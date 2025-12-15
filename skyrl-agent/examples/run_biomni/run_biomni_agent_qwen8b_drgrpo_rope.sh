@@ -161,6 +161,7 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   generator.sampling_params.top_p=$TOP_P \
   generator.sampling_params.max_generate_length=4096 \
   generator.max_input_length=45056 \
+  generator.enforce_eager=true \
   trainer.policy.fsdp_config.cpu_offload=true \
   trainer.policy.fsdp_config.reshard_after_forward=true \
   +generator.task="$AGENT_TASK_YAML" \
