@@ -19,6 +19,10 @@ export FLASHINFER_DISABLE_VERSION_CHECK=1
 
 # export VLLM_USE_V1=0
 export VLLM_DISABLE_COMPILE_CACHE=1
+export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
+export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1
+export RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES=1
+# export VLLM_ALLREDUCE_USE_SYMM_MEM=0
 
 export UV_CACHE_DIR=/dfs/scratch1/lansong/uv_cache
 export XDG_CACHE_HOME=$UV_CACHE_DIR
@@ -60,7 +64,7 @@ CLIP_RATIO_HIGH=0.28
 
 # Parallelism
 GPU_MEM_UTIL=0.75
-TP_SIZE=2
+TP_SIZE=1
 SP_SIZE=4
 NUM_GPUS_PER_NODE=8
 NNODES=1
@@ -134,7 +138,7 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   trainer.policy_mini_batch_size=$BATCH_SIZE \
   trainer.micro_train_batch_size_per_gpu=1 \
   trainer.micro_forward_batch_size_per_gpu=1 \
-  trainer.max_prompt_length=32768 \
+  trainer.max_prompt_length=45056 \
   trainer.eval_before_train=true \
   trainer.eval_interval=-1 \
   trainer.ckpt_interval=$SAVE_FREQ \
@@ -143,6 +147,10 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   trainer.run_name="$EXPERIMENT_NAME" \
   trainer.logger="$LOGGER" \
   trainer.resume_mode=none \
+  +trainer.policy.model.override_config.max_position_embeddings=49152 \
+  +trainer.policy.model.override_config.rope_scaling.rope_type=yarn \
+  +trainer.policy.model.override_config.rope_scaling.factor=1.5 \
+  +trainer.policy.model.override_config.rope_scaling.original_max_position_embeddings=32768 \
   generator.backend=vllm \
   generator.run_engines_locally=true \
   generator.n_samples_per_prompt=$NUM_TRAJ \
@@ -152,11 +160,14 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   generator.sampling_params.temperature=$TEMPERATURE \
   generator.sampling_params.top_p=$TOP_P \
   generator.sampling_params.max_generate_length=4096 \
-  generator.max_input_length=32768 \
-  generator.enforce_eager=true \
+  generator.max_input_length=45056 \
   trainer.policy.fsdp_config.cpu_offload=true \
   trainer.policy.fsdp_config.reshard_after_forward=true \
   +generator.task="$AGENT_TASK_YAML" \
+  +generator.engine_init_kwargs.rope_scaling.rope_type=yarn \
+  +generator.engine_init_kwargs.rope_scaling.factor=1.5 \
+  +generator.engine_init_kwargs.rope_scaling.original_max_position_embeddings=32768 \
+  +generator.engine_init_kwargs.max_model_len=49152 \
   +generator.use_log_heavy=true \
   +generator.log_heavy_freq=8 \
   $@

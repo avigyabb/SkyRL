@@ -301,6 +301,7 @@ class BiomniRuntimeClient:
         
         for attempt in range(max_retries):
             try:
+                start_time = time.time()
                 async with self._client.post(f"{self.base}/execute", json=payload,
                                              timeout=timeout+5) as r:
                     # Check for 404 with "Unknown session_id" error
@@ -311,14 +312,21 @@ class BiomniRuntimeClient:
                         continue
                     
                     r.raise_for_status()
-                    return (await r.json())["output"]
+                    output = (await r.json())["output"]
+                    
+                    duration = time.time() - start_time
+                    # logger.info(f"Execution finished in {duration:.2f}s")
+                    if duration > 180:
+                        logger.warning(f"Code execution took {duration:.2f} seconds. Code:\n{code}")
+                    
+                    return output
             except (aiohttp.ClientOSError, aiohttp.ServerDisconnectedError, aiohttp.ClientError) as e:
                 logger.warning(f"Connection error during execute on attempt {attempt + 1}/{max_retries}: {e}")
                 if attempt == max_retries - 1:
                     raise RuntimeError(f"Failed to execute code after {max_retries} attempts: {e}")
                 await asyncio.sleep(1.0 * (attempt + 1))  # exponential backoff
             except asyncio.TimeoutError as e:
-                logger.warning(f"Timeout error during execute on attempt {attempt + 1}/{max_retries}: {e}")
+                logger.warning(f"Timeout error during execute on attempt {attempt + 1}/{max_retries}: {e}. Code being executed:\n{code}")
                 if attempt == max_retries - 1:
                     raise RuntimeError(f"Code execution timed out after {max_retries} attempts: {e}")
                 await asyncio.sleep(1.0 * (attempt + 1))

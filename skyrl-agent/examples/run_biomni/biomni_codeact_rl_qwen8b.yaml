@@ -15,7 +15,7 @@ generator:
 
   num_trajectories: 8
   max_iterations: 48
-  max_prompt_length: 32768
+  max_prompt_length: 45056
   sampling_params:
     temperature: 1.0
     top_p: 1.0
