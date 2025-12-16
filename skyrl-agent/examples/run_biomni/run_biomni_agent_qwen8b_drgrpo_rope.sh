@@ -79,7 +79,7 @@ fi
 
 # If local SFT checkpoint isn't available on Ray workers, fall back to an HF repo id.
 # Override with: export HF_MODEL_ID="namespace/repo"
-: "${HF_MODEL_ID:=Qwen/Qwen2.5-3B-Instruct}"
+: "${HF_MODEL_ID:=Qwen/Qwen2.5-1.5B-Instruct}"
 if [ -d "$SFT_MODEL_PATH" ]; then
   MODEL_PATH="$SFT_MODEL_PATH"
 else

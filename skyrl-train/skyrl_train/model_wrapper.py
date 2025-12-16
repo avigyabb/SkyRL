@@ -3,7 +3,7 @@
 # https://github.com/OpenRLHF/OpenRLHF/blob/main/openrlhf/models/actor.py
 # https://github.com/OpenRLHF/OpenRLHF/blob/main/openrlhf/models/model.py
 
-from typing import Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 from copy import deepcopy
 
 import torch
@@ -107,6 +107,8 @@ class HFModelWrapper(nn.Module):
         sequence_parallel_size=1,
         use_sample_packing: bool = False,
         use_torch_compile: bool = False,
+        rope_scaling: Dict[str, Any] = {},
+        rope_theta: float | None = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -168,6 +170,12 @@ class HFModelWrapper(nn.Module):
             else:
                 model_class = AutoModelForCausalLM
 
+            rope_scaling_kwargs = {}
+            if rope_scaling:
+                rope_scaling_kwargs["rope_scaling"] = rope_scaling
+            if rope_theta:
+                rope_scaling_kwargs["rope_theta"] = rope_theta
+
             self.model = model_class.from_pretrained(
                 pretrain_or_model,
                 trust_remote_code=True,
@@ -176,6 +184,7 @@ class HFModelWrapper(nn.Module):
                 quantization_config=nf4_config,
                 torch_dtype=self._target_dtype,
                 device_map=device_map,
+                **rope_scaling_kwargs,
             )
 
             # gpt oss
@@ -329,6 +338,7 @@ class HFModelWrapper(nn.Module):
         temperature: float = 1.0,
         return_output=False,
         compute_entropy=False,
+        entropy_requires_grad=True,
     ) -> torch.Tensor:
         """Returns action log probs"""
         position_ids = attention_mask.long().cumsum(-1) - 1
@@ -398,7 +408,6 @@ class HFModelWrapper(nn.Module):
             ).squeeze(-1)
 
         if compute_entropy:
-            # entropy calculation as a metric - we use no grad
             # For sample packing: entropy is calculated on unpacked data, so no attention mask needed
             # For non-sample packing: pass the attention mask to exclude padding tokens
             entropy_mask = None
@@ -408,7 +417,7 @@ class HFModelWrapper(nn.Module):
                 entropy_mask = attention_mask_fwd
 
             entropy_BS = self.chunked_entropy_from_logits_fn(
-                logits_BSV, requires_grad=False, attention_mask=entropy_mask
+                logits_BSV, requires_grad=entropy_requires_grad, attention_mask=entropy_mask
             )
 
             if self.sequence_parallel_size > 1:
@@ -647,7 +656,6 @@ def get_llm_for_sequence_regression(
     if lora_rank > 0:
         model.enable_input_require_grads()
         lora_config = LoraConfig(
-            task_type=TaskType.CAUSAL_LM,
             r=lora_rank,
             lora_alpha=lora_alpha,
             target_modules=target_modules,

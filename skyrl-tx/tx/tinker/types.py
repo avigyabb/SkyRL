@@ -17,11 +17,15 @@ class RequestType(str, Enum):
 
     CREATE_MODEL = "create_model"
     FORWARD_BACKWARD = "forward_backward"
+    FORWARD = "forward"
     OPTIM_STEP = "optim_step"
     SAVE_WEIGHTS_FOR_SAMPLER = "save_weights_for_sampler"
     SAVE_WEIGHTS = "save_weights"
     LOAD_WEIGHTS = "load_weights"
     SAMPLE = "sample"
+
+    # External request that should not be processed by the engine
+    EXTERNAL = "external"
 
 
 class CheckpointType(str, Enum):
@@ -60,6 +64,9 @@ class AdamParams(BaseModel):
 class LoraConfig(BaseModel):
     rank: int
     alpha: float
+    train_attn: bool = True
+    train_mlp: bool = True
+    train_unembed: bool = False
 
 
 class CreateModelInput(BaseModel):
@@ -107,12 +114,7 @@ class ForwardBackwardOutput(BaseModel):
     metrics: dict
 
 
-class ForwardBackwardError(BaseModel):
-    error: str
-    status: str
-
-
-class SampleError(BaseModel):
+class ErrorResponse(BaseModel):
     error: str
     status: str
 
@@ -156,6 +158,7 @@ class SamplingParams(BaseModel):
     temperature: float
     max_tokens: int
     seed: int
+    stop: list[int] | None = None
 
 
 class ModelMetadata(BaseModel):
@@ -170,6 +173,7 @@ class SampleInput(BaseModel):
     sampling_params: SamplingParams
     num_samples: int
     checkpoint_id: str
+    prompt_logprobs: bool
 
 
 class GeneratedSequence(BaseModel):
@@ -180,9 +184,10 @@ class GeneratedSequence(BaseModel):
 
 class SampleOutput(BaseModel):
     sequences: list[GeneratedSequence]
-    prompt_logprobs: list[float]
+    prompt_logprobs: list[float] | None = None
 
 
 # Metrics tracked in the engine
 class EngineMetrics(BaseModel):
-    seq_len_jit_times: dict[int, float] = {}
+    train_seq_len_jit_times: dict[int, float] = {}
+    sample_seq_len_jit_times: dict[int, float] = {}
