@@ -75,6 +75,11 @@ class TrajectoryResult(TypedDict):
 
 
 class BaseTrajectory(ABC):
+    # Custom chat templates for tokenization in post-processing.
+    # Subclasses can override these to use agent-specific templates.
+    # If None, the default templates from skyrl_agent.functional.chat_template will be used.
+    CHAT_TEMPLATE: Optional[str] = None
+    CHAT_TEMPLATE_THINKING: Optional[str] = None
 
     def __init__(
         self,
@@ -376,6 +381,15 @@ class AgentRunner:
             finish_reason_list.append(result.get("finish_reason", None))
 
         # Encode messages, get assitant mask and position ids
+        # Use trajectory-class-specific templates if available, otherwise use defaults
+        traj_template = getattr(self.traj_cls, 'CHAT_TEMPLATE', None) or chat_template
+        traj_template_thinking = getattr(self.traj_cls, 'CHAT_TEMPLATE_THINKING', None) or chat_template_qwen3_thinking
+        
+        if getattr(self.traj_cls, 'CHAT_TEMPLATE', None) is None:
+            logger.warning("[AgentRunner] CHAT_TEMPLATE is None or missing for traj_cls, using the default chat template.")
+        if getattr(self.traj_cls, 'CHAT_TEMPLATE_THINKING', None) is None:
+            logger.warning("[AgentRunner] CHAT_TEMPLATE_THINKING is None or missing for traj_cls, using the default chat_template_qwen3_thinking.")
+        
         prompt_encodings = self.tokenizer.apply_chat_template(
             all_prompts,
             # return_tensors="pt",
@@ -387,7 +401,7 @@ class AgentRunner:
 
         response_encodings = self.tokenizer.apply_chat_template(
             all_responses,
-            chat_template=chat_template_qwen3_thinking if self.cfg.generator.remove_think_tokens else chat_template,
+            chat_template=traj_template_thinking if self.cfg.generator.remove_think_tokens else traj_template,
             return_assistant_tokens_mask=True,
             add_generation_prompt=False,
             return_dict=True,
