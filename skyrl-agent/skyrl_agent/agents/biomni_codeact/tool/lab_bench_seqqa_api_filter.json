@@ -1,0 +1,1272 @@
+{
+    "biomni.tool.literature": [
+        {
+            "name": "fetch_supplementary_info_from_doi",
+            "description": "Fetches supplementary information for a paper given its DOI and returns a research log.",
+            "required_parameters": [
+                {
+                    "name": "doi",
+                    "type": "str",
+                    "description": "The paper DOI",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "output_dir",
+                    "type": "str",
+                    "description": "Directory to save supplementary files",
+                    "default": "supplementary_info"
+                }
+            ]
+        },
+        {
+            "name": "extract_url_content",
+            "description": "Extract the text content of a webpage using requests and BeautifulSoup.",
+            "required_parameters": [
+                {
+                    "name": "url",
+                    "type": "str",
+                    "description": "Webpage URL to extract content from",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "extract_pdf_content",
+            "description": "Extract the text content of a PDF file given its URL.",
+            "required_parameters": [
+                {
+                    "name": "url",
+                    "type": "str",
+                    "description": "URL of the PDF file to extract text from",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "advanced_web_search",
+            "description": "Initiate an advanced web search by launching a specialized agent to collect relevant information and citations through multiple rounds of web searches for a given query.\nCraft the query carefully for the search agent to find the most relevant information.",
+            "required_parameters": [
+                {
+                    "name": "query",
+                    "type": "str",
+                    "description": "The query string that you want the agent to search for. May contain additional context or guidelines for the agent to follow.",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "max_searches",
+                    "type": "int",
+                    "description": "The max number of searches the agent may issue inside this request. The higher number of searches, the longer the returned results will be. You may tune this number based on the complexity of the query.",
+                    "default": 3
+                },
+                {
+                    "name": "max_retries",
+                    "type": "int",
+                    "description": "Maximum number of retry attempts with exponential backoff.",
+                    "default": 3
+                }
+            ]
+        }
+    ],
+    "biomni.tool.molecular_biology": [
+        {
+            "name": "annotate_open_reading_frames",
+            "description": "Find all Open Reading Frames (ORFs) in a DNA sequence using Biopython. Searches both forward and reverse complement strands.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "min_length",
+                    "type": "int",
+                    "description": "Minimum length of ORF in nucleotides",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "search_reverse",
+                    "type": "bool",
+                    "description": "Whether to search the reverse complement strand",
+                    "default": false
+                },
+                {
+                    "name": "filter_subsets",
+                    "type": "bool",
+                    "description": "Whether to filter out ORFs with same end but later start",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "annotate_plasmid",
+            "description": "Annotate a DNA sequence using pLannotate's command-line interface.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "The DNA sequence to annotate",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the sequence is circular",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "get_gene_coding_sequence",
+            "description": "Retrieves the coding sequence(s) of a specified gene from NCBI Entrez.",
+            "required_parameters": [
+                {
+                    "name": "gene_name",
+                    "type": "str",
+                    "description": "Name of the gene",
+                    "default": null
+                },
+                {
+                    "name": "organism",
+                    "type": "str",
+                    "description": "Name of the organism",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "email",
+                    "type": "str",
+                    "description": "Email address for NCBI Entrez (recommended)",
+                    "default": null
+                }
+            ]
+        },
+        {
+            "name": "get_plasmid_sequence",
+            "description": "Retrieve plasmid sequences from either Addgene or NCBI databases based on the provided identifier.",
+            "required_parameters": [
+                {
+                    "name": "identifier",
+                    "type": "str",
+                    "description": "Either an Addgene ID or plasmid name",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_addgene",
+                    "type": "bool",
+                    "description": "Force Addgene lookup if True, force NCBI if False. If None, auto-detects based on identifier format",
+                    "default": null
+                }
+            ]
+        },
+        {
+            "name": "align_sequences",
+            "description": "Align short sequences (primers) to a longer sequence, allowing for one mismatch. Checks both forward and reverse complement strands.",
+            "required_parameters": [
+                {
+                    "name": "long_seq",
+                    "type": "str",
+                    "description": "Target DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "short_seqs",
+                    "type": "Union[str, List[str]]",
+                    "description": "Single primer or list of primers",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "pcr_simple",
+            "description": "Simulate PCR amplification with given primers and sequence.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "Either a sequence string or path to plasmid file",
+                    "default": null
+                },
+                {
+                    "name": "forward_primer",
+                    "type": "str",
+                    "description": "Forward primer sequence (5' to 3')",
+                    "default": null
+                },
+                {
+                    "name": "reverse_primer",
+                    "type": "str",
+                    "description": "Reverse primer sequence (5' to 3')",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "circular",
+                    "type": "bool",
+                    "description": "Whether the sequence is circular",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "pcr_complex_multi_primers",
+            "description": "Simulate PCR amplification with multiple primers, considering all possible primer combinations and their potential products.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "Template DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "primers",
+                    "type": "List[str]",
+                    "description": "List of primer sequences (5' to 3')",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "circular",
+                    "type": "bool",
+                    "description": "Whether the sequence is circular",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "digest_sequence",
+            "description": "Simulates restriction enzyme digestion on a DNA sequence and returns the resulting fragments.",
+            "required_parameters": [
+                {
+                    "name": "dna_sequence",
+                    "type": "str",
+                    "description": "Input DNA sequence to be digested",
+                    "default": null
+                },
+                {
+                    "name": "enzyme_names",
+                    "type": "List[str]",
+                    "description": "Names of the restriction enzymes to use for digestion",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the DNA sequence is circular (True) or linear (False)",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "golden_gate",
+            "description": "Simulate a GoldenGate cloning reaction with Type IIS enzymes like BsaI, BbsI, BtgZI, and BsmBI.",
+            "required_parameters": [
+                {
+                    "name": "sequences",
+                    "type": "List[str]",
+                    "description": "List of DNA sequences to assemble",
+                    "default": null
+                },
+                {
+                    "name": "circular",
+                    "type": "List[bool]",
+                    "description": "List of booleans indicating whether each sequence is circular",
+                    "default": null
+                },
+                {
+                    "name": "enzyme_name",
+                    "type": "str",
+                    "description": "Name of the Type IIS enzyme to use",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "oligo_assembly",
+            "description": "Assemble two DNA sequences into an oligo with overhangs. Automatically detects overhang type and length.",
+            "required_parameters": [
+                {
+                    "name": "seq1",
+                    "type": "str",
+                    "description": "First DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "seq2",
+                    "type": "str",
+                    "description": "Second DNA sequence",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "gibson_assembly",
+            "description": "Simulate a Gibson Assembly reaction to join DNA fragments with overlapping sequences.",
+            "required_parameters": [
+                {
+                    "name": "fragments",
+                    "type": "List[str]",
+                    "description": "List of DNA sequences to be assembled",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "min_overlap",
+                    "type": "int",
+                    "description": "Minimum length of overlapping regions between fragments",
+                    "default": 15
+                }
+            ]
+        },
+        {
+            "name": "find_restriction_sites",
+            "description": "Identifies restriction enzyme sites in a given DNA sequence for specified enzymes.",
+            "required_parameters": [
+                {
+                    "name": "dna_sequence",
+                    "type": "str",
+                    "description": "Complete input DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "enzymes",
+                    "type": "List[str]",
+                    "description": "List of restriction enzyme names to check",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the DNA sequence is circular (True) or linear (False)",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "find_restriction_enzymes",
+            "description": "Finds common restriction enzyme sites in a DNA sequence and returns their cut positions.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "DNA sequence to analyze",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the sequence is circular",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "design_primers_with_overhangs",
+            "description": "Design two primers to amplify a target sequence with optional overhangs.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "Target DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "forward_overhang",
+                    "type": "str",
+                    "description": "Overhang sequence for forward primer",
+                    "default": null
+                },
+                {
+                    "name": "reverse_overhang",
+                    "type": "str",
+                    "description": "Overhang sequence for reverse primer",
+                    "default": null
+                },
+                {
+                    "name": "target_tm",
+                    "type": "float",
+                    "description": "Target melting temperature",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "min_primer_length",
+                    "type": "int",
+                    "description": "Minimum primer length",
+                    "default": 15
+                }
+            ]
+        },
+        {
+            "name": "find_sequence_mutations",
+            "description": "Compare query sequence against reference sequence to identify mutations.",
+            "required_parameters": [
+                {
+                    "name": "query_sequence",
+                    "type": "str",
+                    "description": "The sequence being analyzed",
+                    "default": null
+                },
+                {
+                    "name": "reference_sequence",
+                    "type": "str",
+                    "description": "The reference sequence to compare against",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "query_start",
+                    "type": "int",
+                    "description": "The start position of the query sequence",
+                    "default": 1
+                }
+            ]
+        },
+        {
+            "name": "get_molecular_cloning_instructions",
+            "description": "Returns molecular cloning instructions containing important notes about plasmid DNA sequences.",
+            "required_parameters": [],
+            "optional_parameters": []
+        },
+        {
+            "name": "calculate_element_distances",
+            "description": "Calculate pairwise distances between elements on a DNA sequence/plasmid.",
+            "required_parameters": [
+                {
+                    "name": "sequence_length",
+                    "type": "int",
+                    "description": "Length of the DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "element_positions",
+                    "type": "List[Dict[str, Union[str, int]]]",
+                    "description": "List of dictionaries containing element name, start position (0-based), and end position",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the sequence is circular",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "design_knockout_sgrna",
+            "description": "Design sgRNAs for CRISPR knockout by searching pre-computed sgRNA libraries. Returns optimized guide RNAs for targeting a specific gene.",
+            "required_parameters": [
+                {
+                    "name": "gene_name",
+                    "type": "str",
+                    "description": "Target gene symbol/name (e.g., \"EGFR\", \"TP53\")",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "species",
+                    "type": "str",
+                    "description": "Target organism species",
+                    "default": "human"
+                },
+                {
+                    "name": "num_guides",
+                    "type": "int",
+                    "description": "Number of guides to return",
+                    "default": 1
+                }
+            ]
+        },
+        {
+            "name": "design_golden_gate_oligos",
+            "description": "Design complementary oligonucleotides with Type IIS restriction enzyme overhangs for Golden Gate assembly based on restriction site analysis of the backbone.",
+            "required_parameters": [
+                {
+                    "name": "insert_sequence",
+                    "type": "str",
+                    "description": "Sequence to be inserted (e.g., sgRNA target sequence)",
+                    "default": null
+                },
+                {
+                    "name": "backbone_sequence",
+                    "type": "str",
+                    "description": "Complete backbone sequence",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "enzyme_name",
+                    "type": "str",
+                    "description": "Type IIS restriction enzyme to be used",
+                    "default": "BsmBI"
+                },
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the backbone is circular",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "get_oligo_annealing_protocol",
+            "description": "Return a standard protocol for annealing oligonucleotides without phosphorylation.",
+            "required_parameters": [],
+            "optional_parameters": []
+        },
+        {
+            "name": "get_golden_gate_assembly_protocol",
+            "description": "Return a customized protocol for Golden Gate assembly based on the number of inserts and specific DNA sequences.",
+            "required_parameters": [
+                {
+                    "name": "enzyme_name",
+                    "type": "str",
+                    "description": "Type IIS restriction enzyme to be used",
+                    "default": null
+                },
+                {
+                    "name": "vector_length",
+                    "type": "int",
+                    "description": "Length of the destination vector in bp",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "num_inserts",
+                    "type": "int",
+                    "description": "Number of inserts to be assembled",
+                    "default": 1
+                },
+                {
+                    "name": "vector_amount_ng",
+                    "type": "float",
+                    "description": "Amount of vector to use in ng",
+                    "default": 75.0
+                },
+                {
+                    "name": "insert_lengths",
+                    "type": "List[int]",
+                    "description": "List of insert lengths in bp",
+                    "default": null
+                },
+                {
+                    "name": "is_library_prep",
+                    "type": "bool",
+                    "description": "Whether this is for library preparation",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "get_bacterial_transformation_protocol",
+            "description": "Return a standard protocol for bacterial transformation.",
+            "required_parameters": [],
+            "optional_parameters": [
+                {
+                    "name": "antibiotic",
+                    "type": "str",
+                    "description": "Selection antibiotic",
+                    "default": "ampicillin"
+                },
+                {
+                    "name": "is_repetitive",
+                    "type": "bool",
+                    "description": "Whether the sequence contains repetitive elements",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "design_primer",
+            "description": "Design a single primer within the given sequence window.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "Target DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "start_pos",
+                    "type": "int",
+                    "description": "Starting position for primer search",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "primer_length",
+                    "type": "int",
+                    "description": "Length of the primer to design",
+                    "default": 20
+                },
+                {
+                    "name": "min_gc",
+                    "type": "float",
+                    "description": "Minimum GC content",
+                    "default": 0.4
+                },
+                {
+                    "name": "max_gc",
+                    "type": "float",
+                    "description": "Maximum GC content",
+                    "default": 0.6
+                },
+                {
+                    "name": "min_tm",
+                    "type": "float",
+                    "description": "Minimum melting temperature in \u00b0C",
+                    "default": 55.0
+                },
+                {
+                    "name": "max_tm",
+                    "type": "float",
+                    "description": "Maximum melting temperature in \u00b0C",
+                    "default": 65.0
+                },
+                {
+                    "name": "search_window",
+                    "type": "int",
+                    "description": "Size of window to search for primers",
+                    "default": 100
+                }
+            ]
+        },
+        {
+            "name": "design_verification_primers",
+            "description": "Design Sanger sequencing primers to verify a specific region in a plasmid. First tries to use primers from an existing primer pool. If they cannot fully cover the region, designs additional primers as needed.",
+            "required_parameters": [
+                {
+                    "name": "plasmid_sequence",
+                    "type": "str",
+                    "description": "The complete plasmid sequence",
+                    "default": null
+                },
+                {
+                    "name": "target_region",
+                    "type": "Tuple[int, int]",
+                    "description": "Start and end positions to verify (0-based indexing)",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "existing_primers",
+                    "type": "Optional[List[Dict[str, str]]]",
+                    "description": "List of existing primers with their sequences and optional names",
+                    "default": null
+                },
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the plasmid is circular",
+                    "default": true
+                },
+                {
+                    "name": "coverage_length",
+                    "type": "int",
+                    "description": "Typical read length for each primer",
+                    "default": 800
+                },
+                {
+                    "name": "primer_length",
+                    "type": "int",
+                    "description": "Length of newly designed primers",
+                    "default": 20
+                },
+                {
+                    "name": "min_gc",
+                    "type": "float",
+                    "description": "Minimum GC content for new primers",
+                    "default": 0.4
+                },
+                {
+                    "name": "max_gc",
+                    "type": "float",
+                    "description": "Maximum GC content for new primers",
+                    "default": 0.6
+                },
+                {
+                    "name": "min_tm",
+                    "type": "float",
+                    "description": "Minimum melting temperature in \u00b0C",
+                    "default": 55.0
+                },
+                {
+                    "name": "max_tm",
+                    "type": "float",
+                    "description": "Maximum melting temperature in \u00b0C",
+                    "default": 65.0
+                }
+            ]
+        },
+        {
+            "name": "design_knockout_sgrna",
+            "description": "Design SpCas9 sgRNAs for CRISPR knockout by searching pre-computed sgRNA libraries. Returns optimized guide RNAs for targeting a specific gene.",
+            "required_parameters": [
+                {
+                    "name": "gene_name",
+                    "type": "str",
+                    "description": "Target gene symbol/name (e.g., \"EGFR\", \"TP53\")",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "species",
+                    "type": "str",
+                    "description": "Target organism species",
+                    "default": "human"
+                },
+                {
+                    "name": "num_guides",
+                    "type": "int",
+                    "description": "Number of guides to return",
+                    "default": 1
+                }
+            ]
+        },
+        {
+            "name": "design_golden_gate_oligos",
+            "description": "Design oligos for Golden Gate assembly by identifying backbone overhangs and creating matching insert oligos.",
+            "required_parameters": [
+                {
+                    "name": "backbone_sequence",
+                    "type": "str",
+                    "description": "The plasmid/backbone sequence",
+                    "default": null
+                },
+                {
+                    "name": "insert_sequence",
+                    "type": "str",
+                    "description": "Sequence to be inserted",
+                    "default": null
+                },
+                {
+                    "name": "enzyme_name",
+                    "type": "str",
+                    "description": "Type IIS restriction enzyme to be used",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the backbone is circular",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "find_restriction_sites",
+            "description": "Identifies restriction enzyme sites in a given DNA sequence for specified enzymes.",
+            "required_parameters": [
+                {
+                    "name": "dna_sequence",
+                    "type": "str",
+                    "description": "Complete input DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "enzymes",
+                    "type": "List[str]",
+                    "description": "List of restriction enzyme names to check",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the DNA sequence is circular (True) or linear (False)",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "find_restriction_enzymes",
+            "description": "Finds restriction enzyme sites in a DNA sequence from a curated list of common enzymes.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "DNA sequence to analyze",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the sequence is circular",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "get_oligo_annealing_protocol",
+            "description": "Return a standard protocol for annealing oligonucleotides without phosphorylation.",
+            "required_parameters": [],
+            "optional_parameters": []
+        },
+        {
+            "name": "get_golden_gate_assembly_protocol",
+            "description": "Return a customized protocol for Golden Gate assembly based on the number of inserts and specific DNA sequences.",
+            "required_parameters": [],
+            "optional_parameters": [
+                {
+                    "name": "num_inserts",
+                    "type": "int",
+                    "description": "Number of inserts to be assembled",
+                    "default": 1
+                },
+                {
+                    "name": "enzyme_name",
+                    "type": "str",
+                    "description": "Type IIS restriction enzyme to be used",
+                    "default": null
+                },
+                {
+                    "name": "vector_length",
+                    "type": "int",
+                    "description": "Length of the destination vector in bp",
+                    "default": null
+                },
+                {
+                    "name": "vector_amount_ng",
+                    "type": "float",
+                    "description": "Amount of vector to use in ng",
+                    "default": 75.0
+                },
+                {
+                    "name": "insert_lengths",
+                    "type": "List[int]",
+                    "description": "List of insert lengths in bp",
+                    "default": null
+                },
+                {
+                    "name": "is_library_prep",
+                    "type": "bool",
+                    "description": "Whether this is for library preparation",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "get_bacterial_transformation_protocol",
+            "description": "Return a standard protocol for bacterial transformation.",
+            "required_parameters": [],
+            "optional_parameters": [
+                {
+                    "name": "antibiotic",
+                    "type": "str",
+                    "description": "Selection antibiotic",
+                    "default": "ampicillin"
+                },
+                {
+                    "name": "is_repetitive",
+                    "type": "bool",
+                    "description": "Whether the sequence contains repetitive elements",
+                    "default": false
+                },
+                {
+                    "name": "is_library_transformation",
+                    "type": "bool",
+                    "description": "Whether this is a library transformation",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "annotate_plasmid",
+            "description": "Annotate a DNA sequence for common plasmid features using pLannotate.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "The DNA sequence to annotate",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the sequence is circular",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "align_sequences",
+            "description": "Align short sequences (primers) to a longer sequence, allowing for one mismatch. Checks both forward and reverse complement strands.",
+            "required_parameters": [
+                {
+                    "name": "long_seq",
+                    "type": "str",
+                    "description": "Target DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "short_seqs",
+                    "type": "Union[str, List[str]]",
+                    "description": "Single primer or list of primers",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "design_primer",
+            "description": "Design a single primer within the given sequence window.",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "Target DNA sequence",
+                    "default": null
+                },
+                {
+                    "name": "start_pos",
+                    "type": "int",
+                    "description": "Starting position for primer search",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "primer_length",
+                    "type": "int",
+                    "description": "Length of the primer to design",
+                    "default": 20
+                },
+                {
+                    "name": "min_gc",
+                    "type": "float",
+                    "description": "Minimum GC content",
+                    "default": 0.4
+                },
+                {
+                    "name": "max_gc",
+                    "type": "float",
+                    "description": "Maximum GC content",
+                    "default": 0.6
+                },
+                {
+                    "name": "min_tm",
+                    "type": "float",
+                    "description": "Minimum melting temperature in \u00b0C",
+                    "default": 55.0
+                },
+                {
+                    "name": "max_tm",
+                    "type": "float",
+                    "description": "Maximum melting temperature in \u00b0C",
+                    "default": 65.0
+                },
+                {
+                    "name": "search_window",
+                    "type": "int",
+                    "description": "Size of window to search for primers",
+                    "default": 100
+                }
+            ]
+        },
+        {
+            "name": "design_verification_primers",
+            "description": "Design Sanger sequencing primers to verify a specific region in a plasmid, using existing primers when possible and designing new primers as needed.",
+            "required_parameters": [
+                {
+                    "name": "plasmid_sequence",
+                    "type": "str",
+                    "description": "The complete plasmid sequence",
+                    "default": null
+                },
+                {
+                    "name": "target_region",
+                    "type": "Tuple[int, int]",
+                    "description": "Start and end positions to verify (0-based indexing)",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "existing_primers",
+                    "type": "Optional[List[Dict[str, str]]]",
+                    "description": "List of existing primers with their sequences and optional names",
+                    "default": null
+                },
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the plasmid is circular",
+                    "default": true
+                },
+                {
+                    "name": "coverage_length",
+                    "type": "int",
+                    "description": "Typical read length for each primer in base pairs",
+                    "default": 800
+                },
+                {
+                    "name": "primer_length",
+                    "type": "int",
+                    "description": "Length of newly designed primers",
+                    "default": 20
+                },
+                {
+                    "name": "min_gc",
+                    "type": "float",
+                    "description": "Minimum GC content for new primers",
+                    "default": 0.4
+                },
+                {
+                    "name": "max_gc",
+                    "type": "float",
+                    "description": "Maximum GC content for new primers",
+                    "default": 0.6
+                },
+                {
+                    "name": "min_tm",
+                    "type": "float",
+                    "description": "Minimum melting temperature in \u00b0C",
+                    "default": 55.0
+                },
+                {
+                    "name": "max_tm",
+                    "type": "float",
+                    "description": "Maximum melting temperature in \u00b0C",
+                    "default": 65.0
+                }
+            ]
+        },
+        {
+            "name": "simulate_golden_gate_assembly",
+            "description": "Simulate Golden Gate assembly to predict final construct sequences.",
+            "required_parameters": [
+                {
+                    "name": "backbone_sequence",
+                    "type": "str",
+                    "description": "Complete backbone sequence",
+                    "default": null
+                },
+                {
+                    "name": "enzyme_name",
+                    "type": "str",
+                    "description": "Type IIS restriction enzyme to be used (e.g., \"BsmBI\", \"BsaI\")",
+                    "default": null
+                },
+                {
+                    "name": "fragments",
+                    "type": "List[Dict[str, str]]",
+                    "description": "List of fragments to insert, containing either name+sequence or name+fwd_oligo+rev_oligo",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the backbone is circular",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "perform_gibson_assembly",
+            "description": "Perform a complete Gibson Assembly workflow: linearize backbone, design primers, and simulate assembly.",
+            "required_parameters": [
+                {
+                    "name": "plasmid_sequence",
+                    "type": "str",
+                    "description": "The complete circular plasmid sequence",
+                    "default": null
+                },
+                {
+                    "name": "replace_region",
+                    "type": "Tuple[int, int]",
+                    "description": "Start and end positions of region to be replaced (0-based)",
+                    "default": null
+                },
+                {
+                    "name": "fragments",
+                    "type": "List[Dict[str, str]]",
+                    "description": "List of fragments to insert, each containing name and sequence",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether final construct should be circular",
+                    "default": true
+                },
+                {
+                    "name": "overlap_length",
+                    "type": "int",
+                    "description": "Length of overlapping regions for Gibson",
+                    "default": 20
+                },
+                {
+                    "name": "primer_binding_length",
+                    "type": "int",
+                    "description": "Length of primer binding portion",
+                    "default": 20
+                },
+                {
+                    "name": "min_gc",
+                    "type": "float",
+                    "description": "Minimum GC content for primers",
+                    "default": 0.4
+                },
+                {
+                    "name": "max_gc",
+                    "type": "float",
+                    "description": "Maximum GC content for primers",
+                    "default": 0.6
+                },
+                {
+                    "name": "min_tm_binding",
+                    "type": "float",
+                    "description": "Minimum Tm for primer binding",
+                    "default": 55.0
+                },
+                {
+                    "name": "max_tm_binding",
+                    "type": "float",
+                    "description": "Maximum Tm for primer binding",
+                    "default": 65.0
+                },
+                {
+                    "name": "min_tm_overlap",
+                    "type": "float",
+                    "description": "Minimum Tm for overlaps",
+                    "default": 48.0
+                },
+                {
+                    "name": "backbone_amount_ng",
+                    "type": "float",
+                    "description": "Amount of backbone to use in ng",
+                    "default": 100.0
+                }
+            ]
+        },
+        {
+            "name": "simulate_gateway_cloning",
+            "description": "Simulates Gateway cloning by extracting an insert from an entry plasmid (between attL1 and attL2 sites) and inserting it into a destination plasmid (replacing the region between attR1 and attR2 sites).",
+            "required_parameters": [
+                {
+                    "name": "entry_plasmid",
+                    "type": "str",
+                    "description": "Sequence of the entry plasmid containing the insert",
+                    "default": null
+                },
+                {
+                    "name": "destination_plasmid",
+                    "type": "str",
+                    "description": "Sequence of the destination plasmid",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the plasmids are circular",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "get_gateway_cloning_protocol",
+            "description": "Generate a protocol for Gateway LR cloning to transfer a gene from an entry clone to a destination vector.",
+            "required_parameters": [],
+            "optional_parameters": [
+                {
+                    "name": "entry_clone_concentration",
+                    "type": "float",
+                    "description": "Concentration of entry clone in ng/\u00b5l",
+                    "default": null
+                },
+                {
+                    "name": "entry_clone_amount_ng",
+                    "type": "float",
+                    "description": "Amount of entry clone to use in ng",
+                    "default": 100.0
+                },
+                {
+                    "name": "destination_vector_concentration",
+                    "type": "float",
+                    "description": "Concentration of destination vector in ng/\u00b5l",
+                    "default": 150.0
+                },
+                {
+                    "name": "include_calculations",
+                    "type": "bool",
+                    "description": "Whether to include calculations in the protocol",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "simulate_sequence_digestion",
+            "description": "Simulates restriction enzyme digestion on a DNA sequence and returns the resulting fragments with their properties.",
+            "required_parameters": [
+                {
+                    "name": "dna_sequence",
+                    "type": "str",
+                    "description": "Input DNA sequence to be digested",
+                    "default": null
+                },
+                {
+                    "name": "enzyme_names",
+                    "type": "List[str]",
+                    "description": "List of restriction enzyme names to use for digestion",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "is_circular",
+                    "type": "bool",
+                    "description": "Whether the DNA sequence is circular (True) or linear (False)",
+                    "default": true
+                }
+            ]
+        }
+    ]
+}
