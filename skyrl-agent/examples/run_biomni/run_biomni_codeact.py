@@ -6,10 +6,10 @@ from transformers import AutoTokenizer
 from skyrl_agent import AutoAgentRunner
 
 
-USER_PROMPT = """Your task is to identify likely causal genes within a locus for a given GWAS phenotype. From the list, provide only the likely causal gene (matching one of the given genes). 
+USER_PROMPT = """Your task is to identify likely causal genes within a locus for a given GWAS phenotype. From the list, provide the most likely causal gene. 
 Identify the causal gene.
-GWAS phenotype: Nausea
-Genes in locus: {ANKK1},{CLDN25},{DRD2},{HTR3A},{HTR3B},{NNMT},{TMPRSS5},{TTC12},{USP28},{ZBTB16},{ZW10}
+GWAS phenotype: Iron status biomarkers (iron levels)
+Genes in locus: {ACHE},{ACTL6B},{AGFG2},{ENSG00000289690},{ENSG00000289760},{EPHB4},{EPO},{FBXO24},{GAL3ST4},{GIGYF1},{GNB2},{GPC2},{LAMTOR4},{LRCH4},{MEPCE},{MOSPD3},{MUC12},{MUC17},{MUC3A},{NYAP1},{PCOLCE},{PILRA},{PILRB},{POP7},{PPP1R35},{PVRIG},{SAP25},{SERPINE1},{SLC12A9},{SPACDR},{SPDYE3},{SRRT},{STAG3},{TFR2},{TRAPPC14},{TRIM56},{TRIP6},{TSC22D4},{UFSP1},{ZAN},{ZCWPW1}.
 You must output only the name of the gene in your final solution, e.g., <solution>BRCA1</solution>, with no other text between the <solution> and </solution> tags."""
 
 def build_demo_dataset():
@@ -26,8 +26,9 @@ def build_demo_dataset():
                 }
             ],
             "data_source": "demo.biomni",
+            "instance_id": 309,
             # minimal reward payload expected by GeneralReactTask.evaluate_result
-            "reward_model": {"ground_truth": "DRD2"},
+            "reward_model": {"ground_truth": "TFR2"},
             "extra_info": {},
         }
     ]

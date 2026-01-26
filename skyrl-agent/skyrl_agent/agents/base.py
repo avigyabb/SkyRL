@@ -254,6 +254,12 @@ class AgentRunner:
         raw_reward_list = []
         gt_reward_list = []
         ft_reward_list = []
+        rubric_reward_list = []
+        # Itemized rubric scores
+        rubric_output_grading_list = []
+        rubric_methodology_list = []
+        rubric_code_handling_list = []
+        rubric_reasoning_list = []
         all_results = {}
         matched_results = []
         instance_list = []
@@ -302,6 +308,13 @@ class AgentRunner:
             raw_reward_list.append(reward)
             gt_reward_list.append(result.get("gt_reward", 0.0))
             ft_reward_list.append(result.get("ft_reward", 0.0))
+            rubric_reward_list.append(result.get("rubric_reward", 0.0))
+            # Collect itemized rubric scores if available
+            rubric_details = result.get("rubric_details", {})
+            rubric_output_grading_list.append(rubric_details.get("output_grading", 0.0))
+            rubric_methodology_list.append(rubric_details.get("methodology_knowhow", 0.0))
+            rubric_code_handling_list.append(rubric_details.get("code_data_handling", 0.0))
+            rubric_reasoning_list.append(rubric_details.get("reasoning_coherence", 0.0))
         raw_reward = sum(raw_reward_list) / len(raw_reward_list)
         num_empty_messages = sum(1 for res in matched_results if not res.get("messages", []))
         # Handle empty messages by copying from another trajectory of the same instance
@@ -417,6 +430,24 @@ class AgentRunner:
             [0] * len(mask) if (reason in mask_out_reason) else mask
             for mask, reason in zip(response_assistant_mask, finish_reason_list)
         ]
+        
+        # Additional filtering: mask out overlong rollouts with bad formatting
+        # Configurable threshold (default: 32768 tokens)
+        overlong_threshold = self.cfg.get("overlong_filter_threshold", 32768)
+        overlong_filter_enabled = self.cfg.get("overlong_filter_enabled", False)
+        num_overlong_filtered = 0
+        
+        if overlong_filter_enabled:
+            for idx, (ids, ft_reward, mask) in enumerate(zip(response_ids, ft_reward_list, loss_mask)):
+                response_len = len(ids)
+                # If response is overlong AND format reward is 0, mask it out
+                if response_len > overlong_threshold and ft_reward == 0.0:
+                    loss_mask[idx] = [0] * len(mask)
+                    num_overlong_filtered += 1
+                    logger.info(
+                        f"[Overlong Filter] Masked out rollout {idx}: "
+                        f"response_len={response_len} > threshold={overlong_threshold}, ft_reward={ft_reward}"
+                    )
 
         rollout_metrics = {}
         # Compute assistant-based turn average and record metric
@@ -482,9 +513,17 @@ class AgentRunner:
         rollout_metrics["rollout_metrics/num_mask_non_zero_reward"] = sum(
             1 for mask, reward in zip(loss_mask, resolved_list) if all(m == 0 for m in mask) and reward > 0
         )
+        # Track overlong + bad format filtered rollouts
+        rollout_metrics["rollout_metrics/num_overlong_filtered"] = num_overlong_filtered if overlong_filter_enabled else 0
         rollout_metrics["rollout_metrics/raw_reward"] = raw_reward
         rollout_metrics["rollout_metrics/gt_reward"] = sum(gt_reward_list) / len(gt_reward_list) if gt_reward_list else 0.0
         rollout_metrics["rollout_metrics/ft_reward"] = sum(ft_reward_list) / len(ft_reward_list) if ft_reward_list else 0.0
+        rollout_metrics["rollout_metrics/rubric_reward"] = sum(rubric_reward_list) / len(rubric_reward_list) if rubric_reward_list else 0.0
+        # Itemized rubric scores (for rubric-based evaluation)
+        rollout_metrics["rollout_metrics/rubric_output_grading"] = sum(rubric_output_grading_list) / len(rubric_output_grading_list) if rubric_output_grading_list else 0.0
+        rollout_metrics["rollout_metrics/rubric_methodology"] = sum(rubric_methodology_list) / len(rubric_methodology_list) if rubric_methodology_list else 0.0
+        rollout_metrics["rollout_metrics/rubric_code_handling"] = sum(rubric_code_handling_list) / len(rubric_code_handling_list) if rubric_code_handling_list else 0.0
+        rollout_metrics["rollout_metrics/rubric_reasoning"] = sum(rubric_reasoning_list) / len(rubric_reasoning_list) if rubric_reasoning_list else 0.0
         
         # Calculate pass@n (percentage of instances with at least one success)
         # Note: num_none_resolved counts instances where resolution rate is 0 (meaning 0 successes)
@@ -611,6 +650,8 @@ class AgentRunner:
                 instance_data = instance_list[idx]
                 
                 # Construct log payload
+                # Get rubric details if available
+                rubric_details = res.get("rubric_details", {})
                 log_payload = {
                     "global_step": global_step,
                     "instance_id": str(instance_id),
@@ -620,6 +661,14 @@ class AgentRunner:
                     "reward": res.get("reward", 0.0),
                     "gt_reward": res.get("gt_reward", 0.0),
                     "ft_reward": res.get("ft_reward", 0.0),
+                    "rubric_reward": res.get("rubric_reward", 0.0),
+                    # Itemized rubric scores
+                    "rubric_output_grading": rubric_details.get("output_grading", 0.0),
+                    "rubric_methodology": rubric_details.get("methodology_knowhow", 0.0),
+                    "rubric_code_handling": rubric_details.get("code_data_handling", 0.0),
+                    "rubric_reasoning": rubric_details.get("reasoning_coherence", 0.0),
+                    "rubric_rationale": rubric_details.get("rationale", ""),
+                    "rubric_weaknesses": rubric_details.get("weaknesses", []),
                     # "rollout_metrics": rollout_metrics, # Can be verbose to print every time
                     "finish_reason": res.get("finish_reason"),
                 }

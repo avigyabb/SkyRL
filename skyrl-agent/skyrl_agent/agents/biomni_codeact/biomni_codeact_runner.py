@@ -129,13 +129,18 @@ class BiomniCodeActTrajectory(BaseTrajectory):
                 llm_ctx_limit,
                 resp_budget,
             )
+        
+        print("instantiating rollout agent")
+        print(f"Task name: {data.get('task_name')}")
+        print(f"Instance ID: {instance_id}")
+        print(f"Prompt: {prompt_str}")
 
         # Run single Biomni agent within dispatcher-managed trajectory
         async with BiomniRuntimeClient(runtime_url) as rt:
             self.agent = BiomniCodeActAgent(
                 prompt=prompt_str,
                 instance_id=instance_id,
-                task_name=self.task.__class__.__name__,
+                task_name=data.get("task_name"),
                 runtime=rt,
                 infer_engine=engine_adapter,
                 tokenizer=self.tokenizer,
