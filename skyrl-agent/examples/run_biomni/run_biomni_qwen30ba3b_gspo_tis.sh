@@ -50,9 +50,11 @@ MEGATRON_CP=1
 MEGATRON_EP=8
 MEGATRON_ETP=1
 
-# vLLM inference tensor-parallel size
-INFER_TP=8
-NUM_INFERENCE_ENGINES=$((NUM_GPUS_TOTAL / INFER_TP))
+# vLLM inference parallelism (EP = DP * TP constraint)
+INFER_TP=4
+INFER_EP=4   # EP = DP * TP = 1 * 4 = 4
+INFER_DP=1
+NUM_INFERENCE_ENGINES=$((NUM_GPUS_TOTAL / (INFER_TP * INFER_DP)))  # 32 / (4 * 1) = 8 engines
 
 # -----------------------------
 # RL / optimization knobs
@@ -76,10 +78,10 @@ TIS_IMP_RATIO_CAP=2.0
 TIS_MODE="sequence"   # token|sequence
 
 # Lengths
-MAX_PROMPT_LENGTH=45056
+MAX_PROMPT_LENGTH=49152
 MAX_RESPONSE_LENGTH=4096
 # vLLM model len = prompt + response (+ small buffer)
-VLLM_MAX_MODEL_LEN=50000
+VLLM_MAX_MODEL_LEN=55000
 
 TEMPERATURE=1.0
 TOP_P=1.0
@@ -130,6 +132,8 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   generator.backend=vllm \
   generator.run_engines_locally=true \
   generator.inference_engine_tensor_parallel_size=$INFER_TP \
+  generator.inference_engine_expert_parallel_size=$INFER_EP \
+  generator.inference_engine_data_parallel_size=$INFER_DP \
   generator.num_inference_engines=$NUM_INFERENCE_ENGINES \
   generator.gpu_memory_utilization=0.7 \
   generator.sampling_params.temperature=$TEMPERATURE \

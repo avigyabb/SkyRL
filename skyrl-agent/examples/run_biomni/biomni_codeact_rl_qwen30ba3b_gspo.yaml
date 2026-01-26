@@ -5,14 +5,13 @@ agent_cls: skyrl_agent.agents.biomni_codeact.BiomniCodeActAgent
 # 2. Have format reward (ft_reward) == 0
 # This filters degenerated cases where agent produces very long non-compliant outputs
 overlong_filter_enabled: true
-overlong_filter_threshold: 32768  # 32k tokens
+overlong_filter_threshold: 40000
 
 # Heavy logging: log detailed trajectory samples periodically
 use_log_heavy: true
-log_heavy_freq: 8  # Log every 8 steps
+log_heavy_freq: 8
 
 task: skyrl_agent.tasks.general_react.utils.DummyReactTask
-
 tools: []
 
 data:
@@ -21,15 +20,18 @@ data:
 generator:
   infer_backend: skyrl-train
   backend_config:
-    model_name: Qwen/Qwen3-8B
+    model_name: Qwen/Qwen3-30B-A3B-Thinking-2507
     api_url: http://localhost:30000
 
   num_trajectories: 8
-  max_iterations: 48
-  max_prompt_length: 45056
+  max_iterations: 50
+  # Keep prompt budget aligned with trainer.max_prompt_length & vLLM max_model_len.
+  max_prompt_length: 49152
   sampling_params:
     temperature: 1.0
     top_p: 1.0
+    # This is the agent-side generation cap. The skyrl-train generator.max_generate_length
+    # should match it.
     max_tokens: 4096
   remove_think_tokens: false
   vision_is_active: false
