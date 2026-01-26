@@ -718,6 +718,24 @@ def gspo_policy_loss(
 
     # Compute clipping ratio for monitoring
     clip_ratio = masked_mean((-surr2 > -surr1).float(), loss_mask).mean().detach().item()
+    # Optional: Truncated Importance Sampling (TIS) correction for rollout-vs-trainer logprob mismatch.
+    # This mirrors PPO's idea but supports a "sequence" mode (i.e., geometric mean) that is better aligned with GSPO.
+    if config.use_tis:
+        if rollout_logprobs is None:
+            raise ValueError("use_tis=True but rollout_logprobs is None; pass rollout_logprobs to gspo_policy_loss.")
+        tis_mode = getattr(config, "tis_mode", "token")  # "token" or "sequence"
+        cap = getattr(config, "tis_imp_ratio_cap", None)
+        logger.info(f"Using TIS with mode: {tis_mode} and cap: {cap}")
+        if cap is None:
+            raise ValueError("use_tis=True but tis_imp_ratio_cap is not set.")
+
+        # w = pi_old / pi_rollout  (in log space: old_log_probs - rollout_logprobs)
+        tis_delta = old_log_probs - rollout_logprobs
+        if tis_mode == "sequence":
+            tis_delta = masked_mean(tis_delta, loss_mask, dim=-1).unsqueeze(-1)
+        tis_w = _safe_exp_delta(tis_delta, clip=20.0, out_dtype=log_probs.dtype)
+        tis_w = torch.clamp(tis_w, max=cap)
+        loss = loss * tis_w
 
     loss = reduce_loss(loss, loss_mask, loss_reduction, config.max_seq_len)
 
