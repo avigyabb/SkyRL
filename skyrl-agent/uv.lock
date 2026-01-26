@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.12.*"
 resolution-markers = [
     "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
@@ -49,7 +49,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b1/72/ff3961c19ee395c3d30ac630ee77bfb0e1b46b87edc504d4f83bb4a89705/accelerate-1.10.1.tar.gz", hash = "sha256:3dea89e433420e4bfac0369cae7e36dcd6a56adfcfd38cdda145c6225eab5df8", size = 392446, upload-time = "2025-08-25T13:57:06.21Z" }
 wheels = [
@@ -175,21 +175,21 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.71.0"
+version = "0.76.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "distro", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "docstring-parser", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "httpx", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "jiter", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "pydantic", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "sniffio", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "typing-extensions", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "docstring-parser" },
+    { name = "httpx" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/82/4f/70682b068d897841f43223df82d96ec1d617435a8b759c4a2d901a50158b/anthropic-0.71.0.tar.gz", hash = "sha256:eb8e6fa86d049061b3ef26eb4cbae0174ebbff21affa6de7b3098da857d8de6a", size = 489102, upload-time = "2025-10-16T15:54:40.08Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/be/d11abafaa15d6304826438170f7574d750218f49a106c54424a40cef4494/anthropic-0.76.0.tar.gz", hash = "sha256:e0cae6a368986d5cf6df743dfbb1b9519e6a9eee9c6c942ad8121c0b34416ffe", size = 495483, upload-time = "2026-01-13T18:41:14.908Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/77/073e8ac488f335aec7001952825275582fb8f433737e90f24eeef9d878f6/anthropic-0.71.0-py3-none-any.whl", hash = "sha256:85c5015fcdbdc728390f11b17642a65a4365d03b12b799b18b6cc57e71fdb327", size = 355035, upload-time = "2025-10-16T15:54:38.238Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/70/7b0fd9c1a738f59d3babe2b4212031c34ab7d0fda4ffef15b58a55c5bcea/anthropic-0.76.0-py3-none-any.whl", hash = "sha256:81efa3113901192af2f0fe977d3ec73fdadb1e691586306c4256cd6d5ccc331c", size = 390309, upload-time = "2026-01-13T18:41:13.483Z" },
 ]
 
 [[package]]
@@ -399,8 +399,7 @@ dependencies = [
     { name = "browsergym-webarena" },
     { name = "libvisualwebarena" },
     { name = "requests" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
+    { name = "torch" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8e/1e/392963bc51d1ad397bd652f0f69bfebcfa8711f386d63afbe4be43e6e7f0/browsergym_visualwebarena-0.13.3.tar.gz", hash = "sha256:635b4a71c8ff6bff3e84c0fecc7a10b9e932fe2929d4bf8e2e9a5bf2e29438e4", size = 8380, upload-time = "2024-11-27T19:55:56.951Z" }
 wheels = [
@@ -478,7 +477,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy'" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -539,7 +538,7 @@ name = "click"
 version = "8.1.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23781ad4b89a9894a41538e4fcf4c31dcdd705b78eb8b/click-8.1.8.tar.gz", hash = "sha256:ed53c9d8990d83c2a27deae68e4ee337473f6330c040a31d4225c9574d16096a", size = 226593, upload-time = "2024-12-21T18:38:44.339Z" }
 wheels = [
@@ -577,45 +576,15 @@ wheels = [
 name = "compressed-tensors"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux'",
-    "sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
 dependencies = [
-    { name = "frozendict", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "pydantic", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "transformers", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
+    { name = "frozendict" },
+    { name = "pydantic" },
+    { name = "torch" },
+    { name = "transformers" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b8/99/3fdabfc95609d6efdf02fa7f1ed0245524cb1209d3d4a17109d3205d2eed/compressed_tensors-0.11.0.tar.gz", hash = "sha256:95ddf19699f775df6494dd864e5f52e8a24f8015496520190c1a22c6cfc44b1f", size = 187566, upload-time = "2025-08-19T18:59:31.854Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/81/e3073017a8f5c75169e79108eda209e6089e3f96c9f197d307cbda7df71c/compressed_tensors-0.11.0-py3-none-any.whl", hash = "sha256:e1cbc46e1ae032b7ceea915fe18c8d2de5a54d3a50a607969b6bdfe703b6cb83", size = 179951, upload-time = "2025-08-19T18:59:29.308Z" },
-]
-
-[[package]]
-name = "compressed-tensors"
-version = "0.12.2"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform == 'darwin' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-]
-dependencies = [
-    { name = "loguru", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "pydantic", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "transformers", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/79/4c5c1cd14266f8cf2650bdb940f986ce7fcaeb56aad8cfa9e9afedf14e2f/compressed_tensors-0.12.2.tar.gz", hash = "sha256:5bb40856dd17f128ab73557ecc73799f80db4dd82fab6de875f1e6899b9ea0c4", size = 190409, upload-time = "2025-10-07T14:30:59.302Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/c0/1695b87d369e6652ec0d650912e02eca2151c5e9c29244f94d2afccfe970/compressed_tensors-0.12.2-py3-none-any.whl", hash = "sha256:e554ea761710ca2b0c0ea49276a4ef8e08658624f1591e6a7368817106b48fbe", size = 183049, upload-time = "2025-10-07T14:30:56.523Z" },
 ]
 
 [[package]]
@@ -756,41 +725,13 @@ wheels = [
 name = "depyf"
 version = "0.19.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux'",
-    "sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
 dependencies = [
-    { name = "astor", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "dill", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
+    { name = "astor" },
+    { name = "dill" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/19/38/69157d711be575f1b9cf3177b64ef4ade44373fc02839f183fdd98ec2dd6/depyf-0.19.0.tar.gz", hash = "sha256:afed0916b32d141cc90fa6220df01885eda442ca43b297d5050eeb90b4a5cb44", size = 6171405, upload-time = "2025-04-20T08:07:41.224Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/28/4d/1192acbcdc5e843f5e5d51f6e8788f2b60a9fe0b578ac385ded67a0b0b26/depyf-0.19.0-py3-none-any.whl", hash = "sha256:040b35fc0997d49df024b7d094f2a7836f91e9ed02f49982dd37e70aa3285ad5", size = 39034, upload-time = "2025-04-20T08:07:37.036Z" },
-]
-
-[[package]]
-name = "depyf"
-version = "0.20.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform == 'darwin' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-]
-dependencies = [
-    { name = "astor", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "dill", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/88/35/83fb0178212279aa0af031031905804c6de5618435d229f41ed21bb9ad2c/depyf-0.20.0.tar.gz", hash = "sha256:fb7683bd72c44f67b56029df2c47721e9a02ffa4d7b19095f1c54c4ebf797a98", size = 6168761, upload-time = "2025-10-13T12:33:38.589Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cf/65/4df6936130b56e1429114e663e7c1576cf845f3aef1b2dd200c0a5d19dba/depyf-0.20.0-py3-none-any.whl", hash = "sha256:d31effad4261cebecb58955d832e448ace88f432328f95f82fd99c30fd9308d4", size = 39381, upload-time = "2025-10-13T12:33:33.647Z" },
 ]
 
 [[package]]
@@ -1057,7 +998,7 @@ version = "2.8.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "einops" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3b/b2/8d76c41ad7974ee264754709c22963447f7f8134613fd9ce80984ed0dab7/flash_attn-2.8.3.tar.gz", hash = "sha256:1e71dd64a9e0280e0447b8a0c2541bad4bf6ac65bdeaa2f90e51a9e57de0370d", size = 8447812, upload-time = "2025-08-15T08:28:12.911Z" }
 
@@ -1086,8 +1027,7 @@ dependencies = [
     { name = "packaging" },
     { name = "requests" },
     { name = "tabulate" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
+    { name = "torch" },
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d8/04/e357eaa50238e12c49e66fcf47f83e066e741ef19a117c136782b32eafbb/flashinfer_python-0.5.2.tar.gz", hash = "sha256:99d097a28be1e98c7f85e4a767e9e9a4794374f9318c27db14d21e367149063f", size = 4632657, upload-time = "2025-11-07T02:53:27.261Z" }
@@ -1401,7 +1341,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "filelock" },
     { name = "fsspec" },
-    { name = "hf-xet", marker = "platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
+    { name = "hf-xet", marker = "platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
     { name = "packaging" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -1641,8 +1581,22 @@ wheels = [
 ]
 
 [[package]]
+name = "langchain-anthropic"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anthropic" },
+    { name = "langchain-core" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0d/b6/ac5ee84e15bf79844c9c791f99a614c7ec7e1a63c2947e55977be01a81b4/langchain_anthropic-1.3.1.tar.gz", hash = "sha256:4f3d7a4a7729ab1aeaf62d32c87d4d227c1b5421668ca9e3734562b383470b07", size = 708940, upload-time = "2026-01-05T21:07:19.345Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/4f/7a5b32764addf4b757545b89899b9d76688176f19e4ee89868e3b8bbfd0f/langchain_anthropic-1.3.1-py3-none-any.whl", hash = "sha256:1fc28cf8037c30597ee6172fc2ff9e345efe8149a8c2a39897b1eebba2948322", size = 46328, upload-time = "2026-01-05T21:07:18.261Z" },
+]
+
+[[package]]
 name = "langchain-core"
-version = "1.0.2"
+version = "1.2.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonpatch" },
@@ -1652,10 +1606,11 @@ dependencies = [
     { name = "pyyaml" },
     { name = "tenacity" },
     { name = "typing-extensions" },
+    { name = "uuid-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/96/b298cb46643bb235240de7ec8d87d3b4ccefead6bf41ca3c48c7d5397e01/langchain_core-1.0.2.tar.gz", hash = "sha256:9aae1908cc00d50b88e812305e980e7fd06d07375590ce8da01c04037bdccd72", size = 769167, upload-time = "2025-10-29T23:13:02.732Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/0e/664d8d81b3493e09cbab72448d2f9d693d1fa5aa2bcc488602203a9b6da0/langchain_core-1.2.7.tar.gz", hash = "sha256:e1460639f96c352b4a41c375f25aeb8d16ffc1769499fb1c20503aad59305ced", size = 837039, upload-time = "2026-01-09T17:44:25.505Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/54/3aed89938a42cf7115575c333647551e35adc380feed651105d2d86c22f5/langchain_core-1.0.2-py3-none-any.whl", hash = "sha256:1f4ab4a41fc2e135e5dd4b97a89af123bbdc535af8f1f0644e8e8801bc288a12", size = 469251, upload-time = "2025-10-29T23:13:00.864Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/6f/34a9fba14d191a67f7e2ee3dbce3e9b86d2fa7310e2c7f2c713583481bd2/langchain_core-1.2.7-py3-none-any.whl", hash = "sha256:452f4fef7a3d883357b22600788d37e3d8854ef29da345b7ac7099f33c31828b", size = 490232, upload-time = "2026-01-09T17:44:24.236Z" },
 ]
 
 [[package]]
@@ -1763,12 +1718,6 @@ wheels = [
 name = "llguidance"
 version = "0.7.30"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux'",
-    "sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
 sdist = { url = "https://files.pythonhosted.org/packages/bf/38/d1ef3ae08d8d857e5e0690c5b1e07bf7eb4a1cae5881d87215826dc6cadb/llguidance-0.7.30.tar.gz", hash = "sha256:e93bf75f2b6e48afb86a5cee23038746975e1654672bf5ba0ae75f7d4d4a2248", size = 1055528, upload-time = "2025-06-23T00:23:49.247Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/e1/694c89986fcae7777184fc8b22baa0976eba15a6847221763f6ad211fc1f/llguidance-0.7.30-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:c80af02c118d2b0526bcecaab389af2ed094537a069b0fc724cd2a2f2ba3990f", size = 3327974, upload-time = "2025-06-23T00:23:47.556Z" },
@@ -1778,30 +1727,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/af/80/5a40b9689f17612434b820854cba9b8cabd5142072c491b5280fe5f7a35e/llguidance-0.7.30-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9edc409b9decd6cffba5f5bf3b4fbd7541f95daa8cbc9510cbf96c6ab1ffc153", size = 15004926, upload-time = "2025-06-23T00:23:43.965Z" },
     { url = "https://files.pythonhosted.org/packages/bb/bc/2d2f9b446bb3e51e4dd4db290590afee03ae29163f417168569f0361204c/llguidance-0.7.30-cp39-abi3-win32.whl", hash = "sha256:a0d52b8d1b2d3b0e661e3f953ecccfa16644f302026b3067a4815c1baa2ae643", size = 2585627, upload-time = "2025-06-23T00:23:52.39Z" },
     { url = "https://files.pythonhosted.org/packages/99/47/58e49a118b514855b245f8a962c6aaf9a5cc95a0f61eac7e230e691c7b7e/llguidance-0.7.30-cp39-abi3-win_amd64.whl", hash = "sha256:05234ecceea7c9c6ff13b9739112043173a3bcb88cae860249b20335a07b3075", size = 2796878, upload-time = "2025-06-23T00:23:51Z" },
-]
-
-[[package]]
-name = "llguidance"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform == 'darwin' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/95/48/3f7a9d3ff1b36bba92b5107a3a21286821227afe9ea464736133994d61fb/llguidance-1.3.0.tar.gz", hash = "sha256:861249afd51dc325646834462ea827e57a5c2b2042e108e6aae7059fdad9104d", size = 1070460, upload-time = "2025-10-20T19:58:44.164Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/33/be5acb85cd8cdc4afde33d9c234eece9f318e087920255af3c05864cd3e7/llguidance-1.3.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:f7685222660a762e481ac633d49cc559c64980fe2ee59c8f932a5bb5cbc0c2c2", size = 3220647, upload-time = "2025-10-20T19:58:42.542Z" },
-    { url = "https://files.pythonhosted.org/packages/82/e6/b48bda5b15efeaeb62bd0dba8fc6a01d4ae5457a85dbb5d18632385fe15c/llguidance-1.3.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:098030ff0687261a3f1bd54cf21fe951fc861d56d37a0671250dd36677eaf224", size = 3099830, upload-time = "2025-10-20T19:58:40.826Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/11/44389d3d1526d7a5c38ffd587a5ebc61d7bee443ac1dea95f2089ad58f5f/llguidance-1.3.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6f6caca5d78db7f76e1fbb0fff8607b861c32d47fa3d5dee2fc49de27ee269df", size = 2835242, upload-time = "2025-10-20T19:58:34.518Z" },
-    { url = "https://files.pythonhosted.org/packages/e7/ca/53ea256396405e4dee70d5a4a35e18543408e18bb16b251d6ca6b5d80310/llguidance-1.3.0-cp39-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:0612bb3f034d2487b6e8f9561f02a94a6039d88273bf0c5c539a3bd3895e47d2", size = 3297480, upload-time = "2025-10-20T19:58:37.033Z" },
-    { url = "https://files.pythonhosted.org/packages/83/a8/1ff2bedb8f9acb46a2d2d603415d272bb622c142ea86f5b95445cc6e366c/llguidance-1.3.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bc17e9dd602c3879bf91664a64bf72f54c74dbfbeb24ccfab6a5fe435b12f7aa", size = 3033133, upload-time = "2025-10-20T19:58:38.721Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/a7/9b8086c0cfdddf3f6d47b173a404fa7ac46272f7affbee082c36740f4f1c/llguidance-1.3.0-cp39-abi3-win32.whl", hash = "sha256:2f6f558485a43e273fc5c6c974a9a3ace5d5e170076db9b40e0560e41c3ff18f", size = 2598109, upload-time = "2025-10-20T19:58:47.656Z" },
-    { url = "https://files.pythonhosted.org/packages/5a/7e/809349638231f469b9056c0e1bfd924d5ef5558b3b3ec72d093b6fad33b1/llguidance-1.3.0-cp39-abi3-win_amd64.whl", hash = "sha256:1d1cd1c8618d1a13605d3e057c978651e551c8c469b481ee4041f1d6c436002d", size = 2789946, upload-time = "2025-10-20T19:58:45.958Z" },
 ]
 
 [[package]]
@@ -1837,8 +1762,8 @@ name = "loguru"
 version = "0.7.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "win32-setctime", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "win32-setctime", marker = "sys_platform == 'win32' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
 wheels = [
@@ -1991,26 +1916,11 @@ wheels = [
 
 [package.optional-dependencies]
 audio = [
-    { name = "soundfile", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "soxr", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
+    { name = "soundfile" },
+    { name = "soxr" },
 ]
 image = [
     { name = "opencv-python-headless" },
-]
-
-[[package]]
-name = "model-hosting-container-standards"
-version = "0.1.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "fastapi", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "httpx", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "jmespath", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "pydantic", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/d0/eaba9ff13f7a534bf2c0f28e4e32dee58583dc3a31fe3eebb3b93ed13675/model_hosting_container_standards-0.1.4.tar.gz", hash = "sha256:86838d16e4d05bc6fdafdf83dc292a9d34124b63584764ad6cd67b05d09cda62", size = 63332, upload-time = "2025-11-10T17:58:37.321Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/fc/d6034069e52003ed86f72e436b65f16084fa4d08c6b8220bc0fc85e33eab/model_hosting_container_standards-0.1.4-py3-none-any.whl", hash = "sha256:ede565ba750e812eef028804c84b8244a96fb733fcaec9a1e552568df809d841", size = 86597, upload-time = "2025-11-10T17:58:35.843Z" },
 ]
 
 [[package]]
@@ -2264,7 +2174,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.10.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/41/e79269ce215c857c935fd86bcfe91a451a584dfc27f1e068f568b9ad1ab7/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:c9132cc3f8958447b4910a1720036d9eff5928cc3179b0a51fb6d167c6cc87d8", size = 705026878, upload-time = "2025-06-06T21:52:51.348Z" },
@@ -2287,7 +2197,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.3.83"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/60/bc/7771846d3a0272026c416fbb7e5f4c1f146d6d80704534d0b187dd6f4800/nvidia_cufft_cu12-11.3.3.83-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:848ef7224d6305cdb2a4df928759dca7b1201874787083b6e7550dd6765ce69a", size = 193109211, upload-time = "2025-03-07T01:44:56.873Z" },
@@ -2319,9 +2229,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.3.90"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-cusparse-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cusparse-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/32/f7cd6ce8a7690544d084ea21c26e910a97e077c9b7f07bf5de623ee19981/nvidia_cusolver_cu12-11.7.3.90-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:db9ed69dbef9715071232caa9b69c52ac7de3a95773c2db65bdba85916e4e5c0", size = 267229841, upload-time = "2025-03-07T01:46:54.356Z" },
@@ -2334,7 +2244,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.8.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/f7/cd777c4109681367721b00a106f491e0d0d15cfa1fd59672ce580ce42a97/nvidia_cusparse_cu12-12.5.8.93-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:9b6c161cb130be1a07a27ea6923df8141f3c295852f4b260c65f18f3e0a091dc", size = 288117129, upload-time = "2025-03-07T01:47:40.407Z" },
@@ -2379,25 +2289,9 @@ wheels = [
 name = "nvidia-nccl-cu12"
 version = "2.27.3"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4b/7b/8354b784cf73b0ba51e566b4baba3ddd44fe8288a3d39ef1e06cd5417226/nvidia_nccl_cu12-2.27.3-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:9ddf1a245abc36c550870f26d537a9b6087fb2e2e3d6e0ef03374c6fd19d984f", size = 322397768, upload-time = "2025-06-03T21:57:30.234Z" },
     { url = "https://files.pythonhosted.org/packages/5c/5b/4e4fff7bad39adf89f735f2bc87248c81db71205b62bcc0d5ca5b606b3c3/nvidia_nccl_cu12-2.27.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:adf27ccf4238253e0b826bce3ff5fa532d65fc42322c8bfdfaf28024c0fbe039", size = 322364134, upload-time = "2025-06-03T21:58:04.013Z" },
-]
-
-[[package]]
-name = "nvidia-nccl-cu12"
-version = "2.27.5"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bb/1c/857979db0ef194ca5e21478a0612bcdbbe59458d7694361882279947b349/nvidia_nccl_cu12-2.27.5-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:31432ad4d1fb1004eb0c56203dc9bc2178a1ba69d1d9e02d64a6938ab5e40e7a", size = 322400625, upload-time = "2025-06-26T04:11:04.496Z" },
-    { url = "https://files.pythonhosted.org/packages/6e/89/f7a07dc961b60645dbbf42e80f2bc85ade7feb9a491b11a1e973aa00071f/nvidia_nccl_cu12-2.27.5-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ad730cf15cb5d25fe849c6e6ca9eb5b76db16a80f13f425ac68d8e2e55624457", size = 322348229, upload-time = "2025-06-26T04:11:28.385Z" },
 ]
 
 [[package]]
@@ -2408,15 +2302,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f6/74/86a07f1d0f42998ca31312f998bd3b9a7eff7f52378f4f270c8679c77fb9/nvidia_nvjitlink_cu12-12.8.93-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:81ff63371a7ebd6e6451970684f916be2eab07321b73c9d244dc2b4da7f73b88", size = 39254836, upload-time = "2025-03-07T01:49:55.661Z" },
     { url = "https://files.pythonhosted.org/packages/2a/a2/8cee5da30d13430e87bf99bb33455d2724d0a4a9cb5d7926d80ccb96d008/nvidia_nvjitlink_cu12-12.8.93-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:adccd7161ace7261e01bb91e44e88da350895c270d23f744f0820c818b7229e7", size = 38386204, upload-time = "2025-03-07T01:49:43.612Z" },
     { url = "https://files.pythonhosted.org/packages/ed/d7/34f02dad2e30c31b10a51f6b04e025e5dd60e5f936af9045a9b858a05383/nvidia_nvjitlink_cu12-12.8.93-py3-none-win_amd64.whl", hash = "sha256:bd93fbeeee850917903583587f4fc3a4eafa022e34572251368238ab5e6bd67f", size = 268553710, upload-time = "2025-03-07T01:56:24.13Z" },
-]
-
-[[package]]
-name = "nvidia-nvshmem-cu12"
-version = "3.3.20"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/92/9d/3dd98852568fb845ec1f7902c90a22b240fe1cbabda411ccedf2fd737b7b/nvidia_nvshmem_cu12-3.3.20-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:0b0b960da3842212758e4fa4696b94f129090b30e5122fea3c5345916545cff0", size = 124484616, upload-time = "2025-08-04T20:24:59.172Z" },
-    { url = "https://files.pythonhosted.org/packages/3b/6c/99acb2f9eb85c29fc6f3a7ac4dccfd992e22666dd08a642b303311326a97/nvidia_nvshmem_cu12-3.3.20-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:d00f26d3f9b2e3c3065be895e3059d6479ea5c638a3f38c9fec49b1b9dd7c1e5", size = 124657145, upload-time = "2025-08-04T20:25:19.995Z" },
 ]
 
 [[package]]
@@ -2591,7 +2476,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch" },
     { name = "tqdm" },
     { name = "transformers" },
 ]
@@ -3070,7 +2955,7 @@ name = "pyzmq"
 version = "27.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "implementation_name == 'pypy'" },
+    { name = "cffi", marker = "implementation_name == 'pypy' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/04/0b/3c9baedbdf613ecaa7aa07027780b8867f57b6293b6ee50de316c9f3222b/pyzmq-27.1.0.tar.gz", hash = "sha256:ac0765e3d44455adb6ddbf4417dcce460fc40a05978c08efdf2948072f6db540", size = 281750, upload-time = "2025-09-08T23:10:18.157Z" }
 wheels = [
@@ -3467,6 +3352,7 @@ dependencies = [
     { name = "hydra-core" },
     { name = "json5" },
     { name = "jsonlines" },
+    { name = "langchain-anthropic" },
     { name = "langchain-core" },
     { name = "loguru" },
     { name = "math-verify" },
@@ -3488,8 +3374,7 @@ dependencies = [
     { name = "together" },
     { name = "torchdata" },
     { name = "transformers" },
-    { name = "vllm", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "vllm", version = "0.11.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
+    { name = "vllm" },
     { name = "wandb" },
     { name = "whatthepatch" },
 ]
@@ -3517,6 +3402,7 @@ requires-dist = [
     { name = "hydra-core" },
     { name = "json5" },
     { name = "jsonlines" },
+    { name = "langchain-anthropic" },
     { name = "langchain-core" },
     { name = "loguru" },
     { name = "math-verify" },
@@ -3601,9 +3487,9 @@ vllm = [
     { name = "flash-attn" },
     { name = "flashinfer-jit-cache" },
     { name = "flashinfer-python" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "vllm", version = "0.11.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "torch" },
+    { name = "torchvision" },
+    { name = "vllm" },
 ]
 
 [package.metadata]
@@ -3700,8 +3586,8 @@ name = "soundfile"
 version = "0.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "numpy", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
+    { name = "cffi" },
+    { name = "numpy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e1/41/9b873a8c055582859b239be17902a85339bec6a30ad162f98c9b0288a2cc/soundfile-0.13.1.tar.gz", hash = "sha256:b2c68dab1e30297317080a5b43df57e302584c49e2942defdde0acccc53f0e5b", size = 46156, upload-time = "2025-01-25T09:17:04.831Z" }
 wheels = [
@@ -3728,7 +3614,7 @@ name = "soxr"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
+    { name = "numpy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/7e/f4b461944662ad75036df65277d6130f9411002bfb79e9df7dff40a31db9/soxr-1.0.0.tar.gz", hash = "sha256:e07ee6c1d659bc6957034f4800c60cb8b98de798823e34d2a2bba1caa85a4509", size = 171415, upload-time = "2025-09-07T13:22:21.317Z" }
 wheels = [
@@ -3890,7 +3776,7 @@ dependencies = [
     { name = "orjson" },
     { name = "packaging" },
     { name = "pyvers" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e6/89/2914b6d2796bdbe64ba8d42b568bf02c25673f187079e8795fc668c609fa/tensordict-0.10.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:f52321ddec5da5acb3b90785c68b4fd4cce805aab6eb700ec59352e9f9e6214f", size = 801519, upload-time = "2025-09-08T10:07:18.954Z" },
@@ -4004,35 +3890,29 @@ wheels = [
 name = "torch"
 version = "2.8.0+cu128"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux'",
-    "sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
 dependencies = [
-    { name = "filelock", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "fsspec", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "jinja2", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "networkx", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "nvidia-cublas-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cuda-cupti-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cuda-nvrtc-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cuda-runtime-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cudnn-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cufft-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cufile-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-curand-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cusolver-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cusparse-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cusparselt-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-nccl-cu12", version = "2.27.3", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-nvtx-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "setuptools", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "sympy", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "triton", version = "3.4.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "typing-extensions", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
+    { name = "filelock" },
+    { name = "fsspec" },
+    { name = "jinja2" },
+    { name = "networkx" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cuda-cupti-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cuda-nvrtc-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cudnn-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cufft-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cufile-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-curand-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cusolver-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cusparse-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-cusparselt-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-nccl-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "nvidia-nvtx-cu12", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "setuptools" },
+    { name = "sympy" },
+    { name = "triton", version = "3.4.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "typing-extensions" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cu128/torch-2.8.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4354fc05bb79b208d6995a04ca1ceef6a9547b1c4334435574353d381c55087c" },
@@ -4040,61 +3920,11 @@ wheels = [
 ]
 
 [[package]]
-name = "torch"
-version = "2.9.0+cu128"
-source = { registry = "https://download.pytorch.org/whl/cu128" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform == 'darwin' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-]
-dependencies = [
-    { name = "filelock", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "fsspec", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "jinja2", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "networkx", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "nvidia-cublas-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cuda-cupti-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cuda-nvrtc-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cuda-runtime-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cudnn-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cufft-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cufile-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-curand-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cusolver-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cusparse-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-cusparselt-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-nccl-cu12", version = "2.27.5", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-nvshmem-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "nvidia-nvtx-cu12", marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "setuptools", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "sympy", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "triton", version = "3.5.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "typing-extensions", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-]
-wheels = [
-    { url = "https://download.pytorch.org/whl/cu128/torch-2.9.0%2Bcu128-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:e1765625084e320f1eb2f4eb5fd9d14d39d08d7a1880c10a307ce5de20831d27" },
-    { url = "https://download.pytorch.org/whl/cu128/torch-2.9.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:87c62d3b95f1a2270bd116dbd47dc515c0b2035076fbb4a03b4365ea289e89c4" },
-    { url = "https://download.pytorch.org/whl/cu128/torch-2.9.0%2Bcu128-cp312-cp312-win_amd64.whl", hash = "sha256:c97dc47a1f64745d439dd9471a96d216b728d528011029b4f9ae780e985529e0" },
-]
-
-[[package]]
 name = "torchaudio"
 version = "2.8.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux'",
-    "sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
 dependencies = [
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
+    { name = "torch" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ac/cc/c2e2a3eb6ee956f73c68541e439916f8146170ea9cc61e72adea5c995312/torchaudio-2.8.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:ddef94bf181e6447cbb05f38beaca8f6c5bb8d2b9ddced1aa3452025b9fc70d3", size = 1856736, upload-time = "2025-08-06T14:58:36.3Z" },
@@ -4104,36 +3934,12 @@ wheels = [
 ]
 
 [[package]]
-name = "torchaudio"
-version = "2.9.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform == 'darwin' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-]
-dependencies = [
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/63/3c0ede3aa3d19a8a6698ddd107fa88660549360b51bf8ce2717cd498d800/torchaudio-2.9.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:ab4cbcccfd873b0fb41fcb39c9869e59ef84bb95b093f6f58e2d05172a7500d2", size = 809116, upload-time = "2025-10-15T15:52:00.911Z" },
-    { url = "https://files.pythonhosted.org/packages/be/d5/25e58745defe9d05893d3cba5c0e1a76aeaac503ac5ec4d9f83c871df71c/torchaudio-2.9.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:7f93388b6e536c14d6015b6f75277a8b45efc532f61b35adc1ed06c98a86003e", size = 476020, upload-time = "2025-10-15T15:51:59.967Z" },
-    { url = "https://files.pythonhosted.org/packages/f0/9c/58b8b49dfba2ae85e41ca86b0c52de45bbbea01987490de219c99c523a58/torchaudio-2.9.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:508318a2130b40ad51378f90caf8727a4bd3ac2b296f2b90c900b44e6068a940", size = 2059901, upload-time = "2025-10-15T15:51:54.634Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/eb/58b05f75d12f69ccc460893a20c999da082e063082120ed06e05cca3a053/torchaudio-2.9.0-cp312-cp312-win_amd64.whl", hash = "sha256:82117e3a605f2959dc09b4cd8a11178d6e92727d5f85e5d4f9fe47502f84ee96", size = 665350, upload-time = "2025-10-15T15:52:08.384Z" },
-]
-
-[[package]]
 name = "torchdata"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "requests" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
+    { name = "torch" },
     { name = "urllib3" },
 ]
 wheels = [
@@ -4144,57 +3950,14 @@ wheels = [
 name = "torchvision"
 version = "0.23.0+cu128"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux'",
-    "sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
 dependencies = [
-    { name = "numpy", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "pillow", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "torch" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:9cb3c13997afcb44057ca10d943c6c4cba3068afde0f370965abce9c89fcffa9" },
     { url = "https://download.pytorch.org/whl/cu128/torchvision-0.23.0%2Bcu128-cp312-cp312-win_amd64.whl", hash = "sha256:20fa9c7362a006776630b00b8a01919fedcf504a202b81358d32c5aef39956fe" },
-]
-
-[[package]]
-name = "torchvision"
-version = "0.24.0"
-source = { registry = "https://download.pytorch.org/whl/cu128" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
-]
-dependencies = [
-    { name = "numpy", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "pillow", marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-]
-wheels = [
-    { url = "https://download.pytorch.org/whl/cu128/torchvision-0.24.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:5d6bcd7393774c82531f7ec411f352129fe8c302bba7765c372398a71d5df4a8" },
-]
-
-[[package]]
-name = "torchvision"
-version = "0.24.0+cu128"
-source = { registry = "https://download.pytorch.org/whl/cu128" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform == 'darwin' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-]
-dependencies = [
-    { name = "numpy", marker = "(platform_machine != 'aarch64' and extra != 'extra-8-skyagent-skyrl-train') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "pillow", marker = "(platform_machine != 'aarch64' and extra != 'extra-8-skyagent-skyrl-train') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and extra != 'extra-8-skyagent-skyrl-train') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-]
-wheels = [
-    { url = "https://download.pytorch.org/whl/cu128/torchvision-0.24.0%2Bcu128-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:e505bd83ee10edb94523d0b805a08f50b8862b58d2cc6f02d14cd4e7ef9302bc" },
-    { url = "https://download.pytorch.org/whl/cu128/torchvision-0.24.0%2Bcu128-cp312-cp312-win_amd64.whl", hash = "sha256:1aa36ac00106e1381c38348611a1ec0eebe942570ebaf0490f026b061dfc212c" },
 ]
 
 [[package]]
@@ -4221,7 +3984,7 @@ name = "tqdm"
 version = "4.67.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a8/4b/29b4ef32e036bb34e4ab51796dd745cdba7ed47ad142a9f4a1eb8e0c744d/tqdm-4.67.1.tar.gz", hash = "sha256:f8aef9c52c08c13a65f30ea34f4e5aac3fd1a34959879d7e59e63027286627f2", size = 169737, upload-time = "2024-11-24T20:12:22.481Z" }
 wheels = [
@@ -4260,7 +4023,7 @@ resolution-markers = [
     "sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
 ]
 dependencies = [
-    { name = "setuptools", marker = "sys_platform != 'linux'" },
+    { name = "setuptools", marker = "sys_platform != 'linux' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/5f/950fb373bf9c01ad4eb5a8cd5eaf32cdf9e238c02f9293557a2129b9c4ac/triton-3.3.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:9999e83aba21e1a78c1f36f21bce621b77bcaa530277a50484a7cb4a822f6e43", size = 155669138, upload-time = "2025-05-29T23:39:51.771Z" },
@@ -4274,23 +4037,10 @@ resolution-markers = [
     "platform_machine != 'aarch64' and sys_platform == 'linux'",
 ]
 dependencies = [
-    { name = "setuptools", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "setuptools", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/66/b1eb52839f563623d185f0927eb3530ee4d5ffe9d377cdaf5346b306689e/triton-3.4.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:31c1d84a5c0ec2c0f8e8a072d7fd150cab84a9c239eaddc6706c081bfae4eb04", size = 155560068, upload-time = "2025-07-30T19:58:37.081Z" },
-]
-
-[[package]]
-name = "triton"
-version = "3.5.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/9b/30988039e1e84df7554fba24e6a734d2d0e847af33cabdf9b532b3c51456/triton-3.5.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:7da21fccceafc163e3a5e857abe34351ef76345af06cabf9637a914742671f0b", size = 159946647, upload-time = "2025-10-15T19:15:56.325Z" },
-    { url = "https://files.pythonhosted.org/packages/f5/3a/e991574f3102147b642e49637e0281e9bb7c4ba254edb2bab78247c85e01/triton-3.5.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c9e71db82261c4ffa3921cd050cd5faa18322d2d405c30eb56084afaff3b0833", size = 170476535, upload-time = "2025-10-13T16:38:05.18Z" },
 ]
 
 [[package]]
@@ -4394,6 +4144,28 @@ wheels = [
 ]
 
 [[package]]
+name = "uuid-utils"
+version = "0.13.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/8a/17b11768dcb473d3a255c02ffdd94fbd1b345c906efea0a39124dcbaed52/uuid_utils-0.13.0.tar.gz", hash = "sha256:4c17df6427a9e23a4cd7fb9ee1efb53b8abb078660b9bdb2524ca8595022dfe1", size = 21921, upload-time = "2026-01-08T15:48:10.841Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/b8/d40848ca22781f206c60a1885fc737d2640392bd6b5792d455525accd89c/uuid_utils-0.13.0-cp39-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:83628283e977fb212e756bc055df8fdd2f9f589a2e539ba1abe755b8ce8df7a4", size = 602130, upload-time = "2026-01-08T15:47:34.877Z" },
+    { url = "https://files.pythonhosted.org/packages/40/b9/00a944b8096632ea12638181f8e294abcde3e3b8b5e29b777f809896f6ae/uuid_utils-0.13.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:c47638ed6334ab19d80f73664f153b04bbb04ab8ce4298d10da6a292d4d21c47", size = 304213, upload-time = "2026-01-08T15:47:36.807Z" },
+    { url = "https://files.pythonhosted.org/packages/da/d7/07b36c33aef683b81c9afff3ec178d5eb39d325447a68c3c68a62e4abb32/uuid_utils-0.13.0-cp39-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:b276b538c57733ed406948584912da422a604313c71479654848b84b9e19c9b0", size = 340624, upload-time = "2026-01-08T15:47:38.821Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/55/fcff2fff02a27866cb1a6614c9df2b3ace721f0a0aab2b7b8f5a7d4e4221/uuid_utils-0.13.0-cp39-abi3-manylinux_2_24_armv7l.whl", hash = "sha256:bdaf2b77e34b199cf04cde28399495fd1ed951de214a4ece1f3919b2f945bb06", size = 346705, upload-time = "2026-01-08T15:47:40.397Z" },
+    { url = "https://files.pythonhosted.org/packages/41/48/67438506c2bb8bee1b4b00d7c0b3ff866401b4790849bf591d654d4ea0bc/uuid_utils-0.13.0-cp39-abi3-manylinux_2_24_i686.whl", hash = "sha256:eb2f0baf81e82f9769a7684022dca8f3bf801ca1574a3e94df1876e9d6f9271e", size = 366023, upload-time = "2026-01-08T15:47:42.662Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/d7/2d91ce17f62fd764d593430de296b70843cc25229c772453f7261de9e6a8/uuid_utils-0.13.0-cp39-abi3-manylinux_2_24_ppc64le.whl", hash = "sha256:6be6c4d11275f5cc402a4fdba6c2b1ce45fd3d99bb78716cd1cc2cbf6802b2ce", size = 471149, upload-time = "2026-01-08T15:47:44.963Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/9a/aa0756186073ba84daf5704c150d41ede10eb3185d510e02532e2071550e/uuid_utils-0.13.0-cp39-abi3-manylinux_2_24_x86_64.whl", hash = "sha256:77621cf6ceca7f42173a642a01c01c216f9eaec3b7b65d093d2d6a433ca0a83d", size = 342130, upload-time = "2026-01-08T15:47:46.331Z" },
+    { url = "https://files.pythonhosted.org/packages/74/b4/3191789f4dc3bed59d79cec90559821756297a25d7dc34d1bf7781577a75/uuid_utils-0.13.0-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:9a5a9eb06c2bb86dd876cd7b2fe927fc8543d14c90d971581db6ffda4a02526f", size = 524128, upload-time = "2026-01-08T15:47:47.628Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/30/29839210a8fff9fc219bfa7c8d8cd115324e92618cba0cda090d54d3d321/uuid_utils-0.13.0-cp39-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:775347c6110fb71360df17aac74132d8d47c1dbe71233ac98197fc872a791fd2", size = 615872, upload-time = "2026-01-08T15:47:50.61Z" },
+    { url = "https://files.pythonhosted.org/packages/99/ed/15000c96a8bd8f5fd8efd622109bf52549ea0b366f8ce71c45580fa55878/uuid_utils-0.13.0-cp39-abi3-musllinux_1_2_i686.whl", hash = "sha256:cf95f6370ad1a0910ee7b5ad5228fd19c4ae32fe3627389006adaf519408c41e", size = 581023, upload-time = "2026-01-08T15:47:52.776Z" },
+    { url = "https://files.pythonhosted.org/packages/67/c8/3f809fa2dc2ca4bd331c792a3c7d3e45ae2b709d85847a12b8b27d1d5f19/uuid_utils-0.13.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:5a88e23e0b2f4203fefe2ccbca5736ee06fcad10e61b5e7e39c8d7904bc13300", size = 546715, upload-time = "2026-01-08T15:47:54.415Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/80/4f7c7efd734d1494397c781bd3d421688e9c187ae836e3174625b1ddf8b0/uuid_utils-0.13.0-cp39-abi3-win32.whl", hash = "sha256:3e4f2cc54e6a99c0551158100ead528479ad2596847478cbad624977064ffce3", size = 177650, upload-time = "2026-01-08T15:47:55.679Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/94/d05ab68622e66ad787a241dfe5ccc649b3af09f30eae977b9ee8f7046aaa/uuid_utils-0.13.0-cp39-abi3-win_amd64.whl", hash = "sha256:046cb2756e1597b3de22d24851b769913e192135830486a0a70bf41327f0360c", size = 183211, upload-time = "2026-01-08T15:47:57.604Z" },
+    { url = "https://files.pythonhosted.org/packages/69/37/674b3ce25cd715b831ea8ebbd828b74c40159f04c95d1bb963b2c876fe79/uuid_utils-0.13.0-cp39-abi3-win_arm64.whl", hash = "sha256:5447a680df6ef8a5a353976aaf4c97cc3a3a22b1ee13671c44227b921e3ae2a9", size = 183518, upload-time = "2026-01-08T15:47:59.148Z" },
+]
+
+[[package]]
 name = "uvicorn"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4408,11 +4180,11 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
     { name = "httptools" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-    { name = "uvloop", marker = "platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'" },
+    { name = "uvloop", marker = "(platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32') or (platform_python_implementation == 'PyPy' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform == 'cygwin' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform == 'win32' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
     { name = "watchfiles" },
     { name = "websockets" },
 ]
@@ -4449,153 +4221,67 @@ wheels = [
 name = "vllm"
 version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation != 'CPython' and sys_platform == 'linux'",
-    "sys_platform != 'linux'",
-    "platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'",
-]
 dependencies = [
-    { name = "aiohttp", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "blake3", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "cachetools", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "cbor2", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "cloudpickle", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "compressed-tensors", version = "0.11.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "depyf", version = "0.19.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "diskcache", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "einops", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "fastapi", extra = ["standard"], marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "filelock", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "gguf", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "lark", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "llguidance", version = "0.7.30", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine == 'arm64' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine == 'x86_64' and extra == 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "lm-format-enforcer", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "mistral-common", extra = ["audio", "image"], marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "msgspec", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "ninja", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "numba", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "numpy", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "openai", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "openai-harmony", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "opencv-python-headless", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "outlines-core", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "partial-json-parser", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "pillow", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "prometheus-client", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "prometheus-fastapi-instrumentator", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "protobuf", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "psutil", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "py-cpuinfo", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "pybase64", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "pydantic", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "python-json-logger", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "pyyaml", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "pyzmq", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "ray", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "regex", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "requests", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "scipy", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "sentencepiece", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "setproctitle", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "setuptools", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "six", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "tiktoken", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "tokenizers", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "torchaudio", version = "2.8.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "torchvision", version = "0.23.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "tqdm", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "transformers", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "typing-extensions", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "watchfiles", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "xformers", version = "0.0.32.post1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "xgrammar", marker = "extra == 'extra-8-skyagent-skyrl-train'" },
+    { name = "aiohttp" },
+    { name = "blake3" },
+    { name = "cachetools" },
+    { name = "cbor2" },
+    { name = "cloudpickle" },
+    { name = "compressed-tensors" },
+    { name = "depyf" },
+    { name = "diskcache" },
+    { name = "einops" },
+    { name = "fastapi", extra = ["standard"] },
+    { name = "filelock" },
+    { name = "gguf" },
+    { name = "lark" },
+    { name = "llguidance", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'x86_64' or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "lm-format-enforcer" },
+    { name = "mistral-common", extra = ["audio", "image"] },
+    { name = "msgspec" },
+    { name = "ninja" },
+    { name = "numba" },
+    { name = "numpy" },
+    { name = "openai" },
+    { name = "openai-harmony" },
+    { name = "opencv-python-headless" },
+    { name = "outlines-core" },
+    { name = "partial-json-parser" },
+    { name = "pillow" },
+    { name = "prometheus-client" },
+    { name = "prometheus-fastapi-instrumentator" },
+    { name = "protobuf" },
+    { name = "psutil" },
+    { name = "py-cpuinfo" },
+    { name = "pybase64" },
+    { name = "pydantic" },
+    { name = "python-json-logger" },
+    { name = "pyyaml" },
+    { name = "pyzmq" },
+    { name = "ray" },
+    { name = "regex" },
+    { name = "requests" },
+    { name = "scipy" },
+    { name = "sentencepiece" },
+    { name = "setproctitle" },
+    { name = "setuptools" },
+    { name = "six" },
+    { name = "tiktoken" },
+    { name = "tokenizers" },
+    { name = "torch" },
+    { name = "torchaudio" },
+    { name = "torchvision" },
+    { name = "tqdm" },
+    { name = "transformers" },
+    { name = "typing-extensions" },
+    { name = "watchfiles" },
+    { name = "xformers", marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "xgrammar" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/82/5a/36d2351206f4d8d871b10780f874d03957985e08298d430cc837723e07af/vllm-0.11.0.tar.gz", hash = "sha256:f435a64c24e9c4178d657a76f8edd8548ddc444012f7d06a9f79ac3a6392bfae", size = 10822208, upload-time = "2025-10-04T01:39:57.798Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/33/d19e0763c34392ec956534536fa837c060495bfff31ed83452135ea7608d/vllm-0.11.0-cp38-abi3-manylinux1_x86_64.whl", hash = "sha256:3861c75ff2b12e24f6d179ff5c084d791b42ded8675d76c8706697c79f68cd62", size = 438217982, upload-time = "2025-10-04T01:39:32.382Z" },
     { url = "https://files.pythonhosted.org/packages/d7/bf/973444bb959fc7acbbeb3d226bd4d135dcd49b6af174b29aab1b50e2d710/vllm-0.11.0-cp38-abi3-manylinux2014_aarch64.whl", hash = "sha256:52369c9ee949944354bdc7afc88ded2d1ed02b098bf90db06cf80098a19787b7", size = 401003969, upload-time = "2025-10-04T01:39:50.251Z" },
-]
-
-[[package]]
-name = "vllm"
-version = "0.11.2"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform == 'darwin' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "sys_platform != 'darwin' and sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl'",
-    "platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-    "sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train' and extra != 'extra-8-skyagent-verl'",
-]
-dependencies = [
-    { name = "aiohttp", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "anthropic", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "blake3", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "cachetools", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "cbor2", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "cloudpickle", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "compressed-tensors", version = "0.12.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "depyf", version = "0.20.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "diskcache", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "einops", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "fastapi", extra = ["standard"], marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "filelock", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "flashinfer-python", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "gguf", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "lark", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "llguidance", version = "1.3.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'aarch64' and extra != 'extra-8-skyagent-skyrl-train') or (platform_machine == 'arm64' and extra != 'extra-8-skyagent-skyrl-train') or (platform_machine == 's390x' and extra != 'extra-8-skyagent-skyrl-train') or (platform_machine == 'x86_64' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "lm-format-enforcer", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "mistral-common", extra = ["image"], marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "model-hosting-container-standards", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "msgspec", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "ninja", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "numba", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "numpy", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "openai", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "openai-harmony", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "opencv-python-headless", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "outlines-core", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "partial-json-parser", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "pillow", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "prometheus-client", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "prometheus-fastapi-instrumentator", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "protobuf", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "psutil", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "py-cpuinfo", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "pybase64", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "pydantic", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "python-json-logger", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "pyyaml", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "pyzmq", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "ray", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "regex", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "requests", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "scipy", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "sentencepiece", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "setproctitle", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "setuptools", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "six", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "tiktoken", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "tokenizers", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "torchaudio", version = "2.9.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "torchvision", version = "0.24.0", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine == 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "torchvision", version = "0.24.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and extra != 'extra-8-skyagent-skyrl-train') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "tqdm", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "transformers", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "typing-extensions", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "watchfiles", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-    { name = "xformers", version = "0.0.33.post1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "xgrammar", marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/40/15/bc50794c5c6a48f075d72fde8035647d38072ad81031168d27ca631f9395/vllm-0.11.2.tar.gz", hash = "sha256:496d15bb64ca0fe73adbc57a93b29f4671fa12404c09e0ba02f777bfe60af671", size = 17287801, upload-time = "2025-11-20T08:31:35.084Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/75/5d/d6af7818e41957a5d35f1b0ecd0186ac80e322f228dc390dcbc4aafce58d/vllm-0.11.2-cp38-abi3-manylinux1_x86_64.whl", hash = "sha256:ea473bd4fde06940fe3f681a00476060652f62b3279ef11aaffac5768856cfe8", size = 370306629, upload-time = "2025-11-20T08:30:43.713Z" },
-    { url = "https://files.pythonhosted.org/packages/24/7c/f27896162b88c360d569fd632cf0525d5ce89cba8e555532d80dc3ee0a12/vllm-0.11.2-cp38-abi3-manylinux2014_aarch64.whl", hash = "sha256:a084f5ca768d22bf55810948cbb50825a35015e07593ab6c9c42fcbe18bdd5cc", size = 368543904, upload-time = "2025-11-20T08:31:15.933Z" },
 ]
 
 [[package]]
@@ -4795,34 +4481,14 @@ wheels = [
 name = "xformers"
 version = "0.0.32.post1"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-]
 dependencies = [
-    { name = "numpy", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "numpy", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "torch", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (platform_machine == 'aarch64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6f/33/3b9c4d3d5b2da453d27de891df4ad653ac5795324961aa3a5c15b0353fe6/xformers-0.0.32.post1.tar.gz", hash = "sha256:1de84a45c497c8d92326986508d81f4b0a8c6be4d3d62a29b8ad6048a6ab51e1", size = 12106196, upload-time = "2025-08-14T18:07:45.486Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/6b/df/6817346f1a77278315d5fe1fc9f239ba3282ba36e8ab3256babd448dde62/xformers-0.0.32.post1-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:5f245b5555188da112070d8fefb6b7ae1ae47422856521d66c837e9d2352fbe4", size = 117199943, upload-time = "2025-08-14T18:07:34.78Z" },
     { url = "https://files.pythonhosted.org/packages/91/70/7dee5a786d77a63cf20dac60c38086bd2202d59ae89c8acef0ef6331c374/xformers-0.0.32.post1-cp39-abi3-win_amd64.whl", hash = "sha256:feb452bc2c8731da1c5d0e2e4536ba95bb214f77b41e91f24443c74d6f98a126", size = 100221531, upload-time = "2025-08-14T18:07:41.112Z" },
-]
-
-[[package]]
-name = "xformers"
-version = "0.0.33.post1"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "platform_machine != 'aarch64' and sys_platform == 'linux'",
-]
-dependencies = [
-    { name = "numpy", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(platform_machine != 'aarch64' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6f/c1/cd0d6b89da38d8aa174e8eabf29530f8871daf53b886ec6b680ef9d3e71f/xformers-0.0.33.post1.tar.gz", hash = "sha256:e555258249b514ba117b3403523fe0bd7d3e92e930575f0e0dbf5f7db5b42677", size = 14784437, upload-time = "2025-11-13T20:16:14.793Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/94/3ad80d1070ddfb280c20a67dfbc094a93579a02910ef41f20631a9b566fe/xformers-0.0.33.post1-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:a8d72c6272453450eede2ed9aaa14448e6525569e14217573057ded146090db3", size = 122884756, upload-time = "2025-11-13T20:16:04.002Z" },
-    { url = "https://files.pythonhosted.org/packages/a9/ef/4f59589fe37e206f5bb6158aa1294cfa0e79d52bca99ea0fd3f5c8a73404/xformers-0.0.33.post1-cp39-abi3-win_amd64.whl", hash = "sha256:e20729ca1647d53f86143bd57451af953bb78e72677548c972cd016238a066e3", size = 105088581, upload-time = "2025-11-13T20:16:11.221Z" },
 ]
 
 [[package]]
@@ -4835,12 +4501,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "sentencepiece" },
     { name = "tiktoken" },
-    { name = "torch", version = "2.8.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-skyrl-train'" },
-    { name = "torch", version = "2.9.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-8-skyagent-verl' or extra != 'extra-8-skyagent-skyrl-train'" },
+    { name = "torch" },
     { name = "transformers" },
     { name = "triton", version = "3.3.1", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and platform_system == 'linux' and sys_platform != 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (platform_system != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "triton", version = "3.4.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and platform_system == 'linux' and sys_platform == 'linux' and extra == 'extra-8-skyagent-skyrl-train') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (platform_system != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
-    { name = "triton", version = "3.5.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and platform_system == 'linux' and sys_platform == 'linux' and extra != 'extra-8-skyagent-skyrl-train') or (extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
+    { name = "triton", version = "3.4.0", source = { registry = "https://pypi.org/simple" }, marker = "(platform_machine == 'x86_64' and platform_system == 'linux' and sys_platform == 'linux') or (platform_machine != 'x86_64' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (platform_system != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl') or (sys_platform != 'linux' and extra == 'extra-8-skyagent-skyrl-train' and extra == 'extra-8-skyagent-verl')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e6/f9/6d530ce703cf5aae65d594a5ab984b9c0c4956e6fdbcc3279e8b1eaa358e/xgrammar-0.1.17.tar.gz", hash = "sha256:8f6cd7b3436482ad8c94b6cc93892a7f36381315c443e8e7f256f8d71c3efdee", size = 1679977, upload-time = "2025-03-25T11:08:13.458Z" }
 wheels = [
