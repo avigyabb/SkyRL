@@ -1,0 +1,1397 @@
+{
+    "biomni.tool.literature": [
+        {
+            "name": "fetch_supplementary_info_from_doi",
+            "description": "Fetches supplementary information for a paper given its DOI and saves it to a specified directory.",
+            "required_parameters": [
+                {
+                    "name": "doi",
+                    "type": "str",
+                    "description": "The paper DOI",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "output_dir",
+                    "type": "str",
+                    "description": "Directory to save supplementary files",
+                    "default": "supplementary_info"
+                }
+            ]
+        },
+        {
+            "name": "extract_url_content",
+            "description": "Extract the text content of a webpage using requests and BeautifulSoup.",
+            "required_parameters": [
+                {
+                    "name": "url",
+                    "type": "str",
+                    "description": "Webpage URL to extract content from",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "extract_pdf_content",
+            "description": "Extract text content from a PDF file.",
+            "required_parameters": [
+                {
+                    "name": "url",
+                    "type": "str",
+                    "description": "URL of the PDF file",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "advanced_web_search",
+            "description": "Initiate an advanced web search by launching a specialized agent to collect relevant information and citations through multiple rounds of web searches for a given query.\nCraft the query carefully for the search agent to find the most relevant information.",
+            "required_parameters": [
+                {
+                    "name": "query",
+                    "type": "str",
+                    "description": "The query string that you want the agent to search for. May contain additional context or guidelines for the agent to follow.",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "max_searches",
+                    "type": "int",
+                    "description": "The max number of searches the agent may issue inside this request. The higher number of searches, the longer the returned results will be. You may tune this number based on the complexity of the query.",
+                    "default": 3
+                },
+                {
+                    "name": "max_retries",
+                    "type": "int",
+                    "description": "Maximum number of retry attempts with exponential backoff.",
+                    "default": 3
+                }
+            ]
+        }
+    ],
+    "biomni.tool.genomics": [
+        {
+            "name": "get_rna_seq_archs4",
+            "description": "Given a gene name, fetch RNA-seq expression data showing the top K tissues with highest transcripts-per-million (TPM) values.",
+            "required_parameters": [
+                {
+                    "name": "gene_name",
+                    "type": "str",
+                    "description": "The gene name for which RNA-seq data is being fetched",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "K",
+                    "type": "int",
+                    "description": "The number of tissues to return",
+                    "default": 10
+                }
+            ]
+        },
+        {
+            "name": "get_gene_set_enrichment_analysis_supported_database_list",
+            "description": "Returns a list of supported databases for gene set enrichment analysis.",
+            "required_parameters": [],
+            "optional_parameters": []
+        },
+        {
+            "name": "gene_set_enrichment_analysis",
+            "description": "Perform enrichment analysis for a list of genes, with optional background gene set and plotting functionality.",
+            "required_parameters": [
+                {
+                    "name": "genes",
+                    "type": "list",
+                    "description": "List of gene symbols to analyze",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "top_k",
+                    "type": "int",
+                    "description": "Number of top pathways to return",
+                    "default": 10
+                },
+                {
+                    "name": "database",
+                    "type": "str",
+                    "description": "Database to use for enrichment analysis (e.g., pathway, transcription, ontology)",
+                    "default": "ontology"
+                },
+                {
+                    "name": "background_list",
+                    "type": "list",
+                    "description": "List of background genes to use for enrichment analysis",
+                    "default": null
+                },
+                {
+                    "name": "plot",
+                    "type": "bool",
+                    "description": "Generate a bar plot of the top K enrichment results",
+                    "default": false
+                }
+            ]
+        }
+    ],
+    "biomni.tool.support_tools": [
+        {
+            "name": "run_python_repl",
+            "description": "Executes the provided Python command in the notebook environment and returns the output.",
+            "required_parameters": [
+                {
+                    "name": "command",
+                    "type": "str",
+                    "description": "Python command to execute in the notebook environment",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "read_function_source_code",
+            "description": "Read the source code of a function from any module path.",
+            "required_parameters": [
+                {
+                    "name": "function_name",
+                    "type": "str",
+                    "description": "Fully qualified function name (e.g., 'bioagentos.tool.support_tools.write_python_code')",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        }
+    ],
+    "biomni.tool.database": [
+        {
+            "name": "query_uniprot",
+            "description": "Query the UniProt REST API using either natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about proteins (e.g., \"Find information about human insulin\")",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Full or partial UniProt API endpoint URL to query directly (e.g., \"https://rest.uniprot.org/uniprotkb/P01308\")",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "max_results",
+                    "type": "int",
+                    "description": "Maximum number of results to return",
+                    "default": 5
+                }
+            ]
+        },
+        {
+            "name": "query_alphafold",
+            "description": "Query the AlphaFold Database API for protein structure predictions.",
+            "required_parameters": [
+                {
+                    "name": "uniprot_id",
+                    "type": "str",
+                    "description": "UniProt accession ID (e.g., \"P12345\")",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Specific AlphaFold API endpoint to query: \"prediction\", \"summary\", or \"annotations\"",
+                    "default": "prediction"
+                },
+                {
+                    "name": "residue_range",
+                    "type": "str",
+                    "description": "Specific residue range in format \"start-end\" (e.g., \"1-100\")",
+                    "default": null
+                },
+                {
+                    "name": "download",
+                    "type": "bool",
+                    "description": "Whether to download structure files",
+                    "default": false
+                },
+                {
+                    "name": "output_dir",
+                    "type": "str",
+                    "description": "Directory to save downloaded files",
+                    "default": null
+                },
+                {
+                    "name": "file_format",
+                    "type": "str",
+                    "description": "Format of the structure file to download - \"pdb\" or \"cif\"",
+                    "default": "pdb"
+                },
+                {
+                    "name": "model_version",
+                    "type": "str",
+                    "description": "AlphaFold model version - \"v4\" (latest) or \"v3\", \"v2\", \"v1\"",
+                    "default": "v4"
+                },
+                {
+                    "name": "model_number",
+                    "type": "int",
+                    "description": "Model number (1-5, with 1 being the highest confidence model)",
+                    "default": 1
+                }
+            ]
+        },
+        {
+            "name": "query_interpro",
+            "description": "Query the InterPro REST API using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about protein domains or families",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Direct endpoint path or full URL (e.g., '/entry/interpro/IPR023411')",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "max_results",
+                    "type": "int",
+                    "description": "Maximum number of results to return per page",
+                    "default": 3
+                }
+            ]
+        },
+        {
+            "name": "query_pdb",
+            "description": "Query the RCSB PDB database using natural language or a direct structured query.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about protein structures",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "query",
+                    "type": "dict",
+                    "description": "Direct structured query in RCSB Search API format (overrides prompt)",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "max_results",
+                    "type": "int",
+                    "description": "Maximum number of results to return",
+                    "default": 3
+                }
+            ]
+        },
+        {
+            "name": "query_pdb_identifiers",
+            "description": "Retrieve detailed data and/or download files for PDB identifiers.",
+            "required_parameters": [
+                {
+                    "name": "identifiers",
+                    "type": "List[str]",
+                    "description": "List of PDB identifiers to query",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "return_type",
+                    "type": "str",
+                    "description": "Type of results: 'entry', 'assembly', 'polymer_entity', etc.",
+                    "default": "entry"
+                },
+                {
+                    "name": "download",
+                    "type": "bool",
+                    "description": "Whether to download PDB structure files",
+                    "default": false
+                },
+                {
+                    "name": "attributes",
+                    "type": "List[str]",
+                    "description": "List of specific attributes to retrieve",
+                    "default": null
+                }
+            ]
+        },
+        {
+            "name": "query_kegg",
+            "description": "Take a natural language prompt and convert it to a structured KEGG API query.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about KEGG data (e.g., \"Find human pathways related to glycolysis\")",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Direct KEGG API endpoint to query",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will look for ANTHROPIC_API_KEY environment variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed API response information",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_stringdb",
+            "description": "Query the STRING protein interaction database using natural language or direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about protein interactions",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Full URL to query directly (overrides prompt)",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "download_image",
+                    "type": "bool",
+                    "description": "Whether to download image results (for image endpoints)",
+                    "default": false
+                },
+                {
+                    "name": "output_dir",
+                    "type": "str",
+                    "description": "Directory to save downloaded files",
+                    "default": null
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed response information",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_iucn",
+            "description": "Query the IUCN Red List API using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "token",
+                    "type": "str",
+                    "description": "IUCN API token - required for all queries",
+                    "default": ""
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about species conservation status",
+                    "default": null
+                },
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "API endpoint name (e.g., \"species/id/12392\") or full URL",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed query information or just formatted results",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_paleobiology",
+            "description": "Query the Paleobiology Database (PBDB) API using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about fossil records",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "API endpoint name or full URL",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed query information",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_jaspar",
+            "description": "Query the JASPAR REST API using natural language or a direct endpoint to retrieve transcription factor binding profiles.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about transcription factor binding profiles",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "API endpoint path (e.g., '/matrix/MA0002.2/') or full URL",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed query information",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_worms",
+            "description": "Query the World Register of Marine Species (WoRMS) REST API using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about marine species",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Full URL or endpoint specification",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return full API response details",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_cbioportal",
+            "description": "Query the cBioPortal REST API using natural language or a direct endpoint to access cancer genomics data.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about cancer genomics data",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "API endpoint path (e.g., '/studies/brca_tcga/patients') or full URL",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed API response information",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_clinvar",
+            "description": "Take a natural language prompt and convert it to a structured ClinVar query.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about genetic variants (e.g., \"Find pathogenic BRCA1 variants\")",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "search_term",
+                    "type": "str",
+                    "description": "Direct search term to use with the ClinVar API",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will look for ANTHROPIC_API_KEY environment variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "max_results",
+                    "type": "int",
+                    "description": "Maximum number of results to return",
+                    "default": 3
+                }
+            ]
+        },
+        {
+            "name": "query_geo",
+            "description": "Query the NCBI Gene Expression Omnibus (GEO) using natural language or a direct search term.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about RNA-seq, microarray, or other expression data",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "search_term",
+                    "type": "str",
+                    "description": "Direct search term in GEO syntax",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "max_results",
+                    "type": "int",
+                    "description": "Maximum number of results to return",
+                    "default": 3
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return verbose results",
+                    "default": null
+                }
+            ]
+        },
+        {
+            "name": "query_dbsnp",
+            "description": "Query the NCBI dbSNP database using natural language or a direct search term.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about genetic variants/SNPs",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "search_term",
+                    "type": "str",
+                    "description": "Direct search term in dbSNP syntax",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "max_results",
+                    "type": "int",
+                    "description": "Maximum number of results to return",
+                    "default": 3
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "query_ucsc",
+            "description": "Query the UCSC Genome Browser API using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about genomic data",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Full URL or endpoint specification with parameters",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_ensembl",
+            "description": "Query the Ensembl REST API using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about genomic data",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Direct API endpoint to query (e.g., \"lookup/symbol/human/BRCA2\") or full URL",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_opentarget_genetics",
+            "description": "Query the OpenTargets Genetics API using natural language or a direct GraphQL query.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about genetic targets and variants",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "query",
+                    "type": "str",
+                    "description": "Direct GraphQL query string",
+                    "default": null
+                },
+                {
+                    "name": "variables",
+                    "type": "dict",
+                    "description": "Variables for the GraphQL query",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed API response information",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_opentarget",
+            "description": "Query the OpenTargets Platform API using natural language or a direct GraphQL query.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about drug targets, diseases, and mechanisms",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "query",
+                    "type": "str",
+                    "description": "Direct GraphQL query string",
+                    "default": null
+                },
+                {
+                    "name": "variables",
+                    "type": "dict",
+                    "description": "Variables for the GraphQL query",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "query_gwas_catalog",
+            "description": "Query the GWAS Catalog API using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about GWAS data",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Full API endpoint to query (e.g., \"https://www.ebi.ac.uk/gwas/rest/api/studies?diseaseTraitId=EFO_0001360\")",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "max_results",
+                    "type": "int",
+                    "description": "Maximum number of results to return",
+                    "default": 3
+                }
+            ]
+        },
+        {
+            "name": "query_gnomad",
+            "description": "Query gnomAD for variants in a gene using natural language or direct gene symbol.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about genetic variants",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "gene_symbol",
+                    "type": "str",
+                    "description": "Gene symbol (e.g., \"BRCA1\")",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed query results",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "blast_sequence",
+            "description": "Identifies a DNA sequence using NCBI BLAST with improved error handling, timeout management, and debugging",
+            "required_parameters": [
+                {
+                    "name": "sequence",
+                    "type": "str",
+                    "description": "The sequence to identify. If DNA, use database: core_nt, program: blastn; if protein, use database: nr, program: blastp",
+                    "default": null
+                },
+                {
+                    "name": "database",
+                    "type": "str",
+                    "description": "The BLAST database to search against",
+                    "default": null
+                },
+                {
+                    "name": "program",
+                    "type": "str",
+                    "description": "The BLAST program to use",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "query_reactome",
+            "description": "Query the Reactome database using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about biological pathways",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Direct API endpoint or full URL",
+                    "default": null
+                },
+                {
+                    "name": "download",
+                    "type": "bool",
+                    "description": "Whether to download pathway diagrams",
+                    "default": false
+                },
+                {
+                    "name": "output_dir",
+                    "type": "str",
+                    "description": "Directory to save downloaded files",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_regulomedb",
+            "description": "Query the RegulomeDB database using natural language or direct variant/coordinate specification.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about regulatory elements",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Direct API endpoint to query",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": false
+                }
+            ]
+        },
+        {
+            "name": "query_pride",
+            "description": "Query the PRIDE (PRoteomics IDEntifications) database using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about proteomics data",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "The full endpoint to query (e.g., \"https://www.ebi.ac.uk/pride/ws/archive/v2/projects?keyword=breast%20cancer\")",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "max_results",
+                    "type": "int",
+                    "description": "Maximum number of results to return",
+                    "default": 3
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": null
+                }
+            ]
+        },
+        {
+            "name": "query_gtopdb",
+            "description": "Query the Guide to PHARMACOLOGY database (GtoPdb) using natural language or a direct endpoint.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about drug targets, ligands, and interactions",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Full API endpoint to query (e.g., \"https://www.guidetopharmacology.org/services/targets?type=GPCR&name=beta-2\")",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "region_to_ccre_screen",
+            "description": "Given genomic coordinates, retrieves information of intersecting candidate cis-regulatory elements (cCREs).",
+            "required_parameters": [
+                {
+                    "name": "coord_chrom",
+                    "type": "str",
+                    "description": "Chromosome of the genomic region, formatted like 'chr12'",
+                    "default": null
+                },
+                {
+                    "name": "coord_start",
+                    "type": "int",
+                    "description": "Starting chromosome coordinate",
+                    "default": null
+                },
+                {
+                    "name": "coord_end",
+                    "type": "int",
+                    "description": "Ending chromosome coordinate",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "assembly",
+                    "type": "str",
+                    "description": "Assembly of the genome, formatted like 'GRCh38'",
+                    "default": "GRCh38"
+                }
+            ]
+        },
+        {
+            "name": "get_genes_near_ccre",
+            "description": "Given a cCRE (Candidate cis-Regulatory Element), return the k nearest genes sorted by distance.",
+            "required_parameters": [
+                {
+                    "name": "accession",
+                    "type": "str",
+                    "description": "ENCODE Accession ID of query cCRE, e.g., EH38E1516980",
+                    "default": null
+                },
+                {
+                    "name": "assembly",
+                    "type": "str",
+                    "description": "Assembly of the gene, e.g., 'GRCh38'",
+                    "default": null
+                },
+                {
+                    "name": "chromosome",
+                    "type": "str",
+                    "description": "Chromosome of the gene, e.g., 'chr12'",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "k",
+                    "type": "int",
+                    "description": "Number of nearby genes to return, sorted by distance",
+                    "default": 10
+                }
+            ]
+        },
+        {
+            "name": "query_remap",
+            "description": "Query the ReMap database for regulatory elements and transcription factor binding sites.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about transcription factors and binding sites",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Full API endpoint to query (e.g., \"https://remap.univ-amu.fr/api/v1/catalogue/tf?tf=CTCF\")",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_mpd",
+            "description": "Query the Mouse Phenome Database (MPD) for mouse strain phenotype data using natural language or direct endpoint access.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about mouse phenotypes, strains, or measurements",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Full API endpoint to query (e.g., 'https://phenomedoc.jax.org/MPD_API/strains')",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "name": "query_emdb",
+            "description": "Query the Electron Microscopy Data Bank (EMDB) for 3D macromolecular structures.",
+            "required_parameters": [
+                {
+                    "name": "prompt",
+                    "type": "str",
+                    "description": "Natural language query about EM structures and associated data",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "endpoint",
+                    "type": "str",
+                    "description": "Full API endpoint to query (e.g., \"https://www.ebi.ac.uk/emdb/api/search\")",
+                    "default": null
+                },
+                {
+                    "name": "api_key",
+                    "type": "str",
+                    "description": "Anthropic API key. If None, will use ANTHROPIC_API_KEY env variable",
+                    "default": null
+                },
+                {
+                    "name": "model",
+                    "type": "str",
+                    "description": "Anthropic model to use for natural language processing",
+                    "default": "claude-3-5-haiku-20241022"
+                },
+                {
+                    "name": "verbose",
+                    "type": "bool",
+                    "description": "Whether to return detailed results",
+                    "default": true
+                }
+            ]
+        }
+    ]
+}

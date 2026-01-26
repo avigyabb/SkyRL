@@ -13,7 +13,6 @@ class drug_repurposing(base_task):
             "Your task is to identify top 5 drugs that can be potentially repurposed to treat the given disease. "
             "From the list, prioritize the drug list with the highest potential (matching the given DrugBank IDs).\n"
             "Disease: {disease}\nDrugs: {drug_list}\n"
-            "Output format: a list of drugs with their DrugBank IDs, no drug name, just the IDs: 1. DB00001 2. DB00002 3. DB00003 .."
         )
         self.disease_names = self.df.groupby('disease_name').log_OR.mean().sort_values()[::-1][:num_samples].index.values
         self.num_examples = len(self.disease_names)

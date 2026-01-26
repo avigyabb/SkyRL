@@ -1,5 +1,4 @@
 import os
-import json
 # from verl.workers.agentic.biomni.utils import (
 #     api_schema_to_langchain_tool,
 #     textify_api_dict,
@@ -16,26 +15,14 @@ from skyrl_agent.agents.biomni_codeact.utils import (
     data_lake_dict,
     data_lake_dict_tasks,
     library_content_dict_tasks,
+    load_pkl
 )
 
 class PromptManager:
-    def __init__(self, tool_path = "./tool", s3_datalake_uri="s3://biomni-datalake/", 
-                 use_s3_datasets=False, data_lake_path="/dfs/project/bioagentos/biomni_data/data_lake"):
-        """
-        Initialize the PromptManager.
-        
-        Args:
-            tool_path: Path to the tool directory
-            s3_datalake_uri: S3 URI for the data lake (used if use_s3_datasets=True)
-            use_s3_datasets: If True, use S3 data lake; if False, use local data lake (default: False)
-            data_lake_path: Local path to the data lake (used if use_s3_datasets=False)
-        """
-        with open(os.path.join(tool_path, 'screen_api.json'), 'r') as f:
-            module2api = json.load(f)
+    def __init__(self, tool_path = "./tool", s3_datalake_uri="s3://biomni-datalake/"):
+        module2api = load_pkl(os.path.join(tool_path, 'screen_api.pkl'))
         self.default_tool_dict = module2api
         self.s3_datalake_uri = s3_datalake_uri
-        self.use_s3_datasets = use_s3_datasets
-        self.data_lake_path = data_lake_path
         self.tool_path = tool_path
         self.prompt_limits = self._read_prompt_limits()
         self.configure()
@@ -48,18 +35,18 @@ class PromptManager:
         self.default_data_lake_dict = data_lake_dict
         self.default_library_content_dict = library_content_dict
         
-        self.tools_file_map = {
-            'rare_disease_diagnosis': os.path.join(self.tool_path, 'rare_disease_diagnosis_api_filter.json'),
-            'gwas_variant_prioritization': os.path.join(self.tool_path, 'gwas_variant_prioritization_api_filter.json'),
-            'patient_gene_detection': os.path.join(self.tool_path, 'patient_gene_detection_api_filter.json'),
-            'lab_bench_dbqa': os.path.join(self.tool_path, 'lab_bench_dbqa_api_filter.json'),
-            'lab_bench_seqqa': os.path.join(self.tool_path, 'lab_bench_seqqa_api_filter.json'),
-            'screen_gene_retrieval': os.path.join(self.tool_path, 'screen_gene_retrieval_api_filter.json'),
-            'screen_design': os.path.join(self.tool_path, 'screen_api_filter.json'),
-            'crispr_delivery': os.path.join(self.tool_path, 'crispr_delivery_api_filter.json'),
-            'gwas_causal_gene_opentargets': os.path.join(self.tool_path, 'gwas_causal_gene_opentargets_api_filter.json'),
-            'gwas_causal_gene_pharmaprojects': os.path.join(self.tool_path, 'gwas_causal_gene_pharmaprojects_api_filter.json'),
-            'gwas_causal_gene_gwas_catalog': os.path.join(self.tool_path, 'gwas_causal_gene_gwas_catalog_api_filter.json'),
+        self.tools_pkl_map = {
+            'rare_disease_diagnosis': os.path.join(self.tool_path, 'rare_disease_diagnosis_api_filter.pkl'),
+            'gwas_variant_prioritization': os.path.join(self.tool_path, 'gwas_variant_prioritization_api_filter.pkl'),
+            'patient_gene_detection': os.path.join(self.tool_path, 'patient_gene_detection_api_filter.pkl'),
+            'lab_bench_dbqa': os.path.join(self.tool_path, 'lab_bench_dbqa_api_filter.pkl'),
+            'lab_bench_seqqa': os.path.join(self.tool_path, 'lab_bench_seqqa_api_filter.pkl'),
+            'screen_gene_retrieval': os.path.join(self.tool_path, 'screen_gene_retrieval_api_filter.pkl'),
+            'screen_design': os.path.join(self.tool_path, 'screen_api_filter.pkl'),
+            'crispr_delivery': os.path.join(self.tool_path, 'crispr_delivery_api_filter.pkl'),
+            'gwas_causal_gene_opentargets': os.path.join(self.tool_path, 'gwas_causal_gene_opentargets_api_filter.pkl'),
+            'gwas_causal_gene_pharmaprojects': os.path.join(self.tool_path, 'gwas_causal_gene_pharmaprojects_api_filter.pkl'),
+            'gwas_causal_gene_gwas_catalog': os.path.join(self.tool_path, 'gwas_causal_gene_gwas_catalog_api_filter.pkl'),
         }
 
     
@@ -67,12 +54,7 @@ class PromptManager:
         if task_name is None:
             raise ValueError("Task name is required")
         
-        if task_name in self.tools_file_map:
-            with open(self.tools_file_map[task_name], 'r') as f:
-                tool_dict_src = json.load(f)
-        else:
-            print(f"Task name {task_name} not found in tools_file_map, using default tool dictionary")
-            tool_dict_src = self.default_tool_dict
+        tool_dict_src = load_pkl(self.tools_pkl_map[task_name]) if task_name in self.tools_pkl_map else self.default_tool_dict
         tool_dict = dict(tool_dict_src)
         tool_dict = self._limit_mapping(tool_dict, self.prompt_limits["tools"])
 
@@ -231,9 +213,8 @@ In each response, you must include EITHER <execute> or <solution> tag. Not both 
 You may or may not receive feedbacks from human. If so, address the feedbacks by following the same procedure of multiple rounds of thinking, execution, and then coming up with a new solution.
 """
 
-        # Add environment resources with conditional S3 or local instructions
-        if self.use_s3_datasets:
-            prompt_modifier += """
+        # Add environment resources with S3 instructions
+        prompt_modifier += """
 
 Environment Resources:
 
@@ -262,39 +243,7 @@ Each library is listed with its description to help you understand its functiona
 - Note on using R packages and Bash scripts:
   - R packages: Use subprocess.run(['Rscript', '-e', 'your R code here']) in Python, or use the #!R marker in your execute block.
   - Bash scripts and commands: Use the #!BASH marker in your execute block for both simple commands and complex shell scripts with variables, loops, conditionals, etc.
-"""
-        else:
-            prompt_modifier += """
-
-Environment Resources:
-
-- Function Dictionary:
-{function_intro}
---- 
-{tool_desc}
----
-
-{import_instruction}
-
-- Biological data lake
-You have read-only access to a biological data lake at the following path: {data_lake_path}. 
-{data_lake_intro}
-Each item is listed with its description to help you understand its contents.
-----
-{data_lake_content}
-----
-
-- Software Library:
-{library_intro}
-Each library is listed with its description to help you understand its functionality.
-----
-{library_content_formatted}
-----
-
-- Note on using R packages and Bash scripts:
-  - R packages: Use subprocess.run(['Rscript', '-e', 'your R code here']) in Python, or use the #!R marker in your execute block.
-  - Bash scripts and commands: Use the #!BASH marker in your execute block for both simple commands and complex shell scripts with variables, loops, conditionals, etc.
-"""
+        """
         
         # Set appropriate text based on whether this is initial configuration or after retrieval
         if is_retrieval:
@@ -313,28 +262,16 @@ Each library is listed with its description to help you understand its functiona
         data_lake_content_formatted = '\n'.join(data_lake_formatted)
 
         # Format the prompt with the appropriate values
-        if self.use_s3_datasets:
-            formatted_prompt = prompt_modifier.format(
-                function_intro=function_intro,
-                tool_desc=textify_api_dict(tool_desc) if isinstance(tool_desc, dict) else tool_desc,
-                import_instruction=import_instruction,
-                s3_datalake_uri=self.s3_datalake_uri,
-                data_lake_intro=data_lake_intro,
-                data_lake_content=data_lake_content_formatted,
-                library_intro=library_intro,
-                library_content_formatted=library_content_formatted
-            )
-        else:
-            formatted_prompt = prompt_modifier.format(
-                function_intro=function_intro,
-                tool_desc=textify_api_dict(tool_desc) if isinstance(tool_desc, dict) else tool_desc,
-                import_instruction=import_instruction,
-                data_lake_path=self.data_lake_path,
-                data_lake_intro=data_lake_intro,
-                data_lake_content=data_lake_content_formatted,
-                library_intro=library_intro,
-                library_content_formatted=library_content_formatted
-            )
+        formatted_prompt = prompt_modifier.format(
+            function_intro=function_intro,
+            tool_desc=textify_api_dict(tool_desc) if isinstance(tool_desc, dict) else tool_desc,
+            import_instruction=import_instruction,
+            s3_datalake_uri=self.s3_datalake_uri,
+            data_lake_intro=data_lake_intro,
+            data_lake_content=data_lake_content_formatted,
+            library_intro=library_intro,
+            library_content_formatted=library_content_formatted
+        )
         
         return formatted_prompt
 

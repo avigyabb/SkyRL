@@ -51,29 +51,6 @@ Files:
 
 Objective: Identify microbial taxa (e.g., genus, OTUs) that are significantly differentially abundant between groups or conditions.
 
-Expected Output:
-Return a list of tuples containing the most significantly differentially abundant taxa and their p-values:
-[
-    (taxon_name, p_value),
-    (taxon_name, p_value),
-    ...
-]
-
-Examples:
-- For a colorectal cancer dataset:
-  [
-    ("Fusobacterium", 0.00000012),
-    ("Peptostreptococcus", 0.000005),
-    ("Bacteroides", 0.0023)
-  ]
-
-- For an OTU dataset:
-  [
-    ("OTU2921", 0.01560452),
-    ("OTU5788", 0.013678708),
-    ("OTU836", 0.004600807)
-  ]
-
 Focus on the most significant taxa (typically 10-20 taxa with the lowest p-values).
 
 Note: Your analysis should implement appropriate statistical methods for differential abundance testing in microbiome data.
