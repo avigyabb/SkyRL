@@ -26,42 +26,6 @@ _CHAT_TEMPLATE_PATH = Path(__file__).parent / "biomni_qwen3.jinja"
 with open(_CHAT_TEMPLATE_PATH, "r") as f:
     gen_chat_template = f.read()
 
-# includes everything
-resp_chat_template = (
-    "{% for message in messages %}"
-    "{% if (message['role'] != 'assistant') %}"
-    "{{'<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n'}}"
-    "{% elif (message['role'] == 'assistant')%}"
-    "{{'<|im_start|>' + message['role'] + '\\n'}}"
-    "{% generation %}"
-    "{{message['content'] + '<|im_end|>'}}"
-    "{% endgeneration %}"
-    "{{'\\n'}}"
-    "{% endif %}"
-    "{% endfor %}"
-)
-
-# drops previous <think> blocks
-resp_chat_template_qwen3_thinking = (
-    "{% for message in messages %}"
-    "{% if (message['role'] != 'assistant') %}"
-    "{{'<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>' + '\\n'}}"
-    "{% elif (message['role'] == 'assistant')%}"
-    "{{'<|im_start|>' + message['role'] + '\\n'}}"
-    "{% generation %}"
-    "{% set full_content = message['content'] %}"
-    "{% set mycontent = message['content'] %}"
-    "{% set is_last_message = loop.last and messages[-1]['role'] == 'assistant' %}"
-    "{% if '</think>' in full_content and not is_last_message %}"
-    "{% set mycontent = full_content.split('</think>')[-1].lstrip('\\n') %}"
-    "{% endif %}"
-    "{{mycontent + '<|im_end|>'}}"
-    "{% endgeneration %}"
-    "{{'\\n'}}"
-    "{% endif %}"
-    "{% endfor %}"
-)
-
 
 
 def convert_right_padding_to_left(tokenizer, input_ids, attention_mask, device, max_len=None):

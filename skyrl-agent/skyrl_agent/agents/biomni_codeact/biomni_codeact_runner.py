@@ -15,10 +15,21 @@ from skyrl_agent.agents.base import BaseTrajectory
 #     BiomniCodeActAgent,
 # )
 
-from skyrl_agent.agents.biomni_codeact.biomni_codeact_agent import BiomniCodeActAgent, BiomniRuntimeClient
+from skyrl_agent.agents.biomni_codeact.biomni_codeact_agent import (
+    BiomniCodeActAgent,
+    BiomniRuntimeClient,
+    gen_chat_template,
+)
 
 
 class BiomniCodeActTrajectory(BaseTrajectory):
+    # Use custom chat template from biomni_qwen3.jinja for post-processing tokenization.
+    # This ensures tokenization consistency between rollout (generation) and training.
+    # The same template is used for both normal and thinking modes since the jinja
+    # template already handles <think> blocks appropriately.
+    CHAT_TEMPLATE = gen_chat_template
+    CHAT_TEMPLATE_THINKING = gen_chat_template
+
     async def initialize_trajectory(self):
         pass
 

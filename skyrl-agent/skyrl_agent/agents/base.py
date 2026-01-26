@@ -22,7 +22,6 @@ from skyrl_agent.integrations.base import (
 from skyrl_agent.dispatcher.dispatchers import DISPATCHER_REGISTRY, DispatcherType
 from skyrl_agent.config.configuration_utils import TASK_CONFIG_REGISTRY, get_field_from_config, TrajectoryConfig
 from skyrl_agent.functional.chat_template import chat_template, chat_template_qwen3_thinking
-from skyrl_agent.functional.utils import transitions_to_training_data
 from .mapping import AGENT_TRAJECTORY_REGISTRY
 
 
@@ -76,6 +75,11 @@ class TrajectoryResult(TypedDict):
 
 
 class BaseTrajectory(ABC):
+    # Custom chat templates for tokenization in post-processing.
+    # Subclasses can override these to use agent-specific templates.
+    # If None, the default templates from skyrl_agent.functional.chat_template will be used.
+    CHAT_TEMPLATE: Optional[str] = None
+    CHAT_TEMPLATE_THINKING: Optional[str] = None
 
     def __init__(
         self,
@@ -84,7 +88,6 @@ class BaseTrajectory(ABC):
         infer_engine: AsyncInferBackend,
         tokenizer: AutoTokenizer,
         task: BaseTask,
-        val_mode: bool = False,
     ) -> None:
         super().__init__()
 
@@ -93,7 +96,6 @@ class BaseTrajectory(ABC):
         self.infer_engine = infer_engine
         self.tokenizer = tokenizer
         self.task = task
-        self.val_mode = val_mode
         self.agent_cls = _import_object(cfg.agent_cls)
 
         self.result: TrajectoryResult = None
@@ -124,10 +126,7 @@ class AgentRunner:
 
         # infer engine
         self.infer_engine = build_backend(
-            cfg.generator.infer_backend,
-            infer_engine=infer_engine,
-            tokenizer=tokenizer,
-            cfg=cfg.generator.backend_config,
+            cfg.generator.infer_backend, infer_engine=infer_engine, cfg=cfg.generator.backend_config
         )
         self.tokenizer = tokenizer
         self.traj_cls: Type[BaseTrajectory] = _import_object(AGENT_TRAJECTORY_REGISTRY.get(cfg.agent_cls))
@@ -202,10 +201,24 @@ class AgentRunner:
                 self.cfg.generator.val_config.num_trajectories if val_mode else self.cfg.generator.num_trajectories
             )
 
-            # Simple generator-level toggles (defaults)
-            profile_tools = bool(self.cfg.generator.get("profile_tools", False))
-            debug_log = bool(self.cfg.generator.get("debug_log", False))
-            enable_turn_reminder = bool(self.cfg.generator.get("enable_turn_reminder", False))
+            profile_tools_cfg = None
+            debug_log_cfg = None
+            for path in ("generator.profile_tools", "skyrl_agent.profile_tools"):
+                try:
+                    profile_tools_cfg = OmegaConf.select(self.cfg, path)
+                except Exception:
+                    profile_tools_cfg = None
+                if profile_tools_cfg is not None:
+                    break
+            for path in ("generator.debug_log", "skyrl_agent.debug_log"):
+                try:
+                    debug_log_cfg = OmegaConf.select(self.cfg, path)
+                except Exception:
+                    debug_log_cfg = None
+                if debug_log_cfg is not None:
+                    break
+            profile_tools = bool(profile_tools_cfg) if profile_tools_cfg is not None else False
+            debug_log = bool(debug_log_cfg) if debug_log_cfg is not None else False
 
             use_log_heavy = self.cfg.get("use_log_heavy", True)
             log_heavy_freq = self.cfg.get("log_heavy_freq", 8)
@@ -224,8 +237,6 @@ class AgentRunner:
                     agent_cls=self.cfg.agent_cls,
                     profile_tools=profile_tools,
                     debug_log=debug_log,
-                    early_step_threshold=self.cfg.generator.get("early_step_threshold", 0),
-                    enable_turn_reminder=enable_turn_reminder,
                     use_log_heavy=use_log_heavy,
                     log_heavy_freq=log_heavy_freq,
                 )
@@ -235,7 +246,6 @@ class AgentRunner:
                     tokenizer=self.tokenizer,
                     infer_engine=self.infer_engine,
                     task=self.task,
-                    val_mode=val_mode,
                 )
                 self.trajectories[instance_id][traj_id] = traj
 
@@ -260,7 +270,6 @@ class AgentRunner:
         instance_list = []
         error_list = []
         resolved_list = []
-        traj_reward_list = []
         has_finish_action_list = []
         finish_reason_list = []
 
@@ -328,7 +337,6 @@ class AgentRunner:
                         print(f"Empty messages for instance_id {instance_id}, trajectory {idx}. Using global fallback.")
                         for key, value in fallback_res.items():
                             matched_results[idx][key] = copy.deepcopy(value)
-                        matched_results[idx]["finish_reason"] = "error_runtime"
 
                 else:
                     logger.error(f"[FATAL] No fallback (local/global) for instance_id {instance_id}. Skipping.")
@@ -339,176 +347,102 @@ class AgentRunner:
                         print(f"Empty messages for instance_id {instance_id}, trajectory {idx}. Using local fallback.")
                         for key, value in fallback.items():
                             matched_results[idx][key] = copy.deepcopy(value)
-                        matched_results[idx]["finish_reason"] = "error_runtime"
 
-        # error evaluation mainly due to timeout during tool execution
-        mask_out_reason = [
-            "CONTEXT_WINDOW_EXCEEDED",
-            "error_runtime",
-            "error_evaluation",
-            "max_iterations_reached",
-            "BAD_LLM_RESPONSE",
-            "stuck_in_a_loop",
-            "cmd_timeout",
-        ]
-        # Get training data
-
-        # backward compatibility for old format
-        # TODO(csy): remove this after oh_agent is updated
+        # Get batch of messages
         all_messages = []
         all_prompts = []
         all_responses = []
-
-        # step-level
-        prompt_input_ids = []
-        response_ids = []
-        response_assistant_mask = []
-        logprobs = []
-        steps_per_trajectory = []
-        reward_list = []
-        is_last_episode_list = []
-        traj_idx_list = []
-        step_finish_reason_list = []
-
         num_turns = []  # assistant-based turns
         for result in matched_results:
-            current_traj_id = f"{result.get('instance_id')}-traj{result.get('trajectory_id')}"
             messages = result.get("messages", [])
+            all_messages.append(messages)
+            # get the response: starting from the first assistant message
+            starting_index = 0
             # Count assistant messages as turns to match actual steps
             num_turns.append(sum(1 for m in messages if m.get("role") == "assistant"))
-            # trajectory-level results
+            for i, msg in enumerate(messages):
+                if msg["role"] == "assistant":
+                    starting_index = i
+                    break
+            if starting_index == 0:
+                # If we don't find an assistant, all messages are prompts and there are no responses
+                print(
+                    f'ERROR: Found no assistant message. len(messages) == {len(messages)} and roles are {[msg["role"] for msg in messages]}'
+                )
+                starting_index = len(messages)
+            prompt = messages[:starting_index]
+            all_prompts.append(prompt)
+            response = messages[starting_index:]
+            all_responses.append(response)
+
             error_list.append(result.get("error", None))
             resolved_list.append(result.get("reward", False))
-            traj_reward_list.append(result.get("reward", False))
             has_finish_action_list.append(result.get("finish", False))
             finish_reason_list.append(result.get("finish_reason", None))
 
-            transitions = result.get("transitions", [])
-            # backward compatibility for old format
-            # TODO(csy): remove this after oh_agent is updated
-            if not transitions:
-                logger.info(
-                    f"No transitions found for instance_id {instance_id}, trajectory_id {trajectory_id}. Using messages instead."
-                )
-                all_messages.append(messages)
-                starting_index = 0
-                for i, msg in enumerate(messages):
-                    if msg["role"] == "assistant":
-                        starting_index = i
-                        break
-                if starting_index == 0:
-                    # If we don't find an assistant, all messages are prompts and there are no responses
-                    print(
-                        f'ERROR: Found no assistant message. len(messages) == {len(messages)} and roles are {[msg["role"] for msg in messages]}'
-                    )
-                    starting_index = len(messages)
-                prompt = messages[:starting_index]
-                all_prompts.append(prompt)
-                response = messages[starting_index:]
-                all_responses.append(response)
-                # filter bad trajectories
-                if messages and messages[-1]["role"] == "assistant":
-                    finish_reason = result.get("finish_reason", None)
-                    if finish_reason not in mask_out_reason:
-                        if not (
-                            "<function=finish>" in messages[-1]["content"] and "</function>" in messages[-1]["content"]
-                        ):
-                            print(
-                                f"[WARN] Last message does not contain finish function call. Marking finish_reason {finish_reason} as BAD_LLM_RESPONSE. Content: {messages[-1]['content']}"
-                            )
-                            result["finish_reason"] = "BAD_LLM_RESPONSE"
+        # Encode messages, get assitant mask and position ids
+        # Use trajectory-class-specific templates if available, otherwise use defaults
+        traj_template = getattr(self.traj_cls, 'CHAT_TEMPLATE', None) or chat_template
+        traj_template_thinking = getattr(self.traj_cls, 'CHAT_TEMPLATE_THINKING', None) or chat_template_qwen3_thinking
+        
+        if getattr(self.traj_cls, 'CHAT_TEMPLATE', None) is None:
+            logger.warning("[AgentRunner] CHAT_TEMPLATE is None or missing for traj_cls, using the default chat template.")
+        if getattr(self.traj_cls, 'CHAT_TEMPLATE_THINKING', None) is None:
+            logger.warning("[AgentRunner] CHAT_TEMPLATE_THINKING is None or missing for traj_cls, using the default chat_template_qwen3_thinking.")
+        
+        prompt_encodings = self.tokenizer.apply_chat_template(
+            all_prompts,
+            # return_tensors="pt",
+            add_generation_prompt=False,
+            return_dict=True,
+            # padding=True
+        )
+        prompt_input_ids = prompt_encodings["input_ids"]
 
-                if messages and messages[-1]["role"] == "user":
-                    finish_reason = result.get("finish_reason", None)
-                    if finish_reason not in mask_out_reason:
-                        print(
-                            f"[WARN] Last message is from user but it's not in mask_out_reason. Marking finish_reason {finish_reason} as error_runtime. Content: {messages[-1]['content']}"
-                        )
-                        result["finish_reason"] = "error_runtime"
-                continue
+        response_encodings = self.tokenizer.apply_chat_template(
+            all_responses,
+            chat_template=traj_template_thinking if self.cfg.generator.remove_think_tokens else traj_template,
+            return_assistant_tokens_mask=True,
+            add_generation_prompt=False,
+            return_dict=True,
+        )
 
-            # step-level results
-            data_list = transitions_to_training_data(transitions)
-            for data in data_list:
-                prompt_input_ids.append(data.input_tokens)
-                response_ids.append(data.response_tokens)
-                logprobs.append(data.response_logprobs)
-                response_assistant_mask.append(data.response_mask)
-                is_last_episode_list.append(False)
-            is_last_episode_list[-1] = True
-            steps_per_trajectory.append(len(data_list))
-            reward_list.extend([result.get("reward", False)] * len(data_list))
-            step_finish_reason_list.extend([result.get("finish_reason", None)] * len(data_list))
-            traj_idx_list.extend([current_traj_id] * len(data_list))
+        response_ids = response_encodings["input_ids"]
+        response_assistant_mask = response_encodings["assistant_masks"]
 
-        # backward compatibility for old format
-        # TODO(csy): remove this after oh_agent is updated
-        if all_messages:
-            # Encode messages, get assitant mask and position ids
-            prompt_encodings = self.tokenizer.apply_chat_template(
-                all_prompts,
-                # return_tensors="pt",
-                add_generation_prompt=True,
-                return_dict=True,
-                # padding=True
-            )
-            prompt_input_ids = prompt_encodings["input_ids"]
-
-            response_encodings = self.tokenizer.apply_chat_template(
-                all_responses,
-                chat_template=chat_template_qwen3_thinking if self.cfg.generator.remove_think_tokens else chat_template,
-                return_assistant_tokens_mask=True,
-                add_generation_prompt=False,
-                return_dict=True,
-            )
-
-            response_ids = response_encodings["input_ids"]
-            response_assistant_mask = response_encodings["assistant_masks"]
-            # to be compatible with new format
-            logprobs = [None] * len(response_ids)
-            step_finish_reason_list = finish_reason_list
-            reward_list = resolved_list
-
+        mask_out_reason = ["CONTEXT_WINDOW_EXCEEDED", "error_runtime", "error_evaluation", "max_iterations_reached"]
         max_response_length = self.cfg.generator.max_prompt_length
         truncated_ids = []
         truncated_masks = []
-        truncated_logprobs = []
 
-        for idx, (ids, mask, logprob, reason) in enumerate(
-            zip(response_ids, response_assistant_mask, logprobs, step_finish_reason_list)
-        ):
+        for idx, (ids, mask, reason) in enumerate(zip(response_ids, response_assistant_mask, finish_reason_list)):
             # Check if truncation is needed
-            first_nonzero = mask.index(1) if 1 in mask else len(mask)
-            ids = ids[first_nonzero:]
-            mask = mask[first_nonzero:]
-            if logprob is not None:
-                logprob = logprob[first_nonzero:]
-
             if len(ids) > max_response_length:
+                # Assert finish_reason correctness
+                # assert reason in mask_out_reason, (
+                #     f"[Sanity Check Failed] Response length {len(ids)} > max_response_length={max_response_length} "
+                #     f"but finish_reason='{reason}' not in mask_out_reason={mask_out_reason}"
+                # )
                 if reason not in mask_out_reason:
                     logger.warning(
                         f"[WARN] Response length {len(ids)} > max_response_length={max_response_length} "
-                        f"but finish_reason='{reason}' not in mask_out_reason={mask_out_reason}. "
+                        f"but finish_reason='{reason}' not in mask_out_reason={mask_out_reason}"
                     )
                     # modify reason to CONTEXT_WINDOW_EXCEEDED
                     finish_reason_list[idx] = "CONTEXT_WINDOW_EXCEEDED"
                 # Truncate tokens and masks
-                ids = ids[:max_response_length]
-                mask = mask[:max_response_length]
-                if logprob is not None:
-                    logprob = logprob[:max_response_length]
-
-            truncated_ids.append(ids)
-            truncated_masks.append(mask)
-            truncated_logprobs.append(logprob)
-
+                truncated_ids.append(ids[:max_response_length])
+                truncated_masks.append(mask[:max_response_length])
+            else:
+                # No truncation needed
+                truncated_ids.append(ids)
+                truncated_masks.append(mask)
         response_ids = truncated_ids
         response_assistant_mask = truncated_masks
-        logprobs = truncated_logprobs
 
         loss_mask = [
             [0] * len(mask) if (reason in mask_out_reason) else mask
-            for mask, reason in zip(response_assistant_mask, step_finish_reason_list)
+            for mask, reason in zip(response_assistant_mask, finish_reason_list)
         ]
         
         # Additional filtering: mask out overlong rollouts with bad formatting
@@ -653,6 +587,8 @@ class AgentRunner:
                     cfg_profile = None
                 if cfg_profile is not None:
                     break
+            if cfg_profile is None:
+                cfg_profile = os.getenv("SKYAGENT_PROFILE_TOOLS", "0") == "1"
             profile_enabled = bool(cfg_profile)
             tool_calls_per_traj = []
             tool_calls_per_traj_nf = []  # exclude finish
@@ -763,14 +699,10 @@ class AgentRunner:
         output = {
             "prompt_token_ids": prompt_input_ids,
             "response_ids": response_ids,
-            "rewards": reward_list,
-            "traj_rewards": traj_reward_list,
+            "rewards": resolved_list,
             "loss_masks": loss_mask,
-            "episode_nums": steps_per_trajectory,
-            "is_last_episode": is_last_episode_list,
-            "traj_idx": traj_idx_list,
             "stop_reasons": None,
-            "rollout_logprobs": logprobs,
+            "rollout_logprobs": None,
             "rollout_metrics": rollout_metrics,
         }
 
@@ -807,28 +739,13 @@ class AgentRunner:
             init_fn = "initialize_trajectory"
             run_fn = "generate_trajectory"
             eval_fn = "evaluate_trajectory"
-            if val_mode:
-                max_parallel_agents = self.cfg.dispatcher.get("val_config", {}).get(
-                    "max_parallel_agents", self.cfg.dispatcher.max_parallel_agents
-                )
-                max_eval_parallel_agents = self.cfg.dispatcher.get("val_config", {}).get(
-                    "max_eval_parallel_agents", self.cfg.dispatcher.max_eval_parallel_agents
-                )
-                dispatcher_cfg = {
-                    "sampling_params": sampling_params,
-                    "max_parallel_agents": max_parallel_agents,
-                    "max_eval_parallel_agents": max_eval_parallel_agents,
-                    "num_instances": len(self.batch),
-                    "num_trajectories": num_trajectories,
-                }
-            else:
-                dispatcher_cfg = {
-                    "sampling_params": sampling_params,
-                    "max_parallel_agents": self.cfg.dispatcher.max_parallel_agents,
-                    "max_eval_parallel_agents": self.cfg.dispatcher.max_eval_parallel_agents,
-                    "num_instances": len(self.batch),
-                    "num_trajectories": num_trajectories,
-                }
+            dispatcher_cfg = {
+                "sampling_params": sampling_params,
+                "max_parallel_agents": self.cfg.dispatcher.max_parallel_agents,
+                "max_eval_parallel_agents": self.cfg.dispatcher.max_eval_parallel_agents,
+                "num_instances": len(self.batch),
+                "num_trajectories": num_trajectories,
+            }
             await generator_dispatcher(
                 dispatcher_cfg, self.trajectories, init_fn=init_fn, run_fn=run_fn, eval_fn=eval_fn
             )
