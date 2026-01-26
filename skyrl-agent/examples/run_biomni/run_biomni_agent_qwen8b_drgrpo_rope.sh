@@ -62,10 +62,11 @@ KL_LOSS_COEF=0.000
 CLIP_RATIO_LOW=0.2
 CLIP_RATIO_HIGH=0.28
 
+FLASH_ATTN=true
+
 # Parallelism
-GPU_MEM_UTIL=0.75
 TP_SIZE=1
-SP_SIZE=4
+SP_SIZE=8
 NUM_GPUS_PER_NODE=8
 NNODES=1
 
@@ -99,18 +100,6 @@ if [ -d "$SFT_MODEL_PATH" ]; then
 else
   MODEL_PATH="$HF_MODEL_ID"
 fi
-
-# # Ensure a project venv and install torch inside it (flash-attn builds in this venv)
-# if [ ! -d "$SKYRL_AGENT_DIR/.venv" ]; then
-#   (cd "$SKYRL_AGENT_DIR" && uv venv .venv)
-# fi
-# source "$SKYRL_AGENT_DIR/.venv/bin/activate"
-
-# # GPU default: CUDA 12.1 wheels. Override for CPU with:
-# #   export PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
-# : "${PYTORCH_INDEX_URL:=https://download.pytorch.org/whl/cu121}"
-# uv pip install --index-url "$PYTORCH_INDEX_URL" "torch==2.5.1" "torchvision==0.20.1" "torchaudio==2.5.1"
-# uv pip install "torch==2.5.1" "torchvision==0.20.1" "torchaudio==2.5.1"
 
 
 PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/SkyRLV1/skyrl-agent/examples/run_biomni/.env.biomni -m skyrl_agent.integrations.skyrl_train.skyrl_train_main \
@@ -147,6 +136,9 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   trainer.run_name="$EXPERIMENT_NAME" \
   trainer.logger="$LOGGER" \
   trainer.resume_mode=none \
+  trainer.gradient_checkpointing_use_reentrant=true \
+  trainer.flash_attn=$FLASH_ATTN \
+  trainer.use_sample_packing=true \
   +trainer.policy.model.override_config.max_position_embeddings=49152 \
   +trainer.policy.model.override_config.rope_scaling.rope_type=yarn \
   +trainer.policy.model.override_config.rope_scaling.factor=1.5 \
@@ -156,7 +148,7 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   generator.n_samples_per_prompt=$NUM_TRAJ \
   generator.inference_engine_tensor_parallel_size=$TP_SIZE \
   generator.num_inference_engines=$((NUM_GPUS_PER_NODE * NNODES / TP_SIZE)) \
-  generator.gpu_memory_utilization=$GPU_MEM_UTIL \
+  generator.gpu_memory_utilization=0.7 \
   generator.sampling_params.temperature=$TEMPERATURE \
   generator.sampling_params.top_p=$TOP_P \
   generator.sampling_params.max_generate_length=4096 \
@@ -169,8 +161,8 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   +generator.engine_init_kwargs.rope_scaling.factor=1.5 \
   +generator.engine_init_kwargs.rope_scaling.original_max_position_embeddings=32768 \
   +generator.engine_init_kwargs.max_model_len=49152 \
-  +generator.use_log_heavy=true \
-  +generator.log_heavy_freq=8 \
+  # NOTE: use_log_heavy and log_heavy_freq are configured in the YAML file \
+  # (command-line +generator.* options do not reach agent config) \
   $@
 
 
