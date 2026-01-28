@@ -120,7 +120,7 @@ pushd "$SKYRL_AGENT_DIR" >/dev/null
 
 LOGGER="['console','wandb']"
 
-PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/SkyRLV1/skyrl-agent/examples/run_biomni/.env.biomni \
+PYTHONUNBUFFERED=1 uv run --extra mcore --env-file /dfs/scratch1/lansong/SkyRLV1/skyrl-agent/examples/run_biomni/.env.biomni \
   -m skyrl_agent.integrations.skyrl_train.skyrl_train_main \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$VAL_FILE']" \
