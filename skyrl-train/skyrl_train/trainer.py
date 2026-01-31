@@ -127,6 +127,24 @@ class RayPPOTrainer:
         """
         Main training loop for PPO
         """
+        # Debug logging for algorithm config at training start
+        algo_cfg = self.cfg.trainer.algorithm
+        logger.info("=" * 70)
+        logger.info("[RayPPOTrainer.train] Starting training with algorithm config:")
+        logger.info(f"  policy_loss_type: {algo_cfg.policy_loss_type}")
+        logger.info(f"  advantage_estimator: {algo_cfg.advantage_estimator}")
+        logger.info(f"  use_tis: {algo_cfg.use_tis}")
+        logger.info(f"  tis_imp_ratio_cap: {getattr(algo_cfg, 'tis_imp_ratio_cap', 'NOT SET')}")
+        logger.info(f"  tis_mode: {getattr(algo_cfg, 'tis_mode', 'NOT SET')}")
+        logger.info(f"  eps_clip_low: {algo_cfg.eps_clip_low}")
+        logger.info(f"  eps_clip_high: {algo_cfg.eps_clip_high}")
+        logger.info(f"  loss_reduction: {algo_cfg.loss_reduction}")
+        logger.info(f"  use_kl_loss: {algo_cfg.use_kl_loss}")
+        logger.info(f"  use_kl_in_reward: {algo_cfg.use_kl_in_reward}")
+        logger.info(f"  gamma: {algo_cfg.gamma}")
+        logger.info(f"  lambd: {algo_cfg.lambd}")
+        logger.info("=" * 70)
+        
         # Initialize weight sync state between policy model and inference engines.
         with Timer("init_weight_sync_state"):
             self.init_weight_sync_state()
@@ -523,11 +541,16 @@ class RayPPOTrainer:
             logprobs,
         )
         # sanity check for tis
+        logger.debug(f"[prepare_training_input] use_tis={self.cfg.trainer.algorithm.use_tis}, rollout_logprobs_tensor is None: {rollout_logprobs_tensor is None}")
         if self.cfg.trainer.algorithm.use_tis:
+            logger.info(f"[prepare_training_input] TIS enabled - validating rollout logprobs")
+            logger.info(f"  rollout_logprobs_tensor shape: {rollout_logprobs_tensor.shape if rollout_logprobs_tensor is not None else 'None'}")
+            logger.info(f"  loss_masks_tensor shape: {loss_masks_tensor.shape}")
             assert (
                 rollout_logprobs_tensor is not None
             ), "expected non-null rollout logprobs tensor with  `trainer.algorithm.use_tis` as `True`"
             assert rollout_logprobs_tensor.shape == loss_masks_tensor.shape, "Logprobs should look like responses"
+            logger.info(f"[prepare_training_input] TIS validation passed")
         training_input = TrainingInputBatch(
             {
                 "sequences": sequences_tensor,  # Full trajectories (padded and concatenated prompts and responses)

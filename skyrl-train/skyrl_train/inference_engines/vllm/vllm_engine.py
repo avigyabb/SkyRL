@@ -404,7 +404,11 @@ class AsyncVLLMInferenceEngine(BaseVLLMInferenceEngine):
         engine = vllm.AsyncLLMEngine.from_engine_args(engine_args)
 
         # Adapted from https://github.com/volcengine/verl/blob/e90f18c40aa639cd25092b78a5ff7e2d2508c088/verl/workers/rollout/vllm_rollout/vllm_async_server.py#L327
-        model_config = engine.model_config
+        # Compatible with both vLLM V0 (get_model_config method) and V1 (model_config attribute)
+        if hasattr(engine, 'model_config'):
+            model_config = engine.model_config
+        else:
+            model_config = engine.get_model_config()
         model_path = kwargs.get("model")
         # TODO(Charlie): add a config similar to vllm's `served_model_name`. See https://github.com/NovaSky-AI/SkyRL/pull/238#discussion_r2326561295
         model_name = model_path

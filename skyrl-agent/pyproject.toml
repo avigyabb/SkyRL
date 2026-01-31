@@ -67,7 +67,7 @@ dependencies=[
 ]
 
 [project.optional-dependencies]
-skyrl-train = ["skyrl-train[vllm]"]
+skyrl-train = ["skyrl-train[mcore]"]
 # verl = ["verl[vllm,gpu]","vllm==0.8.5"]
 
 [tool.uv.extra-build-dependencies]
