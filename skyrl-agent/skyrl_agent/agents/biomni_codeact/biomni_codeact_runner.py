@@ -141,8 +141,11 @@ class BiomniCodeActTrajectory(BaseTrajectory):
                 resp_budget,
             )
         
+        # task_name is inside instance, not at top-level data
+        task_name = instance.get("task_name") if hasattr(instance, "get") else None
+        
         print("instantiating rollout agent")
-        print(f"Task name: {data.get('task_name')}")
+        print(f"Task name: {task_name}")
         print(f"Instance ID: {instance_id}")
         print(f"Prompt: {prompt_str}")
 
@@ -151,7 +154,7 @@ class BiomniCodeActTrajectory(BaseTrajectory):
             self.agent = BiomniCodeActAgent(
                 prompt=prompt_str,
                 instance_id=instance_id,
-                task_name=data.get("task_name"),
+                task_name=task_name,
                 runtime=rt,
                 infer_engine=engine_adapter,
                 tokenizer=self.tokenizer,
@@ -238,12 +241,15 @@ class BiomniCodeActTrajectory(BaseTrajectory):
             # Use the new BiomniRewardAdapter.compute_rewards
             from skyrl_agent.tasks.biomni_reward_adapter import BiomniRewardAdapter
             
+            # task_name is inside instance, not at top-level data
+            task_name = instance.get("task_name") if isinstance(instance, dict) else None
+            
             metrics = BiomniRewardAdapter.compute_rewards(
                 instance=instance,
                 solution=result,
                 messages=self.result.get("messages", []),
                 instance_id=instance_id,
-                task_name=data.get("task_name")
+                task_name=task_name
             )
             
             self.result["reward"] = metrics["score"]

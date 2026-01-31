@@ -35,8 +35,8 @@ PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo-debug"
 EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-16gpus-gspo-tis-eps3e4-4e4"
 
 DATA_PATH="/dfs/scratch1/lansong/BioAgentOS/biomni_env_screen/data/rl_data/skyrl_agent"
-TRAIN_FILE="$DATA_PATH/train.parquet"
-VAL_FILE="$DATA_PATH/val.parquet"
+TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
+VAL_FILE="$DATA_PATH/val_freeform.parquet"
 
 CKPT_PATH="/dfs/scratch1/lansong/models/skyrlagent"
 # Local fine-tuned model
@@ -53,7 +53,7 @@ NUM_GPUS_TOTAL=$((NNODES * NUM_GPUS_PER_NODE))
 MEGATRON_TP=4
 MEGATRON_PP=1
 MEGATRON_CP=4
-MEGATRON_EP=16
+MEGATRON_EP=8
 MEGATRON_ETP=1
 
 # vLLM inference parallelism (EP = DP * TP constraint)
@@ -66,8 +66,8 @@ NUM_INFERENCE_ENGINES=$((NUM_GPUS_TOTAL / (INFER_TP * INFER_DP)))  # 16 / (4 * 1
 # -----------------------------
 # RL / optimization knobs
 # -----------------------------
-TRAIN_BATCH_SIZE=32
-MINI_BATCH_SIZE=32
+TRAIN_BATCH_SIZE=2
+MINI_BATCH_SIZE=2
 LR=1e-6
 
 # GSPO clipping (GSPO-scale, not GRPO-scale)

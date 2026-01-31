@@ -48,12 +48,15 @@ class BiomniCodeActRubricTrajectory(BiomniCodeActTrajectory):
             # Get LLM model for critic from environment or use default
             critic_model = os.getenv("BIOMNI_CRITIC_MODEL", "claude-sonnet-4-5")
             
+            # task_name is inside instance, not at top-level data
+            task_name = instance.get("task_name") if isinstance(instance, dict) else None
+            
             metrics = BiomniRubricRewardAdapter.compute_rewards(
                 instance=instance,
                 solution=result,
                 messages=self.result.get("messages", []),
                 instance_id=instance_id,
-                task_name=data.get("task_name"),
+                task_name=task_name,
                 model=critic_model
             )
             

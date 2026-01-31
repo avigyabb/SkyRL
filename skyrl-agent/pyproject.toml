@@ -36,11 +36,6 @@ dependencies=[
   'tevatron',
   'transformers',
   "hf_transfer",
-<<<<<<< HEAD
-  "openhands-ai",
-=======
-  "torchdata",
->>>>>>> d506331 (fixed uv dependency issues)
   "streamlit",
   "whatthepatch",
   "retry",
@@ -73,7 +68,7 @@ dependencies=[
 ]
 
 [project.optional-dependencies]
-skyrl-train = ["skyrl-train[vllm]", 'torchdata']
+skyrl-train = ["skyrl-train[mcore]", 'torchdata']
 verl = ["verl[vllm,gpu]","vllm==0.8.5"]
 tinker = ["tinker", "chz"]
 
