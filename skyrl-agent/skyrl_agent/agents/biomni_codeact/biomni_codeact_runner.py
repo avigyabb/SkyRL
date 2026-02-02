@@ -69,12 +69,15 @@ class BiomniCodeActTrajectory(BaseTrajectory):
                 self.backend = backend
 
             async def async_generate(self, input_ids, sampling_params):
-                response_str, stop_reason = await self.backend.async_generate_ids(
+                response_str, meta_info = await self.backend.async_generate_ids(
                     input_ids=input_ids,
                     sampling_params=sampling_params,
                     request_id=f"{instance_id}-{uuid.uuid4().hex}",
                 )
-                return {"text": response_str, "stop_reason": stop_reason}
+                # Extract logprobs from meta_info if available
+                logprobs = meta_info.get("logprobs") if isinstance(meta_info, dict) else None
+                stop_reason = meta_info.get("finish_reason") if isinstance(meta_info, dict) else meta_info
+                return {"text": response_str, "stop_reason": stop_reason, "logprobs": logprobs}
 
         engine_adapter = _BackendAsEngine(self.infer_engine)
 
@@ -208,6 +211,7 @@ class BiomniCodeActTrajectory(BaseTrajectory):
         msgs_out = result.get("messages", [])
         solution = result.get("solution")
         iterations = result.get("iterations")
+        logprobs = result.get("logprobs")  # List of lists of logprobs for each generation step
 
         finish_reason = "FINISH_TOOL" if solution else ("max_iterations_reached" if iterations and iterations >= self.cfg.max_iterations else None)
 
@@ -218,6 +222,7 @@ class BiomniCodeActTrajectory(BaseTrajectory):
             "results": solution,
             "finish_reason": finish_reason,
             "state": {},
+            "logprobs": logprobs,  # Store logprobs for TIS
         }
 
     async def evaluate_trajectory(self) -> None:

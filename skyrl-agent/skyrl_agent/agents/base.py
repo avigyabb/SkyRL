@@ -695,6 +695,74 @@ class AgentRunner:
                     print(log_payload)
                 print("------------------\n")
 
+        # Build rollout_logprobs aligned with response_ids (for TIS)
+        # Each trajectory may have logprobs from multiple assistant generation steps
+        # Note: response_ids and response_assistant_mask are already truncated at this point
+        rollout_logprobs_list = []
+        has_any_logprobs = False
+        
+        for idx, (res, mask, resp_ids) in enumerate(zip(matched_results, response_assistant_mask, response_ids)):
+            # Sanity check: mask and response_ids should have the same length
+            # (they come from the same apply_chat_template call and are truncated together)
+            if len(mask) != len(resp_ids):
+                raise ValueError(
+                    f"[BUG] Trajectory {idx}: response_assistant_mask length ({len(mask)}) != "
+                    f"response_ids length ({len(resp_ids)}). This indicates a bug in tokenization/truncation."
+                )
+            
+            traj_logprobs = res.get("logprobs")  # List of lists (one per assistant generation)
+            
+            if traj_logprobs is None or len(traj_logprobs) == 0:
+                # No logprobs available for this trajectory
+                rollout_logprobs_list.append(None)
+                continue
+            
+            has_any_logprobs = True
+            
+            # Flatten all logprobs from all assistant messages
+            flat_logprobs = []
+            for step_logprobs in traj_logprobs:
+                if step_logprobs:
+                    flat_logprobs.extend(step_logprobs)
+            
+            # Align logprobs with response_ids using the assistant mask
+            # Fill non-assistant tokens with 0.0, assistant tokens with actual logprobs
+            aligned_logprobs = []
+            logprob_idx = 0
+            for m in mask:
+                if m == 1:  # Assistant token
+                    if logprob_idx < len(flat_logprobs):
+                        aligned_logprobs.append(float(flat_logprobs[logprob_idx]))
+                        logprob_idx += 1
+                    else:
+                        aligned_logprobs.append(0.0)  # Padding if we run out of logprobs
+                else:  # Non-assistant token (user messages, generation prompts, etc.)
+                    aligned_logprobs.append(0.0)
+            
+            rollout_logprobs_list.append(aligned_logprobs)
+        
+        # Finalize rollout_logprobs
+        if has_any_logprobs:
+            # Fill None entries with zeros matching response_ids length
+            num_none_logprobs = 0
+            for idx, lp in enumerate(rollout_logprobs_list):
+                if lp is None:
+                    rollout_logprobs_list[idx] = [0.0] * len(response_ids[idx])
+                    num_none_logprobs += 1
+            if num_none_logprobs > 0:
+                logger.warning(
+                    f"[TIS] {num_none_logprobs}/{len(rollout_logprobs_list)} trajectories had no logprobs. "
+                    "These will be filled with zeros."
+                )
+            rollout_logprobs = rollout_logprobs_list
+        else:
+            logger.warning(
+                "[TIS] No logprobs available for any trajectory in this batch. "
+                "If TIS is enabled, ensure sampling_params.logprobs is set in the agent config "
+                "and the inference backend supports returning logprobs."
+            )
+            rollout_logprobs = None
+
         # Create tensor dictionary
         output = {
             "prompt_token_ids": prompt_input_ids,
@@ -702,7 +770,7 @@ class AgentRunner:
             "rewards": resolved_list,
             "loss_masks": loss_mask,
             "stop_reasons": None,
-            "rollout_logprobs": None,
+            "rollout_logprobs": rollout_logprobs,
             "rollout_metrics": rollout_metrics,
         }
 
