@@ -35,8 +35,12 @@ PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo-debug"
 EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-16gpus-gspo-tis-eps3e4-4e4"
 
 DATA_PATH="/dfs/scratch1/lansong/BioAgentOS/biomni_env_screen/data/rl_data/skyrl_agent"
-TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
-VAL_FILE="$DATA_PATH/val_freeform.parquet"
+# TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
+# VAL_FILE="$DATA_PATH/val_freeform.parquet"
+
+# use non-freeform dataset for runs without rubrics
+TRAIN_FILE="$DATA_PATH/train.parquet"
+VAL_FILE="$DATA_PATH/val.parquet"
 
 CKPT_PATH="/dfs/scratch1/lansong/models/skyrlagent"
 # Local fine-tuned model
@@ -59,7 +63,7 @@ MEGATRON_ETP=1
 # vLLM inference parallelism (EP = DP * TP constraint)
 # Simplified: DP=1 to avoid NCCL conflicts between multiple engines with internal DP
 INFER_TP=8
-INFER_EP=8
+INFER_EP=1
 INFER_DP=1
 NUM_INFERENCE_ENGINES=$((NUM_GPUS_TOTAL / (INFER_TP * INFER_DP)))  # 16 / (4 * 1) = 4 engines
 

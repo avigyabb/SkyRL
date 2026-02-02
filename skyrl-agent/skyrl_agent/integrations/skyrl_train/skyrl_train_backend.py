@@ -24,7 +24,19 @@ class SkyRLBackend(AsyncInferBackend):
         output = await self.client.generate(input_obj)
         # todo(@csy) probably need to be finish_reason
         # https://github.com/vllm-project/vllm/blob/a0f8a7964694a6077689b242b5eca95de392d4bb/vllm/v1/engine/__init__.py#L22
-        return output["responses"][0], output["stop_reasons"][0]
+        
+        # Extract logprobs from vLLM output if available
+        response_logprobs = output.get("response_logprobs")
+        logprobs = None
+        if response_logprobs is not None and len(response_logprobs) > 0:
+            logprobs = response_logprobs[0]  # Get logprobs for the first (and only) request
+        
+        meta_info = {
+            "output_tokens": output["response_ids"][0],
+            "finish_reason": output["stop_reasons"][0],
+            "logprobs": logprobs,
+        }
+        return output["responses"][0], meta_info
 
 
 class SkyRLGeneratorOutput(GeneratorOutput):

@@ -3,7 +3,7 @@ import sys
 sys.path.append("/afs/cs.stanford.edu/u/lansong/SkyRL/")
 from collections import deque
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable, Tuple
+from typing import List, Dict, Any, Optional, Callable, Tuple, Union
 
 import torch
 # from tensordict import TensorDict
@@ -277,6 +277,10 @@ class BiomniCodeActAgent:
         # -- conversation memory ------------------------------------------------
         self.messages = self.prompt_manager.get_initial_messages(prompt, task_name)
         self.log: List[Dict[str, str]] = []   # optional external logging
+        
+        # Track logprobs for each assistant generation (for TIS)
+        # Each entry is a list of logprobs for one generation step
+        self.all_logprobs: List[List[float]] = []
 
     def _build_prompt_input_ids(self) -> List[int]:
         return self.tok.apply_chat_template(
@@ -294,45 +298,33 @@ class BiomniCodeActAgent:
     # ------------------------------------------------------------------
     # generation & routing
     # ------------------------------------------------------------------
-    async def _llm_generate(self) -> str:
-        """Call sglang engine asynchronously and return *raw* assistant string."""
-        import time
-        print(f"[_llm_generate] instance={self.instance_id} - building prompt...")
-        t0 = time.time()
+    async def _llm_generate(self) -> Tuple[str, Optional[List[float]]]:
+        """Call sglang engine asynchronously and return *raw* assistant string and logprobs.
+        
+        Returns:
+            Tuple of (text, logprobs) where logprobs may be None if not available.
+        """
         original_ids = self._build_prompt_input_ids()
-        print(f"[_llm_generate] instance={self.instance_id} - prompt built in {time.time()-t0:.2f}s, len={len(original_ids)}")
         if len(original_ids) > self.max_prompt_len:
             reserved = self.sampling_params.get("max_tokens") or self.sampling_params.get("max_generate_length") or self.sampling_params.get("max_new_tokens") or 0
             available = max(self.max_prompt_len - int(reserved), 0)
             if available <= 0:
-                return "The context is too long. Exit now."
+                return "The context is too long. Exit now.", None
             input_ids = original_ids[-available:]
-            print(
-                f"[_llm_generate] Truncated prompt for instance {self.instance_id}: "
-                f"original={len(original_ids)} tokens, truncated to {len(input_ids)} tokens, "
-                f"reserved for generation={reserved}"
-            )
         else:
             input_ids = original_ids
         
         # Final safety check: ensure we never exceed max_prompt_len
         if len(input_ids) > self.max_prompt_len:
-            print(
-                f"[_llm_generate] EMERGENCY TRUNCATION for instance {self.instance_id}: "
-                f"input_ids={len(input_ids)} exceeds max_prompt_len={self.max_prompt_len}. "
-                f"This should not happen!"
-            )
+            logger.warning(f"Emergency truncation for instance {self.instance_id}: input_ids={len(input_ids)} exceeds max_prompt_len={self.max_prompt_len}. This should not happen!")
             input_ids = input_ids[-self.max_prompt_len:]
         
         max_retries = 1
-        for retry_idx in range(max_retries):
-            print(f"[_llm_generate] instance={self.instance_id} - calling engine.async_generate (retry={retry_idx})...")
-            t_gen = time.time()
+        for _ in range(max_retries):
             res = await self.engine.async_generate(
                 input_ids=input_ids,
                 sampling_params=self.sampling_params,
             )
-            print(f"[_llm_generate] instance={self.instance_id} - engine.async_generate returned in {time.time()-t_gen:.2f}s")
             think_open = res["text"].count("<think>")
             think_close = res["text"].count("</think>")
             execute_open = res["text"].count("<execute>")
@@ -347,7 +339,14 @@ class BiomniCodeActAgent:
             else:
                 break
         
-        return res["text"]
+        # Extract logprobs if available
+        logprobs = res.get("logprobs")
+        if logprobs is None:
+            logger.warning(
+                f"[TIS] No logprobs returned for instance {self.instance_id}. "
+                "Ensure sampling_params.logprobs is set (e.g., logprobs=0) in the agent config if you want to use TIS."
+            )
+        return res["text"], logprobs
 
     async def run(self) -> Dict[str, Any]:
         """
@@ -360,20 +359,18 @@ class BiomniCodeActAgent:
               "messages": <full conversation>,
               "solution": str | None,
               "iterations": int,
+              "logprobs": List[List[float]] | None - logprobs for each assistant generation
             }
         """
-        import time
-        print(f"[BiomniCodeActAgent.run] ENTERED for instance {self.instance_id}, task={self.task_name}")
-        print(f"[BiomniCodeActAgent.run] max_iterations={self.max_iterations}, max_prompt_len={self.max_prompt_len}")
-        
         solution: Optional[str] = None
 
         for step in range(1, self.max_iterations + 1):
-            print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step}/{self.max_iterations} - calling _llm_generate...")
-            t0 = time.time()
-            assistant_reply = await self._llm_generate()
-            t1 = time.time()
-            print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - _llm_generate returned in {t1-t0:.2f}s, reply_len={len(assistant_reply)}")
+            assistant_reply, step_logprobs = await self._llm_generate()
+            
+            # Track logprobs for this generation step (for TIS)
+            if step_logprobs is not None:
+                self.all_logprobs.append(step_logprobs)
+            
             if assistant_reply == "The context is too long. Exit now.":
                 self.messages.append({"role": "user", "content": "The context is too long. Exit now."})
                 self.log.append({"role": "user", "content": "The context is too long. Exit now."})
@@ -395,13 +392,6 @@ class BiomniCodeActAgent:
             
             self.messages.append({"role": "assistant", "content": assistant_reply})
             self.log.append({"role": "assistant", "content": assistant_reply})
-            
-            # Debug: show what tags were detected
-            has_execute = '<execute>' in assistant_reply
-            has_solution = '<solution>' in assistant_reply
-            has_think = '<think>' in assistant_reply
-            print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - tags detected: execute={has_execute}, solution={has_solution}, think={has_think}")
-            print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - assistant_reply: {assistant_reply}")
             
             if '<execute>' in assistant_reply and '<solution>' in assistant_reply:
                 self.messages.append({"role": "user", "content": "Multiple tags (<execute> and <solution>) detected.\nPlease include only one of them in your response."})
@@ -426,13 +416,10 @@ class BiomniCodeActAgent:
             
             code = _parse_first("execute", assistant_reply)
             if code is not None:
-                print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - executing code (len={len(code)})...")
-                t_exec = time.time()
                 try:
                     out = await self.runtime.execute(code)
                 except Exception as e:
                     out = f"[runtime-error] {e}"
-                print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - runtime.execute returned in {time.time()-t_exec:.2f}s")
                 # feed runtime output back as user message
                 self.messages.append({"role": "user", "content": f"<observation>{out}</observation>"})
                 self.log.append({"role": "user", "content": f"<observation>{out}</observation>"})
@@ -451,7 +438,7 @@ class BiomniCodeActAgent:
             )
         
         if not solution:
-            print(f"[WARNING] No solution found for instance {self.instance_id} after {step} iterations, showing the last two message...")
+            logger.warning(f"No solution found for instance {self.instance_id} after {step} iterations, showing the last two message...")
             import json
             print(json.dumps(self.messages[-2:], indent=2))
 
@@ -459,6 +446,7 @@ class BiomniCodeActAgent:
             "messages": self.messages,
             "solution": solution,
             "iterations": step,
+            "logprobs": self.all_logprobs if self.all_logprobs else None,
         }
 
 # new

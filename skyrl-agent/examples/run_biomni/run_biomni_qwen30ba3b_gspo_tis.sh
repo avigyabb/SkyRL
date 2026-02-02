@@ -59,7 +59,7 @@ MEGATRON_ETP=1
 # vLLM inference parallelism (EP = DP * TP constraint)
 # Simplified: DP=1 to avoid NCCL conflicts between multiple engines with internal DP
 INFER_TP=8
-INFER_EP=8
+INFER_EP=1
 INFER_DP=1
 NUM_INFERENCE_ENGINES=$((NUM_GPUS_TOTAL / (INFER_TP * INFER_DP)))  # 16 / (4 * 1) = 4 engines
 
