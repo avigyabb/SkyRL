@@ -296,7 +296,11 @@ class BiomniCodeActAgent:
     # ------------------------------------------------------------------
     async def _llm_generate(self) -> str:
         """Call sglang engine asynchronously and return *raw* assistant string."""
+        import time
+        print(f"[_llm_generate] instance={self.instance_id} - building prompt...")
+        t0 = time.time()
         original_ids = self._build_prompt_input_ids()
+        print(f"[_llm_generate] instance={self.instance_id} - prompt built in {time.time()-t0:.2f}s, len={len(original_ids)}")
         if len(original_ids) > self.max_prompt_len:
             reserved = self.sampling_params.get("max_tokens") or self.sampling_params.get("max_generate_length") or self.sampling_params.get("max_new_tokens") or 0
             available = max(self.max_prompt_len - int(reserved), 0)
@@ -321,11 +325,14 @@ class BiomniCodeActAgent:
             input_ids = input_ids[-self.max_prompt_len:]
         
         max_retries = 1
-        for _ in range(max_retries):
+        for retry_idx in range(max_retries):
+            print(f"[_llm_generate] instance={self.instance_id} - calling engine.async_generate (retry={retry_idx})...")
+            t_gen = time.time()
             res = await self.engine.async_generate(
                 input_ids=input_ids,
                 sampling_params=self.sampling_params,
             )
+            print(f"[_llm_generate] instance={self.instance_id} - engine.async_generate returned in {time.time()-t_gen:.2f}s")
             think_open = res["text"].count("<think>")
             think_close = res["text"].count("</think>")
             execute_open = res["text"].count("<execute>")
@@ -355,10 +362,18 @@ class BiomniCodeActAgent:
               "iterations": int,
             }
         """
+        import time
+        print(f"[BiomniCodeActAgent.run] ENTERED for instance {self.instance_id}, task={self.task_name}")
+        print(f"[BiomniCodeActAgent.run] max_iterations={self.max_iterations}, max_prompt_len={self.max_prompt_len}")
+        
         solution: Optional[str] = None
 
         for step in range(1, self.max_iterations + 1):
+            print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step}/{self.max_iterations} - calling _llm_generate...")
+            t0 = time.time()
             assistant_reply = await self._llm_generate()
+            t1 = time.time()
+            print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - _llm_generate returned in {t1-t0:.2f}s, reply_len={len(assistant_reply)}")
             if assistant_reply == "The context is too long. Exit now.":
                 self.messages.append({"role": "user", "content": "The context is too long. Exit now."})
                 self.log.append({"role": "user", "content": "The context is too long. Exit now."})
@@ -380,6 +395,13 @@ class BiomniCodeActAgent:
             
             self.messages.append({"role": "assistant", "content": assistant_reply})
             self.log.append({"role": "assistant", "content": assistant_reply})
+            
+            # Debug: show what tags were detected
+            has_execute = '<execute>' in assistant_reply
+            has_solution = '<solution>' in assistant_reply
+            has_think = '<think>' in assistant_reply
+            print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - tags detected: execute={has_execute}, solution={has_solution}, think={has_think}")
+            print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - assistant_reply: {assistant_reply}")
             
             if '<execute>' in assistant_reply and '<solution>' in assistant_reply:
                 self.messages.append({"role": "user", "content": "Multiple tags (<execute> and <solution>) detected.\nPlease include only one of them in your response."})
@@ -404,10 +426,13 @@ class BiomniCodeActAgent:
             
             code = _parse_first("execute", assistant_reply)
             if code is not None:
+                print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - executing code (len={len(code)})...")
+                t_exec = time.time()
                 try:
                     out = await self.runtime.execute(code)
                 except Exception as e:
                     out = f"[runtime-error] {e}"
+                print(f"[BiomniCodeActAgent.run] instance={self.instance_id} step={step} - runtime.execute returned in {time.time()-t_exec:.2f}s")
                 # feed runtime output back as user message
                 self.messages.append({"role": "user", "content": f"<observation>{out}</observation>"})
                 self.log.append({"role": "user", "content": f"<observation>{out}</observation>"})

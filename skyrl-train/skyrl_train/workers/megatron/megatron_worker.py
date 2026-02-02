@@ -5,24 +5,29 @@ import ray
 from transformers import AutoTokenizer, AutoConfig
 from huggingface_hub import snapshot_download
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from collections import defaultdict
 from tqdm import tqdm
 from omegaconf import OmegaConf
 
-from mbridge import AutoBridge
-import megatron.core.parallel_state as mpu
-from megatron.core.optimizer import DistributedOptimizer
-from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+# NOTE: The following imports are commented out and moved to lazy imports inside methods
+# to avoid protobuf serialization issues when Ray pickles the actor class.
+# See: "cannot pickle 'google._upb._message.Descriptor' object" error
 
-from skyrl_train.distributed.megatron.optimizer import (
-    init_megatron_optim_config,
-    get_megatron_optimizer,
-    get_megatron_optimizer_param_scheduler,
-)
+# from mbridge import AutoBridge
+# import megatron.core.parallel_state as mpu
+# from megatron.core.optimizer import DistributedOptimizer
+# from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+
+# from skyrl_train.distributed.megatron.optimizer import (
+#     init_megatron_optim_config,
+#     get_megatron_optimizer,
+#     get_megatron_optimizer_param_scheduler,
+# )
+
 from skyrl_train.distributed.dispatch import MeshRank
-from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
-from skyrl_train.distributed.megatron.megatron_utils import freeze_moe_router, print_model_size
+# from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
+# from skyrl_train.distributed.megatron.megatron_utils import freeze_moe_router, print_model_size
 from skyrl_train.utils.utils import update_model_config, str_to_torch_dtype, get_physical_gpu_id
 from skyrl_train.training_batch import TrainingOutputBatch
 from skyrl_train.workers.worker_utils import BatchIterator, reduce_metrics
@@ -31,8 +36,14 @@ from skyrl_train.workers.worker import (
     RefWorkerBase,
     CriticWorkerBase,
 )
-from skyrl_train.workers.megatron.megatron_model_wrapper import MegatronModelWrapper
+# from skyrl_train.workers.megatron.megatron_model_wrapper import MegatronModelWrapper
 from skyrl_train.utils.profiler import Profiler
+
+# Type hints only - not imported at runtime to avoid protobuf issues
+if TYPE_CHECKING:
+    from megatron.core.optimizer import DistributedOptimizer
+    from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
+    from skyrl_train.workers.megatron.megatron_model_wrapper import MegatronModelWrapper
 
 
 class MegatronWorker:
@@ -51,6 +62,9 @@ class MegatronWorker:
             )
 
     def init_configs(self, model_path, model_config_kwargs, transformer_config_kwargs, flash_attn=False):
+        # Lazy import to avoid protobuf serialization issues with Ray
+        from mbridge import AutoBridge
+
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         hf_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
 
@@ -91,6 +105,8 @@ class MegatronWorker:
             ddp_config=ddp_config,
         )
         if model_config_kwargs.get("moe_config", {}).get("freeze_moe_router", False):
+            # Lazy import to avoid protobuf serialization issues with Ray
+            from skyrl_train.distributed.megatron.megatron_utils import freeze_moe_router
             freeze_moe_router(model)
         return model
 
@@ -151,10 +167,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.check_te_import()
-        self.model: MegatronModelWrapper = None
+        self.model: "MegatronModelWrapper" = None
         self.actor_module: List[nn.Module] = None
-        self.scheduler: OptimizerParamScheduler = None
-        self.optimizer: DistributedOptimizer = None
+        self.scheduler: "OptimizerParamScheduler" = None
+        self.optimizer: "DistributedOptimizer" = None
         self.profiler: Profiler = None
 
     def offload_to_cpu(self, pin_memory=True, non_blocking=True, offload_optimizer=True, offload_model=True):
@@ -172,6 +188,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         """
         Override DistributedTorchRayActor.init_worker_process_group to use megatron distributed setup to create the mesh.
         """
+        # Lazy imports to avoid protobuf serialization issues with Ray
+        import megatron.core.parallel_state as mpu
+        from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
+
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend="nccl")
 
@@ -196,6 +216,15 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         """
         Initialize the model, optimizer, and scheduler for the policy worker.
         """
+        # Lazy imports to avoid protobuf serialization issues with Ray
+        from skyrl_train.distributed.megatron.megatron_utils import print_model_size
+        from skyrl_train.distributed.megatron.optimizer import (
+            init_megatron_optim_config,
+            get_megatron_optimizer,
+            get_megatron_optimizer_param_scheduler,
+        )
+        from skyrl_train.workers.megatron.megatron_model_wrapper import MegatronModelWrapper
+
         # get hf_config and tf_config
         self.init_configs(
             model_path,
@@ -452,7 +481,7 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.check_te_import()
-        self.model: MegatronModelWrapper = None
+        self.model: "MegatronModelWrapper" = None
         self.actor_module: List[nn.Module] = None
 
     def offload_to_cpu(self, pin_memory=True, non_blocking=True, **kwargs):
@@ -466,6 +495,10 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         """
         Override DistributedTorchRayActor.init_worker_process_group to use megatron distributed setup to create the mesh.
         """
+        # Lazy imports to avoid protobuf serialization issues with Ray
+        import megatron.core.parallel_state as mpu
+        from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
+
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(backend="nccl")
 
@@ -490,6 +523,10 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         """
         Initialize the model for the ref worker.
         """
+        # Lazy imports to avoid protobuf serialization issues with Ray
+        from skyrl_train.distributed.megatron.megatron_utils import print_model_size
+        from skyrl_train.workers.megatron.megatron_model_wrapper import MegatronModelWrapper
+
         # get hf_config and tf_config
         self.init_configs(
             model_path,

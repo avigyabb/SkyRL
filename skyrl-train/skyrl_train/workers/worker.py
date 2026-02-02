@@ -618,7 +618,23 @@ class PolicyWorkerBase(Worker):
         self.strategy: DistributedStrategy = None
         self.record_memory: bool = False
         self.mesh_rank: MeshRank = None
+        
+        # Debug logging for GSPO/TIS config
+        algo_cfg = self.cfg.trainer.algorithm
+        logger.info("=" * 60)
+        logger.info("[PolicyWorkerBase] Algorithm config:")
+        logger.info(f"  policy_loss_type: {algo_cfg.policy_loss_type}")
+        logger.info(f"  use_tis: {algo_cfg.use_tis}")
+        logger.info(f"  tis_imp_ratio_cap: {getattr(algo_cfg, 'tis_imp_ratio_cap', 'NOT SET')}")
+        logger.info(f"  tis_mode: {getattr(algo_cfg, 'tis_mode', 'NOT SET')}")
+        logger.info(f"  eps_clip_low: {algo_cfg.eps_clip_low}")
+        logger.info(f"  eps_clip_high: {algo_cfg.eps_clip_high}")
+        logger.info(f"  loss_reduction: {algo_cfg.loss_reduction}")
+        logger.info(f"  use_kl_loss: {algo_cfg.use_kl_loss}")
+        logger.info("=" * 60)
+        
         self.policy_loss_fn: Callable = PolicyLossRegistry.get(self.cfg.trainer.algorithm.policy_loss_type)
+        logger.info(f"[PolicyWorkerBase] Resolved policy_loss_fn: {self.policy_loss_fn.__name__}")
 
     def _normalize_mini_batch_size(self):
         """
