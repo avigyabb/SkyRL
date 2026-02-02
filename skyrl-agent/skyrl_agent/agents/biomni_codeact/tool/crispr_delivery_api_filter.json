@@ -1,0 +1,76 @@
+{
+    "biomni.tool.literature": [
+        {
+            "name": "fetch_supplementary_info_from_doi",
+            "description": "Fetches supplementary information for a paper given its DOI and returns a research log.",
+            "required_parameters": [
+                {
+                    "name": "doi",
+                    "type": "str",
+                    "description": "The paper DOI",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "output_dir",
+                    "type": "str",
+                    "description": "Directory to save supplementary files",
+                    "default": "supplementary_info"
+                }
+            ]
+        },
+        {
+            "name": "extract_url_content",
+            "description": "Extract the text content of a webpage using requests and BeautifulSoup.",
+            "required_parameters": [
+                {
+                    "name": "url",
+                    "type": "str",
+                    "description": "Webpage URL to extract content from",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "extract_pdf_content",
+            "description": "Extract the text content of a PDF file given its URL.",
+            "required_parameters": [
+                {
+                    "name": "url",
+                    "type": "str",
+                    "description": "URL of the PDF file to extract text from",
+                    "default": null
+                }
+            ],
+            "optional_parameters": []
+        },
+        {
+            "name": "advanced_web_search",
+            "description": "Initiate an advanced web search by launching a specialized agent to collect relevant information and citations through multiple rounds of web searches for a given query.\nCraft the query carefully for the search agent to find the most relevant information.",
+            "required_parameters": [
+                {
+                    "name": "query",
+                    "type": "str",
+                    "description": "The search phrase you want Claude to look up.",
+                    "default": null
+                }
+            ],
+            "optional_parameters": [
+                {
+                    "name": "max_searches",
+                    "type": "int",
+                    "description": "Upper-bound on searches Claude may issue inside this request.",
+                    "default": 5
+                },
+                {
+                    "name": "max_retries",
+                    "type": "int",
+                    "description": "Maximum number of retry attempts with exponential backoff.",
+                    "default": 3
+                }
+            ]
+        }
+    ]
+}
