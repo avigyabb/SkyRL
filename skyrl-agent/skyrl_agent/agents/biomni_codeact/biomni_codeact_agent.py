@@ -202,7 +202,7 @@ class BiomniRuntimeClient:
                     duration = time.time() - start_time
                     # logger.info(f"Execution finished in {duration:.2f}s")
                     if duration > 180:
-                        logger.warning(f"Code execution took {duration:.2f} seconds. Code:\n{code}")
+                        logger.warning(f"Code execution took {duration:.2f} seconds. Code:\n{code}\nOutput:\n{output}")
                     
                     return output
             except (aiohttp.ClientOSError, aiohttp.ServerDisconnectedError, aiohttp.ClientError) as e:
@@ -420,9 +420,24 @@ class BiomniCodeActAgent:
                     out = await self.runtime.execute(code)
                 except Exception as e:
                     out = f"[runtime-error] {e}"
-                # feed runtime output back as user message
-                self.messages.append({"role": "user", "content": f"<observation>{out}</observation>"})
-                self.log.append({"role": "user", "content": f"<observation>{out}</observation>"})
+                
+                # Check if context is getting close to max_prompt_len and add warning to observation
+                context_warning = ""
+                current_tokens = len(self._build_prompt_input_ids())
+                if current_tokens > self.max_prompt_len - 2048:
+                    context_warning = (
+                        "\n\n[CONTEXT WARNING] You are running low on context space. "
+                        "Please provide your final answer wrapped in <solution></solution> now."
+                    )
+                    logger.warning(
+                        f"Instance {self.instance_id}: Context at {current_tokens}/{self.max_prompt_len} tokens. "
+                        "Prompted agent for final answer."
+                    )
+                
+                # feed runtime output back as user message (with optional warning appended)
+                observation_content = f"<observation>{out}</observation>{context_warning}"
+                self.messages.append({"role": "user", "content": observation_content})
+                self.log.append({"role": "user", "content": observation_content})
                 continue
 
             # optional <think> branch – do nothing but continue
