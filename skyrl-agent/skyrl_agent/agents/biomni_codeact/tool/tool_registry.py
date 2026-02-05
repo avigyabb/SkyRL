@@ -1,5 +1,5 @@
 import pickle, pandas as pd
-from verl.workers.agentic.biomni.utils import api_schema_to_langchain_tool
+from skyrl_agent.agents.biomni_codeact.utils import api_schema_to_langchain_tool
 
 class ToolRegistry:
     def __init__(self, tools):

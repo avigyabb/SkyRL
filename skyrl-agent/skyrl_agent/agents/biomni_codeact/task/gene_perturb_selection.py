@@ -1,4 +1,4 @@
-from verl.workers.agentic.biomni.task.base_task import base_task
+from skyrl_agent.agents.biomni_codeact.task.base_task import base_task
 import json, pandas as pd, numpy as np
 
 class gene_perturb_selection(base_task):

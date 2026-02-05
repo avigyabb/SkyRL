@@ -2,7 +2,7 @@ import sys, json, numpy as np, pandas as pd, requests
 from pydantic import BaseModel, Field
 import ast
 
-from verl.workers.agentic.biomni.task.base_task import base_task
+from skyrl_agent.agents.biomni_codeact.task.base_task import base_task
 
 class rare_disease_diagnosis(base_task):
     def __init__(self, path = './data', num_samples = None):

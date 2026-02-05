@@ -25,10 +25,17 @@ export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
 export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1
 export RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES=1
 
-export UV_CACHE_DIR=/dfs/scratch1/lansong/uv_cache
+export UV_CACHE_DIR=/mnt/local/biomni/uv_cache
 export XDG_CACHE_HOME=$UV_CACHE_DIR
-export UV_PROJECT_ENVIRONMENT=/dfs/scratch1/lansong/venvs/skyrl-agent
-export HOME=/dfs/scratch1/lansong
+export UV_PROJECT_ENVIRONMENT=/mnt/local/biomni/venvs/skyrl-agent
+export HOME=/workspace
+
+# Set up CUDNN paths for transformer-engine build
+export CUDNN_PATH="$(python -c 'import inspect, nvidia.cudnn as c, os; print(os.path.dirname(inspect.getfile(c)))' 2>/dev/null || echo '')"
+if [ -n "$CUDNN_PATH" ]; then
+    export CPATH="$CUDNN_PATH/include:${CPATH:-}"
+    export LD_LIBRARY_PATH="$CUDNN_PATH/lib:${LD_LIBRARY_PATH:-}"
+fi
 export RAY_RUNTIME_ENV_HOOK=ray._private.runtime_env.uv_runtime_env_hook.hook
 export UV_HTTP_TIMEOUT=1800
 export BIOMNI_RUNTIME_URL="http://172.24.75.90:8000"
@@ -52,7 +59,7 @@ fi
 PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-rubric-gspo"
 EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-32gpus-rubric-gspo-tis-eps3e4-4e4"
 
-DATA_PATH="/dfs/scratch1/lansong/BioAgentOS/biomni_env_screen/data/rl_data/skyrl_agent"
+DATA_PATH="/mnt/local/biomni"
 TRAIN_FILE="$DATA_PATH/train.parquet"
 VAL_FILE="$DATA_PATH/val.parquet"
 
@@ -62,22 +69,22 @@ MODEL_NAME="Qwen/Qwen3-30B-A3B-Thinking-2507"
 # -----------------------------
 # Cluster / parallelism
 # -----------------------------
-NNODES=4
+NNODES=1
 NUM_GPUS_PER_NODE=8
 NUM_GPUS_TOTAL=$((NNODES * NUM_GPUS_PER_NODE))
 
-# Megatron parallelism (reasonable starting point for 32 GPUs on MoE)
+# Megatron parallelism (adjusted for 8 GPUs on single node)
 MEGATRON_TP=4
 MEGATRON_PP=1
 MEGATRON_CP=1
-MEGATRON_EP=8
+MEGATRON_EP=2
 MEGATRON_ETP=1
 
 # vLLM inference parallelism (EP = DP * TP constraint)
 INFER_TP=4
-INFER_EP=4   # EP = DP * TP = 1 * 4 = 4
+INFER_EP=4   # EP = DP * TP = 1 * 4 = 4 (must equal DP * TP)
 INFER_DP=1
-NUM_INFERENCE_ENGINES=$((NUM_GPUS_TOTAL / (INFER_TP * INFER_DP)))  # 32 / (4 * 1) = 8 engines
+NUM_INFERENCE_ENGINES=$((NUM_GPUS_TOTAL / (INFER_TP * INFER_DP)))  # 8 / (4 * 1) = 2 engines
 
 # -----------------------------
 # RL / optimization knobs
@@ -118,9 +125,9 @@ AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rub
 SKYRL_AGENT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 pushd "$SKYRL_AGENT_DIR" >/dev/null
 
-LOGGER="['console','wandb']"
+LOGGER="['console']"
 
-PYTHONUNBUFFERED=1 uv run --extra mcore --env-file /dfs/scratch1/lansong/SkyRLV1/skyrl-agent/examples/run_biomni/.env.biomni \
+PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file ~/SkyRL/skyrl-agent/examples/run_biomni/.env.biomni \
   -m skyrl_agent.integrations.skyrl_train.skyrl_train_main \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$VAL_FILE']" \

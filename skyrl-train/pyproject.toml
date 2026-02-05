@@ -70,9 +70,11 @@ conflicts = [
 
 [tool.uv.extra-build-dependencies]
 flash-attn = [{requirement = "torch", match-runtime = true}]
+# transformer-engine-torch = [{requirement = "torch", match-runtime = true}, {requirement = "nvidia-cudnn-cu12"}]
 
 [tool.uv.extra-build-variables]
 flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE"}
+# transformer-engine-torch = { CUDNN_PATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn", CPATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn/include" }
 
 [tool.uv.sources]
 skyrl-gym = { path = "./skyrl-gym" , editable = true }
@@ -135,7 +137,7 @@ mcore = [
   # export CPATH="$CUDNN_PATH/include:${CPATH:-}"
   # export LD_LIBRARY_PATH="$CUDNN_PATH/lib:${LD_LIBRARY_PATH:-}"
   # uv pip install --no-build-isolation "transformer_engine[pytorch]==2.5.0" --verbose
-  # "transformer-engine[pytorch]==2.5.0",
+  "transformer-engine[pytorch]==2.5.0",
   "flash-attn==2.7.4.post1",
   "vllm==0.10.1.1",
   "torch==2.7.1",
