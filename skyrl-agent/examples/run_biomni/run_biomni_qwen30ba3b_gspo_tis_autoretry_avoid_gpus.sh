@@ -59,6 +59,7 @@ done
 RETRY_DELAY_SECONDS=30
 MIN_RUN_SECONDS=120      # Detect rapid crash loops
 RAY_STABILIZE_SECONDS=60  # Wait for workers to reconnect after Ray restart
+GPU_BUSY_DELAY_SECONDS=600  # 10 minutes - wait when GPUs are occupied by others
 
 # Counters
 ATTEMPT=0
@@ -97,6 +98,29 @@ restart_ray_head() {
     fi
 }
 
+is_gpu_busy_error() {
+    # Check if the most recent training log indicates GPUs are occupied by other processes
+    # This specific error from vLLM means someone else is using the GPUs
+    
+    # Find the most recently modified log file
+    local latest_log
+    latest_log=$(ls -t "$LOG_DIR"/*.log 2>/dev/null | head -1)
+    
+    if [[ -z "$latest_log" || ! -f "$latest_log" ]]; then
+        log "No log file found to check for GPU errors"
+        return 1  # No log file, can't determine
+    fi
+    
+    # Check the last 500 lines of the log for the GPU busy error pattern
+    # Pattern: vLLM error when GPU memory is insufficient due to other processes
+    if tail -500 "$latest_log" | grep -qiE "Free memory on device.*is less than desired GPU memory utilization|reduce GPU memory used by other processes"; then
+        log "GPU busy error found in: $latest_log"
+        return 0  # True - GPU busy error detected
+    fi
+    
+    return 1  # False - not a GPU busy error
+}
+
 # Validate training script exists
 if [[ ! -f "$TRAINING_SCRIPT" ]]; then
     log "ERROR: Training script not found: $TRAINING_SCRIPT"
@@ -126,7 +150,7 @@ while true; do
     
     start_time=$(date +%s)
     
-    # Run training (script uses resume_mode=latest)
+    # Run training
     bash "$TRAINING_SCRIPT"
     exit_code=$?
     
@@ -147,14 +171,20 @@ while true; do
         exit 1
     fi
     
-    # Rapid crash detection
-    if [[ $run_duration -lt $MIN_RUN_SECONDS ]]; then
-        log "WARNING: Crashed after only ${run_duration}s - possible config issue"
-        # sleep $((RETRY_DELAY_SECONDS * 3))
+    # Check if GPUs are occupied by other processes (vLLM init failure)
+    if is_gpu_busy_error; then
+        log "GPU BUSY: Detected that GPUs are occupied by other processes"
+        log "Waiting ${GPU_BUSY_DELAY_SECONDS}s (10 minutes) for resources to free up..."
+        sleep $GPU_BUSY_DELAY_SECONDS
+    else
+        # Rapid crash detection
+        if [[ $run_duration -lt $MIN_RUN_SECONDS ]]; then
+            log "WARNING: Crashed after only ${run_duration}s - possible config issue"
+        fi
+        
+        log "Waiting ${RETRY_DELAY_SECONDS}s before retry..."
+        sleep $RETRY_DELAY_SECONDS
     fi
     
     TOTAL_RESTARTS=$((TOTAL_RESTARTS + 1))
-    
-    log "Waiting ${RETRY_DELAY_SECONDS}s before retry..."
-    sleep $RETRY_DELAY_SECONDS
 done
