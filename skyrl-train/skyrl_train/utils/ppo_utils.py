@@ -653,8 +653,8 @@ def gspo_policy_loss(
             raise ValueError("use_tis=True but rollout_logprobs is None; pass rollout_logprobs to gspo_policy_loss.")
         tis_mode = getattr(config, "tis_mode", "token")  # "token" or "sequence"
         cap = getattr(config, "tis_imp_ratio_cap", None)
-        from loguru import logger as logger_  # lazy import to avoid pickling error
-        logger_.info(f"Using TIS with mode: {tis_mode} and cap: {cap}")
+        # from loguru import logger as logger_  # lazy import to avoid pickling error
+        # logger_.info(f"Using TIS with mode: {tis_mode} and cap: {cap}")
         if cap is None:
             raise ValueError("use_tis=True but tis_imp_ratio_cap is not set.")
 

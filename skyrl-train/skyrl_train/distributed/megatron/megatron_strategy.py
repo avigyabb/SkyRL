@@ -218,7 +218,7 @@ class MegatronStrategy(DistributedStrategy):
         model_sharded_state_dict = unwrapped_model.sharded_state_dict()
         sharded_state_dict["model"] = model_sharded_state_dict
         if optimizer and load_optimizer_states:
-            sharded_state_dict["optimizer"] = optimizer.sharded_state_dict(model_sharded_state_dict)
+            sharded_state_dict["optimizer"] = optimizer.sharded_state_dict(model_sharded_state_dict, is_loading=True)
         if scheduler and load_lr_scheduler_states:
             sharded_state_dict["lr_scheduler"] = scheduler.state_dict()
 
