@@ -4,7 +4,7 @@ import sys
 import pandas as pd
 import numpy as np
 import ast
-from verl.workers.agentic.biomni.task.base_task import base_task
+from skyrl_agent.agents.biomni_codeact.task.base_task import base_task
 
 class patient_gene_detection(base_task):
     def __init__(self, path = './data', num_samples=100):

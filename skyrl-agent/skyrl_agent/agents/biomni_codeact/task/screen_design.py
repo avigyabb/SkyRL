@@ -1,4 +1,4 @@
-from verl.workers.agentic.biomni.task.base_task import base_task
+from skyrl_agent.agents.biomni_codeact.task.base_task import base_task
 import pandas as pd
 import numpy as np
 import os
