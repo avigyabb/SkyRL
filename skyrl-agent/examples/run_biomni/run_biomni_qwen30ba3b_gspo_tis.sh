@@ -31,7 +31,7 @@ export BIOMNI_RUNTIME_URL="http://172.24.75.90:8000"
 
 # export VLLM_USE_V1=0
 
-PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo-debug"
+PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo"
 EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-16gpus-gspo-tis-eps3e4-4e4"
 
 DATA_PATH="/dfs/scratch1/lansong/BioAgentOS/biomni_env_screen/data/rl_data/skyrl_agent"
@@ -79,7 +79,8 @@ USE_KL_LOSS=false
 KL_LOSS_COEF=0.0
 
 # TIS (for rollout-vs-train logprob mismatch)
-USE_TIS=true
+# USE_TIS=true
+USE_TIS=false
 TIS_IMP_RATIO_CAP=2.0
 # Recommended for GSPO: sequence-level TIS to avoid token-wise variance (requires code diff below)
 TIS_MODE="sequence"   # token|sequence
@@ -94,7 +95,7 @@ TEMPERATURE=1.0
 TOP_P=1.0
 FLASH_ATTN=true
 
-AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rl_qwen30ba3b_gspo_debug.yaml"
+AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rl_qwen30ba3b_gspo.yaml"
 
 SKYRL_AGENT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 pushd "$SKYRL_AGENT_DIR" >/dev/null
@@ -156,7 +157,7 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   generator.enforce_eager=true \
   trainer.eval_before_train=true \
   trainer.eval_interval=-1 \
-  trainer.ckpt_interval=8 \
+  trainer.ckpt_interval=4 \
   trainer.ckpt_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME" \
   trainer.project_name="$PROJECT_NAME" \
   trainer.run_name="$EXPERIMENT_NAME" \
