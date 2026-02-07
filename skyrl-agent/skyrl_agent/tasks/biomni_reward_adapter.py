@@ -124,6 +124,8 @@ class BiomniRewardAdapter:
         logger.info("instance_id: %s", instance_id)
         logger.info("solution: %s", solution)
         # logger.info(f"last 2 message: {messages[-2]}\n\n{messages[-1]}")
+        logger.info("last message: %s", messages[-1])
+
 
         if task_name and task_name in cls._task_mapping and solution:
             try:
