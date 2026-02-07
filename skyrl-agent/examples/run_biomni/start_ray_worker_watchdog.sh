@@ -145,7 +145,7 @@ fi
 
 # Main watchdog loop
 consecutive_failures=0
-MAX_CONSECUTIVE_FAILURES=8
+MAX_CONSECUTIVE_FAILURES=3
 
 while true; do
     sleep $POLL_INTERVAL
