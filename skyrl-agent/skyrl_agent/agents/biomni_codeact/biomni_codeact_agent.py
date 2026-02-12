@@ -181,7 +181,7 @@ class BiomniRuntimeClient:
                     raise
                 await asyncio.sleep(1.0 * (attempt + 1))
 
-    async def execute(self, code: str, timeout: int = 1800) -> str:
+    async def execute(self, code: str, timeout: int = 600) -> str:
         """Run *code* inside the persistent namespace of this session."""
         payload = {"session_id": self.session_id,
                    "code": code,
@@ -244,6 +244,21 @@ def _parse_last(match_type: str, text: str) -> Optional[str]:
     """
     matches = _TAG_RGX[match_type].findall(text)
     return matches[-1].strip() if matches else None
+
+def _parse_after_think(match_type: str, text: str) -> Optional[str]:
+    """Parse the first occurrence of match_type AFTER </think>.
+    
+    This correctly handles cases where the model mentions tags in its thinking:
+    e.g., '<think>I should use <execute></execute> tags</think><execute>real_code()</execute>'
+    """
+    low = text.lower()
+    think_end = low.find("</think>")
+    if think_end == -1:
+        after = text  # no </think> found, search full text as fallback
+    else:
+        after = text[think_end + len("</think>"):]
+    m = _TAG_RGX[match_type].search(after)
+    return m.group(1).strip() if m else None
 
 
 # ----------------------------------------------------------------------
@@ -396,29 +411,27 @@ class BiomniCodeActAgent:
                 self.all_logprobs.append(step_logprobs)
 
             # -- parse ----------------------------------------------------------
-            if '<execute>' in assistant_reply and '</execute>' not in assistant_reply:
-                assistant_reply += '</execute>'
-            if '<solution>' in assistant_reply and '</solution>' not in assistant_reply:
-                assistant_reply += '</solution>'
-            # if '<think>' in assistant_reply and '</think>' not in assistant_reply:
-            #     assistant_reply += '</think>'
-            if '</think>' in assistant_reply and '<think>' not in assistant_reply:
-                assistant_reply = "<think>" + assistant_reply
+            # No stop sequences -- model generates freely. The format reward teaches
+            # clean stopping. We parse action tags only AFTER </think> to allow the
+            # model to reason about its own format in think blocks.
             
-            # if '<execute>' not in assistant_reply and '<solution>' not in assistant_reply and '<think>' not in assistant_reply:
-            #     # treat the entire message as think
-            #     assistant_reply = "<think>" + assistant_reply + "</think>"
+            # Prepend <think>\n since vLLM returns text AFTER the generation prompt
+            # which already includes <think>\n. This ensures:
+            # 1. Format validation sees the complete message starting with <think>
+            # 2. Stored message matches what training will see after template encoding
+            if not assistant_reply.lstrip().lower().startswith("<think>"):
+                assistant_reply = "<think>\n" + assistant_reply
             
             self.messages.append({"role": "assistant", "content": assistant_reply})
             self.log.append({"role": "assistant", "content": assistant_reply})
-                
             
-            sol = _parse_last("solution", assistant_reply)
-            code = _parse_last("execute", assistant_reply)
+            sol = _parse_after_think("solution", assistant_reply)
+            code = _parse_after_think("execute", assistant_reply)
             
             
             if sol and code:
                 self.messages.append({"role": "user", "content": "Multiple tags (<execute> and <solution>) detected.\nPlease include only one of them in your response."})
+                logger.warning(f"Multiple tags (<execute> and <solution>) detected from assistant reply: {assistant_reply}")
                 self.log.append({"role": "user", "content": "Multiple tags (<execute> and <solution>) detected.\nPlease include only one of them in your response."})
                 error_count = sum(
                     1

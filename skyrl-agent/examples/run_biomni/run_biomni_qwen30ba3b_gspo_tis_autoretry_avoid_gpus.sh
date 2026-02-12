@@ -102,19 +102,22 @@ is_gpu_busy_error() {
     # Check if the most recent training log indicates GPUs are occupied by other processes
     # This specific error from vLLM means someone else is using the GPUs
     
-    # Find the most recently modified log file
+    # Find the most recently modified training log file
+    # Exclude utility logs (autoretry_wrapper.log, worker_watchdog.log) that don't contain training output
     local latest_log
-    latest_log=$(ls -t "$LOG_DIR"/*.log 2>/dev/null | head -1)
+    latest_log=$(ls -t "$LOG_DIR"/*.log 2>/dev/null | grep -v -E "(autoretry_wrapper|worker_watchdog)\.log$" | head -1)
     
     if [[ -z "$latest_log" || ! -f "$latest_log" ]]; then
-        log "No log file found to check for GPU errors"
+        log "No training log file found to check for GPU errors"
         return 1  # No log file, can't determine
     fi
+    
+    log "Checking for GPU busy errors in: $latest_log"
     
     # Check the last 500 lines of the log for the GPU busy error pattern
     # Pattern: vLLM error when GPU memory is insufficient due to other processes
     if tail -500 "$latest_log" | grep -qiE "Free memory on device.*is less than desired GPU memory utilization|reduce GPU memory used by other processes"; then
-        log "GPU busy error found in: $latest_log"
+        log "GPU BUSY error detected in: $latest_log"
         return 0  # True - GPU busy error detected
     fi
     
