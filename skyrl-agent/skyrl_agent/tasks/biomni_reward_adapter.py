@@ -46,44 +46,108 @@ class BiomniRewardAdapter:
     @staticmethod
     def _validate_format(messages: List[Dict[str, str]]) -> float:
         """
-        Check formatting rules:
-        1. <think>...</think> ... <execute>...</execute>
-        2. <think>...</think> ... <solution>...</solution>
+        Check formatting rules for every assistant message:
+        - Non-last: <think>...</think>...<execute>...</execute>
+        - Last:     <think>...</think>...<solution>...</solution>
+        
+        Tags inside the outer action block are OK (e.g., <solution> nested inside <execute>).
+        The FIRST action tag after </think> determines the outer block type.
+        Must end with the matching close tag (soft stop sequence via reward).
         """
-        tag_pattern = re.compile(r"</?(think|execute|solution)>", re.IGNORECASE)
 
         def _valid_block(content: str, *, is_last: bool) -> bool:
-            if "<execute>" in content and "<solution>" in content:
+            low = content.lower()
+            stripped = low.rstrip()  # Define early for logging
+
+            # Rule 1: Must start with <think>
+            if not low.lstrip().startswith("<think>"):
+                logger.warning("Format violation (no <think> at start): %s", content[:200])
                 return False
-            
-            tags = [m.group(0) for m in tag_pattern.finditer(content)]
-            if len(tags) != 4:
+
+            # Rule 2: Exactly one <think> and one </think>
+            if low.count("<think>") != 1 or low.count("</think>") != 1:
+                logger.warning("Format violation (not exactly one <think>/<//think>): %s", content[:200])
                 return False
+
+            # Rule 3: Must end with </execute> or </solution>
+            if not (stripped.endswith("</execute>") or stripped.endswith("</solution>")):
+                logger.warning("Format violation (not ending with </execute> or </solution>): %s", content[-200:])
+                return False
+
+            # Split on </think> to separate think block from action block
+            parts = low.split("</think>", 1)
+            after_think = parts[1]
+
+            # Rule 4: Find which action tag appears FIRST after </think>
+            # This determines the OUTER action type (nested tags inside are OK)
+            exec_pos = after_think.find("<execute>")
+            sol_pos = after_think.find("<solution>")
+
+            # Must have at least one action block
+            if exec_pos == -1 and sol_pos == -1:
+                logger.warning("Format violation (no action tag after </think>): %s", content[:200])
+                return False
+
+            # Determine outer action type by which appears first
+            if exec_pos == -1:
+                outer_is_execute = False
+            elif sol_pos == -1:
+                outer_is_execute = True
+            else:
+                outer_is_execute = exec_pos < sol_pos
+
+            # Rule 5: Verify ending matches the outer action type
+            # (ensures the first action block wraps all content until the end)
+            if outer_is_execute and not stripped.endswith("</execute>"):
+                logger.warning("Format violation (outer is <execute> but doesn't end with </execute>): %s", content[-200:])
+                return False
+            if not outer_is_execute and not stripped.endswith("</solution>"):
+                logger.warning("Format violation (outer is <solution> but doesn't end with </solution>): %s", content[-200:])
+                return False
+
+            # Rule 6: Verify there's only ONE outer action block (not multiple sequential blocks)
+            # Use find() for O(n) instead of character-by-character O(n^2) scanning
+            open_tag = "<execute>" if outer_is_execute else "<solution>"
+            close_tag = "</execute>" if outer_is_execute else "</solution>"
+            depth = 0
+            pos = 0
+            outer_block_closed = False
+            while pos < len(after_think):
+                next_open = after_think.find(open_tag, pos)
+                next_close = after_think.find(close_tag, pos)
                 
-            if tags[0].lower() != "<think>" or tags[1].lower() != "</think>":
-                return False
+                # No more tags found
+                if next_open == -1 and next_close == -1:
+                    break
                 
-            second_open, second_close = tags[2], tags[3]
-            if second_open.lower() not in ("<execute>", "<solution>"):
+                # Determine which comes first
+                if next_close == -1 or (next_open != -1 and next_open < next_close):
+                    # Opening tag comes first
+                    if outer_block_closed:
+                        logger.warning("Format violation (multiple outer %s blocks): %s", open_tag, content[:200])
+                        return False
+                    depth += 1
+                    pos = next_open + len(open_tag)
+                else:
+                    # Closing tag comes first
+                    depth -= 1
+                    pos = next_close + len(close_tag)
+                    if depth == 0:
+                        outer_block_closed = True
+
+            # Rule 7: Last message must have <solution> as outer, non-last must have <execute>
+            if is_last and outer_is_execute:
+                logger.warning("Format violation (last message uses <execute>, expected <solution>): %s", content[:200])
                 return False
-                
-            expected_close = second_open.replace("<", "</")
-            if second_close.lower() != expected_close.lower():
+            if not is_last and not outer_is_execute:
+                logger.warning("Format violation (non-last message uses <solution>, expected <execute>): %s", content[:200])
                 return False
-                
-            if second_open.lower() == "<solution>" and not is_last:
-                return False
-            elif second_open.lower() != "<solution>" and is_last:
-                return False
-                
-            think_block = content.split(tags[0], 1)[1].split(tags[1], 1)[0]
-            if "<execute>" in think_block or "<solution>" in think_block:
-                return False
-                
-            after_think = content.split(tags[1], 1)[1]
+
+            # Rule 8: No extra <think> or </think> after the think block
             if "<think>" in after_think or "</think>" in after_think:
+                logger.warning("Format violation (<think>/<//think> found after think block): %s", content[:200])
                 return False
-                
+
             return True
 
         assistant_indices = [idx for idx, m in enumerate(messages) if m.get("role") == "assistant"]
@@ -123,7 +187,7 @@ class BiomniRewardAdapter:
         logger.info("task_name: %s", task_name)
         logger.info("instance_id: %s", instance_id)
         logger.info("solution: %s", solution)
-        # logger.info(f"last 2 message: {messages[-2]}\n\n{messages[-1]}")
+
 
         if task_name and task_name in cls._task_mapping and solution:
             try:
@@ -137,6 +201,9 @@ class BiomniRewardAdapter:
         else:
             logger.warning(f"Unexpected task name: {task_name}, or solution is None")
             gt_reward = 0.0
+        
+        if gt_reward == 0.0:
+            logger.info("last message: %s", messages[-1])
         
         ft_reward = cls._validate_format(messages)
         logger.info("ft_reward: %s", ft_reward)

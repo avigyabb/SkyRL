@@ -74,19 +74,27 @@ class BiomniCodeActTrajectory(BaseTrajectory):
                     sampling_params=sampling_params,
                     request_id=f"{instance_id}-{uuid.uuid4().hex}",
                 )
-                # Extract logprobs from meta_info if available
+                # Extract logprobs and output_tokens from meta_info if available
                 logprobs = meta_info.get("logprobs") if isinstance(meta_info, dict) else None
                 stop_reason = meta_info.get("finish_reason") if isinstance(meta_info, dict) else meta_info
-                return {"text": response_str, "stop_reason": stop_reason, "logprobs": logprobs}
+                output_tokens = meta_info.get("output_tokens") if isinstance(meta_info, dict) else None
+                return {
+                    "text": response_str,
+                    "stop_reason": stop_reason,
+                    "logprobs": logprobs,
+                    "output_tokens": output_tokens,
+                }
 
         engine_adapter = _BackendAsEngine(self.infer_engine)
 
         runtime_url = os.getenv("BIOMNI_RUNTIME_URL") or "http://localhost:8000"
-        # Ensure stop tokens are set similarly to Biomni group
+        # Only stop on <|im_end|> (turn delimiter) - NOT on </execute> or </solution>.
+        # This lets the model learn to generate complete turns via format reward.
+        # include_stop_str_in_output=True: vLLM returns the stop token and its logprob
+        # so the agent can strip it for TITO but use it for tokenization correctness.
         sampling_params = copy.deepcopy(self.cfg.sampling_params)
-        sampling_params.update({
-            "stop": ["</execute>", "</solution>"],
-        })
+        sampling_params["stop"] = ["<|im_end|>"]
+        sampling_params["include_stop_str_in_output"] = True
 
         def _safe_int(val: Optional[int]) -> Optional[int]:
             try:
@@ -215,6 +223,8 @@ class BiomniCodeActTrajectory(BaseTrajectory):
 
         finish_reason = "FINISH_TOOL" if solution else ("max_iterations_reached" if iterations and iterations >= self.cfg.max_iterations else None)
 
+        transitions = result.get("transitions")  # List[Transition] for token-in-token-out TIS
+
         self.result = {
             "instance_id": instance_id,
             "trajectory_id": self.cfg.trajectory_id,
@@ -222,7 +232,8 @@ class BiomniCodeActTrajectory(BaseTrajectory):
             "results": solution,
             "finish_reason": finish_reason,
             "state": {},
-            "logprobs": logprobs,  # Store logprobs for TIS
+            "transitions": transitions,  # Token-in-token-out transitions for TIS
+            "logprobs": logprobs,  # Legacy logprobs fallback for TIS
         }
 
     async def evaluate_trajectory(self) -> None:

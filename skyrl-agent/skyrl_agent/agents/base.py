@@ -22,6 +22,7 @@ from skyrl_agent.integrations.base import (
 from skyrl_agent.dispatcher.dispatchers import DISPATCHER_REGISTRY, DispatcherType
 from skyrl_agent.config.configuration_utils import TASK_CONFIG_REGISTRY, get_field_from_config, TrajectoryConfig
 from skyrl_agent.functional.chat_template import chat_template, chat_template_qwen3_thinking
+from skyrl_agent.functional.utils import transitions_to_training_data
 from .mapping import AGENT_TRAJECTORY_REGISTRY
 
 
@@ -348,24 +349,40 @@ class AgentRunner:
                         for key, value in fallback.items():
                             matched_results[idx][key] = copy.deepcopy(value)
 
-        # Get batch of messages
+        # ---- Tokenization: token-in-token-out (transitions) or re-tokenization fallback ----
+        #
+        # If trajectories provide Transition objects (from record_transition / manual recording),
+        # we use transitions_to_training_data() which gives exact token alignment without re-tokenization.
+        # Otherwise, fall back to the legacy apply_chat_template re-tokenization path.
+
+        # Step-level accumulation lists (populated by either path)
+        prompt_input_ids = []
+        response_ids = []
+        response_assistant_mask = []
+        logprobs_from_transitions = []
+        steps_per_trajectory = []
+        use_transition_path = []  # Track which path each trajectory took
+
+        # Collect per-trajectory metadata regardless of tokenization path
+        num_turns = []  # assistant-based turns
+        # These are also used for legacy path batched tokenization
         all_messages = []
         all_prompts = []
         all_responses = []
-        num_turns = []  # assistant-based turns
+
         for result in matched_results:
             messages = result.get("messages", [])
             all_messages.append(messages)
-            # get the response: starting from the first assistant message
-            starting_index = 0
             # Count assistant messages as turns to match actual steps
             num_turns.append(sum(1 for m in messages if m.get("role") == "assistant"))
+
+            # get the response: starting from the first assistant message
+            starting_index = 0
             for i, msg in enumerate(messages):
                 if msg["role"] == "assistant":
                     starting_index = i
                     break
             if starting_index == 0:
-                # If we don't find an assistant, all messages are prompts and there are no responses
                 print(
                     f'ERROR: Found no assistant message. len(messages) == {len(messages)} and roles are {[msg["role"] for msg in messages]}'
                 )
@@ -380,69 +397,117 @@ class AgentRunner:
             has_finish_action_list.append(result.get("finish", False))
             finish_reason_list.append(result.get("finish_reason", None))
 
-        # Encode messages, get assitant mask and position ids
-        # Use trajectory-class-specific templates if available, otherwise use defaults
-        traj_template = getattr(self.traj_cls, 'CHAT_TEMPLATE', None) or chat_template
-        traj_template_thinking = getattr(self.traj_cls, 'CHAT_TEMPLATE_THINKING', None) or chat_template_qwen3_thinking
-        
-        if getattr(self.traj_cls, 'CHAT_TEMPLATE', None) is None:
-            logger.warning("[AgentRunner] CHAT_TEMPLATE is None or missing for traj_cls, using the default chat template.")
-        if getattr(self.traj_cls, 'CHAT_TEMPLATE_THINKING', None) is None:
-            logger.warning("[AgentRunner] CHAT_TEMPLATE_THINKING is None or missing for traj_cls, using the default chat_template_qwen3_thinking.")
-        
-        prompt_encodings = self.tokenizer.apply_chat_template(
-            all_prompts,
-            # return_tensors="pt",
-            add_generation_prompt=False,
-            return_dict=True,
-            # padding=True
-        )
-        prompt_input_ids = prompt_encodings["input_ids"]
+            # Check for transitions (token-in-token-out path)
+            transitions = result.get("transitions")
+            if transitions:
+                use_transition_path.append(True)
+                data_list = transitions_to_training_data(transitions)
+                for data in data_list:
+                    prompt_input_ids.append(data.input_tokens)
+                    response_ids.append(data.response_tokens)
+                    logprobs_from_transitions.append(data.response_logprobs)
+                    response_assistant_mask.append(data.response_mask)
+                steps_per_trajectory.append(len(data_list))
+            else:
+                use_transition_path.append(False)
+                # Placeholder: will be filled by legacy batched tokenization below
+                steps_per_trajectory.append(None)
 
-        response_encodings = self.tokenizer.apply_chat_template(
-            all_responses,
-            chat_template=traj_template_thinking if self.cfg.generator.remove_think_tokens else traj_template,
-            return_assistant_tokens_mask=True,
-            add_generation_prompt=False,
-            return_dict=True,
-        )
+        # Legacy re-tokenization fallback for trajectories without transitions
+        legacy_indices = [i for i, used in enumerate(use_transition_path) if not used]
+        if legacy_indices:
+            logger.warning(
+                f"[TIS] {len(legacy_indices)}/{len(matched_results)} trajectories lack transitions, "
+                "falling back to re-tokenization for those."
+            )
+            # Collect prompts/responses for legacy trajectories
+            legacy_prompts = [all_prompts[i] for i in legacy_indices]
+            legacy_responses = [all_responses[i] for i in legacy_indices]
 
-        response_ids = response_encodings["input_ids"]
-        response_assistant_mask = response_encodings["assistant_masks"]
+            # Use trajectory-class-specific templates if available, otherwise use defaults
+            traj_template = getattr(self.traj_cls, 'CHAT_TEMPLATE', None) or chat_template
+            traj_template_thinking = getattr(self.traj_cls, 'CHAT_TEMPLATE_THINKING', None) or chat_template_qwen3_thinking
+
+            if getattr(self.traj_cls, 'CHAT_TEMPLATE', None) is None:
+                logger.warning("[AgentRunner] CHAT_TEMPLATE is None or missing for traj_cls, using the default chat template.")
+            if getattr(self.traj_cls, 'CHAT_TEMPLATE_THINKING', None) is None:
+                logger.warning("[AgentRunner] CHAT_TEMPLATE_THINKING is None or missing for traj_cls, using the default chat_template_qwen3_thinking.")
+
+            prompt_encodings = self.tokenizer.apply_chat_template(
+                legacy_prompts,
+                add_generation_prompt=False,
+                return_dict=True,
+            )
+            response_encodings = self.tokenizer.apply_chat_template(
+                legacy_responses,
+                chat_template=traj_template_thinking if self.cfg.generator.remove_think_tokens else traj_template,
+                return_assistant_tokens_mask=True,
+                add_generation_prompt=False,
+                return_dict=True,
+            )
+
+            legacy_prompt_ids = prompt_encodings["input_ids"]
+            legacy_response_ids = response_encodings["input_ids"]
+            legacy_masks = response_encodings["assistant_masks"]
+
+            # Insert legacy results back into the main lists at the correct positions
+            # We need to insert one datum per legacy trajectory
+            legacy_data_idx = 0
+            for orig_idx in legacy_indices:
+                # For legacy path, each trajectory = 1 step/datum
+                # Figure out where to insert in the flat lists
+                # Count how many data items came before this trajectory
+                insert_pos = sum(
+                    steps_per_trajectory[j] for j in range(orig_idx)
+                    if steps_per_trajectory[j] is not None
+                )
+                prompt_input_ids.insert(insert_pos, legacy_prompt_ids[legacy_data_idx])
+                response_ids.insert(insert_pos, legacy_response_ids[legacy_data_idx])
+                response_assistant_mask.insert(insert_pos, legacy_masks[legacy_data_idx])
+                logprobs_from_transitions.insert(insert_pos, None)  # No logprobs from transitions
+                steps_per_trajectory[orig_idx] = 1
+                legacy_data_idx += 1
+
+        # Expand per-trajectory lists to per-datum level
+        # (transitions_to_training_data may produce >1 datum per trajectory)
+        datum_finish_reason_list = []
+        datum_resolved_list = []
+        for traj_idx, steps in enumerate(steps_per_trajectory):
+            n = steps or 0
+            datum_finish_reason_list.extend([finish_reason_list[traj_idx]] * n)
+            datum_resolved_list.extend([resolved_list[traj_idx]] * n)
 
         mask_out_reason = ["CONTEXT_WINDOW_EXCEEDED", "error_runtime", "error_evaluation", "max_iterations_reached"]
         max_response_length = self.cfg.generator.max_prompt_length
         truncated_ids = []
         truncated_masks = []
+        truncated_logprobs_trans = []
 
-        for idx, (ids, mask, reason) in enumerate(zip(response_ids, response_assistant_mask, finish_reason_list)):
+        for idx, (ids, mask, reason, lp) in enumerate(zip(
+            response_ids, response_assistant_mask, datum_finish_reason_list, logprobs_from_transitions
+        )):
             # Check if truncation is needed
             if len(ids) > max_response_length:
-                # Assert finish_reason correctness
-                # assert reason in mask_out_reason, (
-                #     f"[Sanity Check Failed] Response length {len(ids)} > max_response_length={max_response_length} "
-                #     f"but finish_reason='{reason}' not in mask_out_reason={mask_out_reason}"
-                # )
                 if reason not in mask_out_reason:
                     logger.warning(
                         f"[WARN] Response length {len(ids)} > max_response_length={max_response_length} "
                         f"but finish_reason='{reason}' not in mask_out_reason={mask_out_reason}"
                     )
-                    # modify reason to CONTEXT_WINDOW_EXCEEDED
-                    finish_reason_list[idx] = "CONTEXT_WINDOW_EXCEEDED"
-                # Truncate tokens and masks
+                    datum_finish_reason_list[idx] = "CONTEXT_WINDOW_EXCEEDED"
                 truncated_ids.append(ids[:max_response_length])
                 truncated_masks.append(mask[:max_response_length])
+                truncated_logprobs_trans.append(lp[:max_response_length] if lp is not None else None)
             else:
-                # No truncation needed
                 truncated_ids.append(ids)
                 truncated_masks.append(mask)
+                truncated_logprobs_trans.append(lp)
         response_ids = truncated_ids
         response_assistant_mask = truncated_masks
+        logprobs_from_transitions = truncated_logprobs_trans
 
         loss_mask = [
             [0] * len(mask) if (reason in mask_out_reason) else mask
-            for mask, reason in zip(response_assistant_mask, finish_reason_list)
+            for mask, reason in zip(response_assistant_mask, datum_finish_reason_list)
         ]
         
         # Additional filtering: mask out overlong rollouts with bad formatting
@@ -452,7 +517,11 @@ class AgentRunner:
         num_overlong_filtered = 0
         
         if overlong_filter_enabled:
-            for idx, (ids, ft_reward, mask) in enumerate(zip(response_ids, ft_reward_list, loss_mask)):
+            # Expand ft_reward_list to datum level for consistency with response_ids
+            datum_ft_reward_list = []
+            for traj_idx, steps in enumerate(steps_per_trajectory):
+                datum_ft_reward_list.extend([ft_reward_list[traj_idx]] * (steps or 0))
+            for idx, (ids, ft_reward, mask) in enumerate(zip(response_ids, datum_ft_reward_list, loss_mask)):
                 response_len = len(ids)
                 # If response is overlong AND format reward is 0, mask it out
                 if response_len > overlong_threshold and ft_reward == 0.0:
@@ -696,51 +765,75 @@ class AgentRunner:
                 print("------------------\n")
 
         # Build rollout_logprobs aligned with response_ids (for TIS)
-        # Each trajectory may have logprobs from multiple assistant generation steps
+        # Two paths:
+        #   1. Transition path: logprobs are already aligned by transitions_to_training_data()
+        #   2. Legacy path: align flat logprobs with the assistant mask from re-tokenization
         # Note: response_ids and response_assistant_mask are already truncated at this point
         rollout_logprobs_list = []
         has_any_logprobs = False
-        
-        for idx, (res, mask, resp_ids) in enumerate(zip(matched_results, response_assistant_mask, response_ids)):
-            # Sanity check: mask and response_ids should have the same length
-            # (they come from the same apply_chat_template call and are truncated together)
+
+        # Build a flat index over datum entries → which original trajectory they came from
+        datum_to_traj_idx = []
+        for traj_idx, steps in enumerate(steps_per_trajectory):
+            datum_to_traj_idx.extend([traj_idx] * (steps or 0))
+
+        for datum_idx, (mask, resp_ids, trans_lp) in enumerate(
+            zip(response_assistant_mask, response_ids, logprobs_from_transitions)
+        ):
+            # Sanity check
             if len(mask) != len(resp_ids):
                 raise ValueError(
-                    f"[BUG] Trajectory {idx}: response_assistant_mask length ({len(mask)}) != "
+                    f"[BUG] Datum {datum_idx}: response_assistant_mask length ({len(mask)}) != "
                     f"response_ids length ({len(resp_ids)}). This indicates a bug in tokenization/truncation."
                 )
-            
-            traj_logprobs = res.get("logprobs")  # List of lists (one per assistant generation)
-            
-            if traj_logprobs is None or len(traj_logprobs) == 0:
-                # No logprobs available for this trajectory
-                rollout_logprobs_list.append(None)
-                continue
-            
-            has_any_logprobs = True
-            
-            # Flatten all logprobs from all assistant messages
-            flat_logprobs = []
-            for step_logprobs in traj_logprobs:
-                if step_logprobs:
-                    flat_logprobs.extend(step_logprobs)
-            
-            # Align logprobs with response_ids using the assistant mask
-            # Fill non-assistant tokens with 0.0, assistant tokens with actual logprobs
-            aligned_logprobs = []
-            logprob_idx = 0
-            for m in mask:
-                if m == 1:  # Assistant token
-                    if logprob_idx < len(flat_logprobs):
-                        aligned_logprobs.append(float(flat_logprobs[logprob_idx]))
-                        logprob_idx += 1
+
+            traj_idx = datum_to_traj_idx[datum_idx] if datum_idx < len(datum_to_traj_idx) else datum_idx
+
+            if trans_lp is not None:
+                # Transition path: logprobs are already position-aligned with response_ids
+                # Validate length match
+                if len(trans_lp) != len(resp_ids):
+                    logger.error(
+                        f"[TIS] Logprob count mismatch for datum {datum_idx} (traj {traj_idx}): "
+                        f"logprobs={len(trans_lp)}, response_ids={len(resp_ids)}. "
+                        "Disabling TIS for this trajectory (filling with zeros)."
+                    )
+                    rollout_logprobs_list.append([0.0] * len(resp_ids))
+                else:
+                    has_any_logprobs = True
+                    rollout_logprobs_list.append([float(lp) for lp in trans_lp])
+            else:
+                # Legacy path: try to use flat logprobs from matched_results
+                res = matched_results[traj_idx]
+                traj_logprobs = res.get("logprobs")  # List of lists (one per assistant generation)
+
+                if traj_logprobs is None or len(traj_logprobs) == 0:
+                    rollout_logprobs_list.append(None)
+                    continue
+
+                has_any_logprobs = True
+
+                # Flatten all logprobs from all assistant messages
+                flat_logprobs = []
+                for step_logprobs in traj_logprobs:
+                    if step_logprobs:
+                        flat_logprobs.extend(step_logprobs)
+
+                # Align logprobs with response_ids using the assistant mask
+                aligned_logprobs = []
+                logprob_idx = 0
+                for m in mask:
+                    if m == 1:  # Assistant token
+                        if logprob_idx < len(flat_logprobs):
+                            aligned_logprobs.append(float(flat_logprobs[logprob_idx]))
+                            logprob_idx += 1
+                        else:
+                            aligned_logprobs.append(0.0)
                     else:
-                        aligned_logprobs.append(0.0)  # Padding if we run out of logprobs
-                else:  # Non-assistant token (user messages, generation prompts, etc.)
-                    aligned_logprobs.append(0.0)
-            
-            rollout_logprobs_list.append(aligned_logprobs)
-        
+                        aligned_logprobs.append(0.0)
+
+                rollout_logprobs_list.append(aligned_logprobs)
+
         # Finalize rollout_logprobs
         if has_any_logprobs:
             # Fill None entries with zeros matching response_ids length
@@ -767,7 +860,7 @@ class AgentRunner:
         output = {
             "prompt_token_ids": prompt_input_ids,
             "response_ids": response_ids,
-            "rewards": resolved_list,
+            "rewards": datum_resolved_list,
             "loss_masks": loss_mask,
             "stop_reasons": None,
             "rollout_logprobs": rollout_logprobs,
