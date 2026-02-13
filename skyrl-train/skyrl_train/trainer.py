@@ -1,7 +1,10 @@
 import asyncio
+import csv
 import math
 import os
 import shutil
+import time
+from datetime import datetime, timezone
 from typing import Any, List, Optional, Dict, Tuple, Union
 from jaxtyping import Float
 from pathlib import Path
@@ -103,6 +106,56 @@ class RayPPOTrainer:
         self.reward_kl_controller: Optional[Union[FixedKLController, AdaptiveKLController]] = None
         configure_ray_worker_logging()
 
+        # --- Timing log file ---
+        self._timing_log_path = os.path.join(cfg.trainer.ckpt_path, "timing_log.csv")
+        self._timing_log_file = None
+        self._timing_csv_writer = None
+
+    def _init_timing_log(self):
+        """Open (or create) the CSV timing log and write the header if needed."""
+        os.makedirs(os.path.dirname(self._timing_log_path), exist_ok=True)
+        file_exists = os.path.isfile(self._timing_log_path)
+        self._timing_log_file = open(self._timing_log_path, "a", newline="")
+        self._timing_csv_writer = csv.writer(self._timing_log_file)
+        if not file_exists or os.path.getsize(self._timing_log_path) == 0:
+            self._timing_csv_writer.writerow([
+                "timestamp", "global_step", "phase",
+                "step_total_s", "generate_s", "postprocess_s",
+                "convert_to_training_input_s", "fwd_logprobs_values_reward_s",
+                "compute_advantages_s", "train_critic_and_policy_s",
+                "policy_train_s", "critic_train_s",
+                "sync_weights_s", "save_checkpoints_s",
+            ])
+            self._timing_log_file.flush()
+
+    def _write_timing_row(self, phase: str, timings: Dict[str, float]):
+        """Append one row to the timing CSV."""
+        if self._timing_csv_writer is None:
+            self._init_timing_log()
+        self._timing_csv_writer.writerow([
+            datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            self.global_step,
+            phase,
+            f"{timings.get('step', 0):.1f}",
+            f"{timings.get('generate', 0):.1f}",
+            f"{timings.get('postprocess_generator_output', 0):.1f}",
+            f"{timings.get('convert_to_training_input', 0):.1f}",
+            f"{timings.get('fwd_logprobs_values_reward', 0):.1f}",
+            f"{timings.get('compute_advantages_and_returns', 0):.1f}",
+            f"{timings.get('train_critic_and_policy', 0):.1f}",
+            f"{timings.get('policy_train', 0):.1f}",
+            f"{timings.get('critic_train', 0):.1f}",
+            f"{timings.get('sync_weights', 0):.1f}",
+            f"{timings.get('save_checkpoints', 0):.1f}",
+        ])
+        self._timing_log_file.flush()
+
+    def _close_timing_log(self):
+        if self._timing_log_file is not None:
+            self._timing_log_file.close()
+            self._timing_log_file = None
+            self._timing_csv_writer = None
+
     @torch.no_grad()
     async def eval(self) -> Dict[str, float]:
         """
@@ -123,10 +176,16 @@ class RayPPOTrainer:
         )
         return eval_metrics
 
-    def train(self):
+    def train(self, setup_duration: float = 0.0):
         """
         Main training loop for PPO
         """
+        # Initialize timing log and record setup phase
+        self._init_timing_log()
+        if setup_duration > 0:
+            self._write_timing_row("setup", {"step": setup_duration})
+            logger.info(f"[Timing] Setup completed in {setup_duration:.1f}s  (logged to {self._timing_log_path})")
+
         # Debug logging for algorithm config at training start
         algo_cfg = self.cfg.trainer.algorithm
         logger.info("=" * 70)
@@ -303,6 +362,17 @@ class RayPPOTrainer:
                     **{f"timing/{k}": v for k, v in self.all_timings.items()},
                 }
                 self.tracker.log(log_payload, step=self.global_step, commit=True)
+
+                # Write per-step timing to CSV log file
+                self._write_timing_row("train", self.all_timings)
+                logger.info(
+                    f"[Timing] Step {self.global_step}: "
+                    f"total={self.all_timings.get('step', 0):.1f}s  "
+                    f"generate={self.all_timings.get('generate', 0):.1f}s  "
+                    f"train={self.all_timings.get('train_critic_and_policy', 0):.1f}s  "
+                    f"sync_weights={self.all_timings.get('sync_weights', 0):.1f}s"
+                )
+
                 self.all_metrics = {}
                 self.all_timings = {}
 
@@ -325,7 +395,8 @@ class RayPPOTrainer:
             with Timer("save_hf_model", self.all_timings):
                 self.save_models()
                 logger.info("Saved final model.")
-        logger.info("Training done!")
+        self._close_timing_log()
+        logger.info(f"Training done!  Timing log saved to: {self._timing_log_path}")
 
     def _remove_tail_data(self, entries: List[Any]) -> List[Any]:
         """Remove tail data to have even shards"""

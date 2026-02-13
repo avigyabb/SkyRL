@@ -575,6 +575,16 @@ def prepare_runtime_environment(cfg: DictConfig) -> dict[str, str]:
         logger.info("Exporting mlflow tracking token to ray runtime env")
         env_vars["MLFLOW_TRACKING_TOKEN"] = os.environ["MLFLOW_TRACKING_TOKEN"]
 
+    if os.environ.get("BIOMNI_RUNTIME_URL"):
+        logger.info("Exporting BIOMNI_RUNTIME_URL to ray runtime env")
+        env_vars["BIOMNI_RUNTIME_URL"] = os.environ["BIOMNI_RUNTIME_URL"]
+
+    # Propagate NCCL networking config to Ray workers (critical for multi-node)
+    for nccl_var in ["NCCL_SOCKET_IFNAME", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL",
+                     "NCCL_DEBUG", "NCCL_TIMEOUT", "NCCL_ASYNC_ERROR_HANDLING"]:
+        if os.environ.get(nccl_var):
+            env_vars[nccl_var] = os.environ[nccl_var]
+
     if SKYRL_LD_LIBRARY_PATH_EXPORT:
         # export `LD_LIBRARY_PATH` to ray runtime env.
         # For some reason the `LD_LIBRARY_PATH` is not exported to the worker with .env file.

@@ -70,11 +70,9 @@ conflicts = [
 
 [tool.uv.extra-build-dependencies]
 flash-attn = [{requirement = "torch", match-runtime = true}]
-# transformer-engine-torch = [{requirement = "torch", match-runtime = true}, {requirement = "nvidia-cudnn-cu12"}]
 
 [tool.uv.extra-build-variables]
 flash-attn = { FLASH_ATTENTION_SKIP_CUDA_BUILD = "TRUE"}
-# transformer-engine-torch = { CUDNN_PATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn", CPATH = "/home/ray/anaconda3/lib/python3.12/site-packages/nvidia/cudnn/include" }
 
 [tool.uv.sources]
 skyrl-gym = { path = "./skyrl-gym" , editable = true }
@@ -123,7 +121,8 @@ vllm = [
 sglang = [
     "sglang[srt,openai,torch_memory_saver]==0.4.8.post1",  # 0.4.9.post1 causes non-colocate weight broadcast to hang
     "flashinfer-python",
-    "flash-attn==2.8.3",
+    # "flash-attn==2.8.3",
+    "flash-attn==2.7.4.post1",
     "torch==2.7.1",
     "torchvision",
 ]

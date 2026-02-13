@@ -7,7 +7,8 @@ from skyrl_agent.agents.biomni_codeact.task.base_task import base_task
 class rare_disease_diagnosis(base_task):
     def __init__(self, path = './data', num_samples = None):
         # data_path = os.path.join(path, 'rare_disease_diagnosis', 'mygene.json')
-        data_path = '/dfs/user/kexinh/BioAgentOS/data/mygene.json'
+        # data_path = '/dfs/user/kexinh/BioAgentOS/data/mygene.json'
+        data_path = '/mnt/biomni_filestore/biomni/biomni_resources/mygene.json'
         data = []
         with open(data_path, "r") as file:
             for line in file:

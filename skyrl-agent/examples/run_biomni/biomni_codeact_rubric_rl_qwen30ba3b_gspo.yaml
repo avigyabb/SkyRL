@@ -31,7 +31,7 @@ generator:
     api_url: http://localhost:30000
 
   num_trajectories: 8
-  max_iterations: 50
+  max_iterations: 1
   # Keep prompt budget aligned with trainer.max_prompt_length & vLLM max_model_len.
   max_prompt_length: 49152
   sampling_params:

@@ -285,9 +285,12 @@ class BasePPOExp:
         return trainer
 
     def run(self):
+        import time as _time
+        _setup_start = _time.time()
         trainer = self._setup_trainer()
+        setup_duration = _time.time() - _setup_start
         # Start the training loop
-        trainer.train()
+        trainer.train(setup_duration=setup_duration)
 
 
 @ray.remote(num_cpus=1)

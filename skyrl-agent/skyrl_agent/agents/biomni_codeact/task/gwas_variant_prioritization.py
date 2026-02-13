@@ -6,7 +6,8 @@ class gwas_variant_prioritization(base_task):
 
     def __init__(self, path = './data', num_samples = 100):
 
-        self.df = pd.read_pickle(path + '/gwas_variant_prioritization/gwas_gold_standards_benchmark.pkl')
+        # self.df = pd.read_pickle(path + '/gwas_variant_prioritization/gwas_gold_standards_benchmark.pkl')
+        self.df = pd.read_pickle('/mnt/biomni_filestore/biomni/biomni_resources/gwas_gold_standards_benchmark.pkl')
         self.df = self.df.sample(frac = 1, random_state = 42).reset_index(drop=True)[:num_samples]
 
         self.prompt = "Your task is to identify the most promising variant associated wtih a given GWAS phenotype for futher examination. \nFrom the list, prioritize the top associated variant (matching one of the given variant). \nGWAS phenotype: {trait}\nVariants: {variant_list}"

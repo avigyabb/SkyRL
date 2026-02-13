@@ -3825,7 +3825,7 @@ requires-dist = [
     { name = "flash-attn" },
     { name = "flash-attn", marker = "extra == 'flashrl'", specifier = "==2.8.3" },
     { name = "flash-attn", marker = "extra == 'mcore'", specifier = "==2.7.4.post1" },
-    { name = "flash-attn", marker = "extra == 'sglang'", specifier = "==2.8.3" },
+    { name = "flash-attn", marker = "extra == 'sglang'", specifier = "==2.7.4.post1" },
     { name = "flash-attn", marker = "extra == 'vllm'", specifier = "==2.8.3" },
     { name = "flashinfer-jit-cache", marker = "extra == 'vllm'", index = "https://flashinfer.ai/whl/cu128" },
     { name = "flashinfer-python", marker = "extra == 'flashrl' and extra != 'mcore' and extra == 'sglang' and extra != 'vllm'", url = "https://download.pytorch.org/whl/cu128/flashinfer/flashinfer_python-0.2.6.post1%2Bcu128torch2.7-cp39-abi3-linux_x86_64.whl" },

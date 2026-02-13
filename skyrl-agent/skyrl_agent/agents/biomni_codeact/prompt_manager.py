@@ -30,7 +30,7 @@ class PromptManager:
             use_s3_datasets: If True, use S3 data lake; if False, use local data lake (default: False)
             data_lake_path: Local path to the data lake (used if use_s3_datasets=False)
         """
-        with open(os.path.join(tool_path, 'screen_api.json'), 'r') as f:
+        with open('/mnt/biomni_filestore/biomni/biomni_resources/screen_api.json', 'r') as f:
             module2api = json.load(f)
         self.default_tool_dict = module2api
         self.s3_datalake_uri = s3_datalake_uri
