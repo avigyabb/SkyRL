@@ -25,8 +25,11 @@ export RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES=1
 
 # NCCL settings for distributed GPU communication
 export NCCL_TIMEOUT=28800
-export NCCL_DEBUG=WARN
+export NCCL_DEBUG=INFO                       # temporarily verbose for multi-node debugging
 export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_SOCKET_IFNAME=enp0s19            # force NCCL to use the host network (10.138.0.x)
+export NCCL_IB_DISABLE=1                     # GCP standard VMs have no InfiniBand
+export NCCL_NET_GDR_LEVEL=LOC                # disable GPUDirect RDMA (not avail on standard VMs)
 
 # Increase Ray worker registration timeout (default 60s is too short with slow disk/uv)
 export RAY_worker_register_timeout_seconds=300

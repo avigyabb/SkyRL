@@ -272,7 +272,7 @@ class BiomniCodeActAgent:
         self.max_iterations = max_iterations
         self.qwen3_enable_thinking = qwen3_enable_thinking
         # self.prompt_manager = PromptManager(tool_path="verl/workers/agentic/biomni/tool")
-        self.prompt_manager = PromptManager(tool_path="/dfs/scratch1/lansong/SkyRLV1/skyrl-agent/skyrl_agent/agents/biomni_codeact/tool")
+        self.prompt_manager = PromptManager(tool_path="/mnt/biomni_filestore/biomni/biomni_resources/tool")
 
         # -- conversation memory ------------------------------------------------
         self.messages = self.prompt_manager.get_initial_messages(prompt, task_name)

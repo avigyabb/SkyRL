@@ -151,7 +151,7 @@ class BiomniRubricRewardAdapter:
         if cls._initialized:
             return
         
-        benchmark_root = '/dfs/project/bioagentos/biomni_data/benchmark/'
+        benchmark_root = '/mnt/biomni_filestore/biomni/biomni_resources/benchmark/'
         
         cls._task_mapping = {
             "rare_disease_diagnosis": rare_disease_diagnosis(benchmark_root),
