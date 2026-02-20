@@ -35,7 +35,7 @@ export RAY_worker_register_timeout_seconds=300
 export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 
-export BIOMNI_RUNTIME_URL="${BIOMNI_RUNTIME_URL:-http://10.138.0.4:8000}"
+export BIOMNI_RUNTIME_URL="${BIOMNI_RUNTIME_URL:-http://10.138.0.3:8000}"
 
 # Use ray directly from the venv to avoid uv dependency sync overhead
 VENV_BIN=/mnt/biomni_filestore/venvs/skyrl-agent/bin

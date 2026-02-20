@@ -66,6 +66,16 @@ class DistributedTorchRayActor:
         # environment variable for each actor, so always set device to 0
         # os.environ["LOCAL_RANK"] = str(self._local_rank)
         os.environ["LOCAL_RANK"] = str(ray.get_gpu_ids()[0]) if ray_noset_visible_devices() else "0"
+        # Debug: log worker creation with all distributed info
+        # _node_ip = ray._private.services.get_node_ip_address()
+        # _gpu_ids = ray.get_gpu_ids()
+        # logging.info(
+        #     f"[DistributedTorchRayActor] CREATED: rank={rank}/{world_size}, "
+        #     f"local_rank={local_rank}, node_ip={_node_ip}, "
+        #     f"MASTER_ADDR={self._master_addr}, MASTER_PORT={self._master_port}, "
+        #     f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', 'unset')}, "
+        #     f"ray_gpu_ids={_gpu_ids}"
+        # )
         self.sequence_parallel_size: int = sequence_parallel_size
 
         self.record_memory = record_memory
@@ -494,7 +504,7 @@ class PPORayActorGroup:
                 self._actor_handlers.append(worker_actor)
 
         # Initialize process group
-        logger.info("Initializing process group for RayActorGroup")
+        logger.info(f"Initializing process group for RayActorGroup ({len(self._actor_handlers)} actors)")
         ray.get([actor.init_worker_process_group.remote() for actor in self._actor_handlers])
         logger.info("Initialized process group for RayActorGroup")
         self.actor_infos = [ActorInfo(actor, ray.get(actor.get_mesh_rank.remote())) for actor in self._actor_handlers]

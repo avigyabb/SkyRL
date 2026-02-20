@@ -188,12 +188,22 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         """
         Override DistributedTorchRayActor.init_worker_process_group to use megatron distributed setup to create the mesh.
         """
+        import logging as _logging
+        _logging.info(
+            f"[PolicyWorker] init_worker_process_group ENTER: rank={self._rank}/{self._world_size}, "
+            f"MASTER_ADDR={os.environ.get('MASTER_ADDR')}, MASTER_PORT={os.environ.get('MASTER_PORT')}"
+        )
+
         # Lazy imports to avoid protobuf serialization issues with Ray
         import megatron.core.parallel_state as mpu
         from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
 
         if not torch.distributed.is_initialized():
+            _logging.info(f"[PolicyWorker] rank={self._rank} calling torch.distributed.init_process_group(backend='nccl')...")
             torch.distributed.init_process_group(backend="nccl")
+            _logging.info(f"[PolicyWorker] rank={self._rank} init_process_group DONE")
+        else:
+            _logging.info(f"[PolicyWorker] rank={self._rank} torch.distributed already initialized, skipping")
 
         self.strategy = MegatronStrategy(
             megatron_config=self.cfg.trainer.policy.megatron_config,
@@ -211,6 +221,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             dp_size=mpu.get_data_parallel_world_size(),
             pp_size=mpu.get_pipeline_model_parallel_world_size(),
         )
+        _logging.info(f"[PolicyWorker] init_worker_process_group DONE: rank={self._rank}, mesh_rank={self.mesh_rank}")
 
     def init_model(self, model_path, num_training_steps: int = 1e9):
         """
@@ -495,12 +506,22 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         """
         Override DistributedTorchRayActor.init_worker_process_group to use megatron distributed setup to create the mesh.
         """
+        import logging as _logging
+        _logging.info(
+            f"[RefWorker] init_worker_process_group ENTER: rank={self._rank}/{self._world_size}, "
+            f"MASTER_ADDR={os.environ.get('MASTER_ADDR')}, MASTER_PORT={os.environ.get('MASTER_PORT')}"
+        )
+
         # Lazy imports to avoid protobuf serialization issues with Ray
         import megatron.core.parallel_state as mpu
         from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
 
         if not torch.distributed.is_initialized():
+            _logging.info(f"[RefWorker] rank={self._rank} calling torch.distributed.init_process_group(backend='nccl')...")
             torch.distributed.init_process_group(backend="nccl")
+            _logging.info(f"[RefWorker] rank={self._rank} init_process_group DONE")
+        else:
+            _logging.info(f"[RefWorker] rank={self._rank} torch.distributed already initialized, skipping")
 
         self.strategy = MegatronStrategy(
             megatron_config=self.cfg.trainer.ref.megatron_config,

@@ -18,7 +18,6 @@ Usage:
 
 import os
 import sys
-# sys.path.append("/dfs/scratch1/lansong/SkyRLV1/skyrl-agent")
 import asyncio
 from pathlib import Path
 from transformers import AutoTokenizer

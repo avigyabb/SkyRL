@@ -33,6 +33,8 @@ generator:
     # This is the agent-side generation cap. The skyrl-train generator.max_generate_length
     # should match it.
     max_tokens: 4096
+    # Enable returning logprobs for the chosen token (for TIS)
+    logprobs: 0
   remove_think_tokens: false
   vision_is_active: false
   qwen3_enable_thinking: true

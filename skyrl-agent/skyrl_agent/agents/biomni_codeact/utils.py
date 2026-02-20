@@ -776,7 +776,7 @@ def parse_hpo_obo(file_path):
     return hp_dict
 
 # Example usage
-file_path = "/dfs/user/kexinh/BioAgentOS/data/hp.obo"  # Replace with the path to your hp.obo file
+file_path = "/mnt/biomni_filestore/biomni/biomni_data/data_lake/hp.obo"  # Replace with the path to your hp.obo file
 # hp_dict = parse_hpo_obo(file_path)
 
 # Updated library_content as a dictionary with detailed descriptions

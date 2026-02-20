@@ -17,6 +17,10 @@ from transformers import PreTrainedTokenizerBase
 
 logger = logging.getLogger(__name__)
 
+# Sentinel value returned by _llm_generate when context exceeds max_prompt_len.
+# This is NOT model output - it signals the run() loop to terminate cleanly.
+_CONTEXT_OVERFLOW_SENTINEL = "__CONTEXT_OVERFLOW__"
+
 
 
 # -- Qwen-3 chat templates ------------------------------------------------
@@ -177,12 +181,12 @@ class BiomniRuntimeClient:
                     raise
                 await asyncio.sleep(1.0 * (attempt + 1))
 
-    async def execute(self, code: str, timeout: int = 1800) -> str:
+    async def execute(self, code: str, timeout: int = 600) -> str:
         """Run *code* inside the persistent namespace of this session."""
         payload = {"session_id": self.session_id,
                    "code": code,
                    "timeout_seconds": timeout}
-        max_retries = 3
+        max_retries = 1
         
         for attempt in range(max_retries):
             try:
@@ -220,14 +224,40 @@ class BiomniRuntimeClient:
 # ----------------------------------------------------------------------
 # Helper utils
 # ----------------------------------------------------------------------
+# Use negative lookahead to prevent matching content that contains nested tags
+# This ensures <solution>...<solution>...</solution> doesn't match the outer pair incorrectly
 _TAG_RGX = {
-    "solution": re.compile(r"<solution>(.*?)</solution>", re.DOTALL | re.IGNORECASE),
-    "execute":  re.compile(r"<execute>(.*?)</execute>",  re.DOTALL | re.IGNORECASE),
+    "solution": re.compile(r"<solution>((?:(?!<solution>|</solution>).)*)</solution>", re.DOTALL | re.IGNORECASE),
+    "execute":  re.compile(r"<execute>((?:(?!<execute>|</execute>).)*)</execute>",  re.DOTALL | re.IGNORECASE),
     "think":    re.compile(r"<think>(.*?)</think>",      re.DOTALL | re.IGNORECASE),
 }
 
 def _parse_first(match_type: str, text: str) -> Optional[str]:
     m = _TAG_RGX[match_type].search(text)
+    return m.group(1).strip() if m else None
+
+def _parse_last(match_type: str, text: str) -> Optional[str]:
+    """Parse the LAST occurrence of the given tag type.
+    
+    This handles cases where the LLM mentions tags in its thinking before actually using them,
+    e.g., '<think>I should now provide the final answer in the required format using the <solution> tags.</think>'
+    """
+    matches = _TAG_RGX[match_type].findall(text)
+    return matches[-1].strip() if matches else None
+
+def _parse_after_think(match_type: str, text: str) -> Optional[str]:
+    """Parse the first occurrence of match_type AFTER </think>.
+    
+    This correctly handles cases where the model mentions tags in its thinking:
+    e.g., '<think>I should use <execute></execute> tags</think><execute>real_code()</execute>'
+    """
+    low = text.lower()
+    think_end = low.find("</think>")
+    if think_end == -1:
+        after = text  # no </think> found, search full text as fallback
+    else:
+        after = text[think_end + len("</think>"):]
+    m = _TAG_RGX[match_type].search(after)
     return m.group(1).strip() if m else None
 
 
@@ -271,8 +301,8 @@ class BiomniCodeActAgent:
         self.max_prompt_len = max_prompt_len
         self.max_iterations = max_iterations
         self.qwen3_enable_thinking = qwen3_enable_thinking
-        # self.prompt_manager = PromptManager(tool_path="verl/workers/agentic/biomni/tool")
-        self.prompt_manager = PromptManager(tool_path="/dfs/scratch1/lansong/SkyRLV1/skyrl-agent/skyrl_agent/agents/biomni_codeact/tool")
+        # Use relative path from this module for portability
+        self.prompt_manager = PromptManager(tool_path=str(Path(__file__).parent / "tool"))
 
         # -- conversation memory ------------------------------------------------
         self.messages = self.prompt_manager.get_initial_messages(prompt, task_name)
@@ -304,20 +334,13 @@ class BiomniCodeActAgent:
         Returns:
             Tuple of (text, logprobs) where logprobs may be None if not available.
         """
-        original_ids = self._build_prompt_input_ids()
-        if len(original_ids) > self.max_prompt_len:
-            reserved = self.sampling_params.get("max_tokens") or self.sampling_params.get("max_generate_length") or self.sampling_params.get("max_new_tokens") or 0
-            available = max(self.max_prompt_len - int(reserved), 0)
-            if available <= 0:
-                return "The context is too long. Exit now.", None
-            input_ids = original_ids[-available:]
-        else:
-            input_ids = original_ids
-        
-        # Final safety check: ensure we never exceed max_prompt_len
+        input_ids = self._build_prompt_input_ids()
         if len(input_ids) > self.max_prompt_len:
-            logger.warning(f"Emergency truncation for instance {self.instance_id}: input_ids={len(input_ids)} exceeds max_prompt_len={self.max_prompt_len}. This should not happen!")
-            input_ids = input_ids[-self.max_prompt_len:]
+            logger.warning(
+                f"Instance {self.instance_id}: Context ({len(input_ids)} tokens) exceeded "
+                f"max_prompt_len ({self.max_prompt_len}). Stopping agent."
+            )
+            return _CONTEXT_OVERFLOW_SENTINEL, None
         
         max_retries = 1
         for _ in range(max_retries):
@@ -367,34 +390,48 @@ class BiomniCodeActAgent:
         for step in range(1, self.max_iterations + 1):
             assistant_reply, step_logprobs = await self._llm_generate()
             
+            # This is a sentinel, not actual model output - stop the loop.
+            # Concatenate to the last user message to avoid consecutive user messages
+            if assistant_reply == _CONTEXT_OVERFLOW_SENTINEL:
+                context_limit_msg = "\n\n[CONTEXT_LIMIT] Context window exceeded. Terminating."
+                if self.messages and self.messages[-1]["role"] == "user":
+                    self.messages[-1]["content"] += context_limit_msg
+                    if self.log and self.log[-1]["role"] == "user":
+                        self.log[-1]["content"] += context_limit_msg
+                else:
+                    # Shouldn't happen in normal flow, but handle gracefully
+                    logger.warning(f"Last user message not found while handling context overflow sentinel.")
+                    logger.warning(f"Last message: {self.messages[-1]}")
+                    self.messages.append({"role": "user", "content": context_limit_msg.strip()})
+                    self.log.append({"role": "user", "content": context_limit_msg.strip()})
+                break
+            
             # Track logprobs for this generation step (for TIS)
             if step_logprobs is not None:
                 self.all_logprobs.append(step_logprobs)
-            
-            if assistant_reply == "The context is too long. Exit now.":
-                self.messages.append({"role": "user", "content": "The context is too long. Exit now."})
-                self.log.append({"role": "user", "content": "The context is too long. Exit now."})
-                break
 
             # -- parse ----------------------------------------------------------
-            if '<execute>' in assistant_reply and '</execute>' not in assistant_reply:
-                assistant_reply += '</execute>'
-            if '<solution>' in assistant_reply and '</solution>' not in assistant_reply:
-                assistant_reply += '</solution>'
-            if '<think>' in assistant_reply and '</think>' not in assistant_reply:
-                assistant_reply += '</think>'
-            if '</think>' in assistant_reply and '<think>' not in assistant_reply:
-                assistant_reply = "<think>" + assistant_reply
+            # No stop sequences -- model generates freely. The format reward teaches
+            # clean stopping. We parse action tags only AFTER </think> to allow the
+            # model to reason about its own format in think blocks.
             
-            if '<execute>' not in assistant_reply and '<solution>' not in assistant_reply and '<think>' not in assistant_reply:
-                # treat the entire message as think
-                assistant_reply = "<think>" + assistant_reply + "</think>"
+            # Prepend <think>\n since vLLM returns text AFTER the generation prompt
+            # which already includes <think>\n. This ensures:
+            # 1. Format validation sees the complete message starting with <think>
+            # 2. Stored message matches what training will see after template encoding
+            if not assistant_reply.lstrip().lower().startswith("<think>"):
+                assistant_reply = "<think>\n" + assistant_reply
             
             self.messages.append({"role": "assistant", "content": assistant_reply})
             self.log.append({"role": "assistant", "content": assistant_reply})
             
-            if '<execute>' in assistant_reply and '<solution>' in assistant_reply:
+            sol = _parse_after_think("solution", assistant_reply)
+            code = _parse_after_think("execute", assistant_reply)
+            
+            
+            if sol and code:
                 self.messages.append({"role": "user", "content": "Multiple tags (<execute> and <solution>) detected.\nPlease include only one of them in your response."})
+                logger.warning(f"Multiple tags (<execute> and <solution>) detected from assistant reply: {assistant_reply}")
                 self.log.append({"role": "user", "content": "Multiple tags (<execute> and <solution>) detected.\nPlease include only one of them in your response."})
                 error_count = sum(
                     1
@@ -402,19 +439,20 @@ class BiomniCodeActAgent:
                     if m["role"] == "user" and "Multiple tags (<execute> and <solution>) detected." in m["content"]
                 )
                 if error_count >= 2:
-                    self.messages.append(
-                        {"role": "user",
-                        "content": "Execution terminated due to repeated parsing errors."}
-                    )
+                    # self.messages.append(
+                    #     {"role": "user",
+                    #     "content": "Execution terminated due to repeated parsing errors."}
+                    # )
+                    logger.warning(f"Execution terminated due to repeated parsing errors.")
+                    logger.warning(f"messages: {self.messages}")
                     break
-                
-            
-            sol = _parse_first("solution", assistant_reply)
+
+
+
             if sol:
                 solution = sol
                 break
             
-            code = _parse_first("execute", assistant_reply)
             if code is not None:
                 try:
                     out = await self.runtime.execute(code)

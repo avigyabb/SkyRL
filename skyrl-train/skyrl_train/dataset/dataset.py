@@ -1,8 +1,25 @@
 import datasets
 from loguru import logger
 import os
-from typing import List
+from collections import Counter
+from typing import List, Optional, Set
 from transformers import PreTrainedTokenizerBase
+
+# --- Task filtering (hardcoded) ---
+# Column name used for task-based filtering
+TASK_NAME_KEY = "task_name"
+
+# Include ONLY these tasks (None = include all). Overrides EXCLUDE_TASKS.
+TARGET_TASKS: Optional[Set[str]] = None
+# Example: TARGET_TASKS = {"rare_disease_diagnosis", "crispr_delivery"}
+
+# Exclude these tasks (None = exclude none). Ignored if TARGET_TASKS is set.
+EXCLUDE_TASKS: Optional[Set[str]] = {"screen_design"}
+# Example: EXCLUDE_TASKS = {"hle"}
+
+# Max examples per task (None = no limit). Applied after include/exclude filtering.
+MAX_EXAMPLES_PER_TASK: Optional[int] = None
+# Example: MAX_EXAMPLES_PER_TASK = 100
 
 
 class PromptDataset:
@@ -53,6 +70,39 @@ class PromptDataset:
         self.dataframe: datasets.Dataset = datasets.concatenate_datasets(loaded_datasets)
 
         logger.info(f"Total dataset size: {len(self.dataframe)}")
+
+        # --- Task-based filtering ---
+        has_task_col = TASK_NAME_KEY in self.dataframe.column_names
+        if has_task_col:
+            task_counts = Counter(self.dataframe[TASK_NAME_KEY])
+            logger.info(f"Task distribution before filtering: {dict(task_counts)}")
+
+        if TARGET_TASKS is not None and has_task_col:
+            self.dataframe = self.dataframe.filter(
+                lambda row: row[TASK_NAME_KEY] in TARGET_TASKS,
+                desc=f"Keeping only target tasks: {TARGET_TASKS}",
+            )
+            logger.info(f"After TARGET_TASKS filter: {len(self.dataframe)} rows")
+        elif EXCLUDE_TASKS is not None and has_task_col:
+            self.dataframe = self.dataframe.filter(
+                lambda row: row[TASK_NAME_KEY] not in EXCLUDE_TASKS,
+                desc=f"Excluding tasks: {EXCLUDE_TASKS}",
+            )
+            logger.info(f"After EXCLUDE_TASKS filter: {len(self.dataframe)} rows")
+
+        if MAX_EXAMPLES_PER_TASK is not None and has_task_col:
+            task_counts = Counter(self.dataframe[TASK_NAME_KEY])
+            keep_indices = []
+            per_task_count: dict[str, int] = {}
+            for idx in range(len(self.dataframe)):
+                task = self.dataframe[idx][TASK_NAME_KEY]
+                per_task_count.setdefault(task, 0)
+                if per_task_count[task] < MAX_EXAMPLES_PER_TASK:
+                    keep_indices.append(idx)
+                    per_task_count[task] += 1
+            self.dataframe = self.dataframe.select(keep_indices)
+            capped_counts = {t: min(c, MAX_EXAMPLES_PER_TASK) for t, c in task_counts.items()}
+            logger.info(f"After MAX_EXAMPLES_PER_TASK={MAX_EXAMPLES_PER_TASK}: {len(self.dataframe)} rows, per-task: {capped_counts}")
 
         # filter out too long prompts
         tokenizer = self.tokenizer

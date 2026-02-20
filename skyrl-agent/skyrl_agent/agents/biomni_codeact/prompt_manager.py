@@ -20,7 +20,7 @@ from skyrl_agent.agents.biomni_codeact.utils import (
 
 class PromptManager:
     def __init__(self, tool_path = "./tool", s3_datalake_uri="s3://biomni-datalake/", 
-                 use_s3_datasets=False, data_lake_path="/dfs/project/bioagentos/biomni_data/data_lake"):
+                 use_s3_datasets=False, data_lake_path="/mnt/biomni_filestore/biomni/biomni_data/data_lake"):
         """
         Initialize the PromptManager.
         

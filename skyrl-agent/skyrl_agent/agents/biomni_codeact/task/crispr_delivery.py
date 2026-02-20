@@ -6,7 +6,7 @@ import numpy as np
 class crispr_delivery(base_task):
     def __init__(self, num_samples=100):
         # Load the benchmark dataset
-        self.df = pd.read_csv('/dfs/user/kexinh/BioAgentOS/data/crispr_delivery.csv')
+        self.df = pd.read_csv('/mnt/biomni_filestore/biomni/biomni_resources/benchmark/crispr_delivery.csv')
         
         # Define the delivery methods and weights for scoring
         self.delivery_methods = {

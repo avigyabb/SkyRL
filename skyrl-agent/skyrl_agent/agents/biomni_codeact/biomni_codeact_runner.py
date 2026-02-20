@@ -82,11 +82,16 @@ class BiomniCodeActTrajectory(BaseTrajectory):
         engine_adapter = _BackendAsEngine(self.infer_engine)
 
         runtime_url = os.getenv("BIOMNI_RUNTIME_URL") or "http://localhost:8000"
-        # Ensure stop tokens are set similarly to Biomni group
+        # Only stop on <|im_end|> (turn delimiter) - NOT on </execute> or </solution>.
+        # This lets the model learn to generate complete turns via format reward,
+        # Note: <|im_end|> is NOT included in output - the template adds it during encoding.
         sampling_params = copy.deepcopy(self.cfg.sampling_params)
-        sampling_params.update({
-            "stop": ["</execute>", "</solution>"],
-        })
+        # sampling_params.update({
+        #     "stop": ["</execute>", "</solution>"],
+        #     "include_stop_str_in_output": True,  # vLLM: keep stop token in output text
+        #     # "no_stop_trim": True,  # sglang equivalent
+        # })
+        sampling_params["stop"] = ["<|im_end|>"]
 
         def _safe_int(val: Optional[int]) -> Optional[int]:
             try:

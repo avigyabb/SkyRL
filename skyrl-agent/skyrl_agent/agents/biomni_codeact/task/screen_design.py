@@ -19,7 +19,7 @@ class screen_design(base_task):
         print(f"Initializing screen_design task with top_k={top_k}")
         
         # Data paths
-        self.data_dir = '/dfs/project/bioagentos/data/screen_data'
+        self.data_dir = '/mnt/biomni_filestore/biomni/biomni_resources/benchmark/screen_data'
         self.screens_dir = os.path.join(self.data_dir, 'BIOGRID-ORCS-ALL-homo_sapiens-1.1.16.screens')
         
         # Load ground truth data

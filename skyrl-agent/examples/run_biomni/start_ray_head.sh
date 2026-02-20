@@ -35,10 +35,13 @@ export RAY_worker_register_timeout_seconds=300
 # export TRANSFORMERS_OFFLINE=1
 
 # Biomni runtime server URL (code-execution backend)
-export BIOMNI_RUNTIME_URL="${BIOMNI_RUNTIME_URL:-http://10.138.0.4:8000}"
+export BIOMNI_RUNTIME_URL="${BIOMNI_RUNTIME_URL:-http://10.138.0.3:8000}"
 
-# Ensure Ray workers can find all package metadata from the shared venv
-export PYTHONPATH="/mnt/biomni_filestore/venvs/skyrl-agent/lib/python3.12/site-packages:${PYTHONPATH:-}"
+# Ensure Ray workers can find all package metadata from the shared venv.
+# Also add workspace source dirs so multiprocessing.spawn children can import
+# skyrl_train/skyrl_agent even if Ray's uv_runtime_env_hook rewrites editable
+# finders to point at stale session paths.
+export PYTHONPATH="/workspace/SkyRL/skyrl-train:/workspace/SkyRL/skyrl-agent:/mnt/biomni_filestore/venvs/skyrl-agent/lib/python3.12/site-packages:${PYTHONPATH:-}"
 
 # Use ray directly from the venv to avoid uv dependency sync overhead
 VENV_BIN=/mnt/biomni_filestore/venvs/skyrl-agent/bin

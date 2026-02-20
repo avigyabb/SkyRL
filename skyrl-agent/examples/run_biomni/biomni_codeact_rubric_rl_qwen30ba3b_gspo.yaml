@@ -30,10 +30,10 @@ generator:
     model_name: Qwen/Qwen3-30B-A3B-Thinking-2507
     api_url: http://localhost:30000
 
-  num_trajectories: 8
-  max_iterations: 1
+  num_trajectories: 5
+  max_iterations: 50
   # Keep prompt budget aligned with trainer.max_prompt_length & vLLM max_model_len.
-  max_prompt_length: 49152
+  max_prompt_length: 40960
   sampling_params:
     temperature: 1.0
     top_p: 1.0

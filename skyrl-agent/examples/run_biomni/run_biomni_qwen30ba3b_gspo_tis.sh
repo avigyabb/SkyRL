@@ -11,9 +11,14 @@ export OPENAI_API_KEY
 export NCCL_TIMEOUT=28800
 export NCCL_DEBUG=INFO
 export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_SOCKET_IFNAME=enp0s19            # force NCCL to use host network (10.138.0.x)
+export NCCL_IB_DISABLE=1                     # GCP standard VMs — no InfiniBand
+export NCCL_NET_GDR_LEVEL=LOC                # disable GPUDirect RDMA
 
 # Help with CUDA memory fragmentation during weight sync
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+export WANDB_API_KEY="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"
 
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 export VLLM_DISABLE_COMPILE_CACHE=1
@@ -21,26 +26,25 @@ export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
 export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1
 export RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES=1
 
-export UV_CACHE_DIR=/dfs/scratch1/lansong/uv_cache
+export UV_CACHE_DIR=/mnt/biomni_filestore/uv_cache
 export XDG_CACHE_HOME=$UV_CACHE_DIR
-export UV_PROJECT_ENVIRONMENT=/dfs/scratch1/lansong/venvs/skyrl-agent
-export HOME=/dfs/scratch1/lansong
+export UV_PROJECT_ENVIRONMENT=/mnt/biomni_filestore/venvs/skyrl-agent
+export HOME=/workspace
 export RAY_RUNTIME_ENV_HOOK=ray._private.runtime_env.uv_runtime_env_hook.hook
 export UV_HTTP_TIMEOUT=1800
-export BIOMNI_RUNTIME_URL="http://172.24.75.90:8000"
+export BIOMNI_RUNTIME_URL="http://10.138.0.3:8000"
 
 # export VLLM_USE_V1=0
 
-PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo-debug"
+PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo"
 EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-16gpus-gspo-tis-eps3e4-4e4"
 
-DATA_PATH="/dfs/scratch1/lansong/BioAgentOS/biomni_env_screen/data/rl_data/skyrl_agent"
+DATA_PATH="/mnt/local/biomni/skyrl-data"
 TRAIN_FILE="$DATA_PATH/train.parquet"
 VAL_FILE="$DATA_PATH/val.parquet"
 
-CKPT_PATH="/dfs/scratch1/lansong/models/skyrlagent"
-# Local fine-tuned model
-MODEL_NAME="/dfs/scratch1/lansong/models/qwen/biomni-r1-30b-a3b-sft-v0/global_step_46"
+CKPT_PATH="/mnt/biomni_filestore/models/skyrlagent"
+MODEL_NAME="/mnt/biomni_filestore/model_weights/biomni-r1-30b-a3b-sft-v0/global_step_46"
 
 # -----------------------------
 # Cluster / parallelism
@@ -79,7 +83,8 @@ USE_KL_LOSS=false
 KL_LOSS_COEF=0.0
 
 # TIS (for rollout-vs-train logprob mismatch)
-USE_TIS=true
+# USE_TIS=true
+USE_TIS=false
 TIS_IMP_RATIO_CAP=2.0
 # Recommended for GSPO: sequence-level TIS to avoid token-wise variance (requires code diff below)
 TIS_MODE="sequence"   # token|sequence
@@ -94,14 +99,14 @@ TEMPERATURE=1.0
 TOP_P=1.0
 FLASH_ATTN=true
 
-AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rl_qwen30ba3b_gspo_debug.yaml"
+AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rl_qwen30ba3b_gspo.yaml"
 
 SKYRL_AGENT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 pushd "$SKYRL_AGENT_DIR" >/dev/null
 
 LOGGER="['console','wandb']"
 
-PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/SkyRLV1/skyrl-agent/examples/run_biomni/.env.biomni \
+PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-agent/examples/run_biomni/.env.biomni \
   -m skyrl_agent.integrations.skyrl_train.skyrl_train_main \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$VAL_FILE']" \
@@ -153,10 +158,11 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   generator.sampling_params.logprobs=0 \
   generator.max_input_length=$MAX_PROMPT_LENGTH \
   +generator.engine_init_kwargs.max_model_len=$VLLM_MAX_MODEL_LEN \
+  generator.max_num_seqs=256 \
   generator.enforce_eager=true \
   trainer.eval_before_train=true \
   trainer.eval_interval=-1 \
-  trainer.ckpt_interval=8 \
+  trainer.ckpt_interval=4 \
   trainer.ckpt_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME" \
   trainer.project_name="$PROJECT_NAME" \
   trainer.run_name="$EXPERIMENT_NAME" \
