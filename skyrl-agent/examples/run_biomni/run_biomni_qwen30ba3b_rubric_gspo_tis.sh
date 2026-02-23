@@ -59,7 +59,7 @@ fi
 # -----------------------------
 # User-configurable paths
 # -----------------------------
-PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo"
+PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo-rubric-fix"
 EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-8gpus-rubric-gspo-no-tis-eps3e4-4e4"
 
 DATA_PATH="/mnt/local/biomni/skyrl-data"

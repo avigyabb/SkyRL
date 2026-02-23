@@ -385,32 +385,76 @@ class BiomniRubricRewardAdapter:
         """
         Evaluate the trajectory using the task-specific rubric and LLM judge.
         Returns the rubric scores normalized to max 5.
+        Includes "rubric_eval_failed" bool to signal upstream masking.
         """
+        import time as _time
+
+        _FAILED_RESULT = {
+            "rubric_reward": 0.0,
+            "output_grading": 0.0,
+            "methodology_knowhow": 0.0,
+            "code_data_handling": 0.0,
+            "reasoning_coherence": 0.0,
+            "rubric_total": 0.0,
+            "rubric_rationale": "",
+            "rubric_weaknesses": [],
+            "rubric_eval_failed": True,
+        }
+
         try:
-            # Get the rubric from the task
             if not hasattr(task, 'get_rubric'):
                 logger.warning(f"Task {task_name} does not have get_rubric method")
-                return {
-                    "rubric_reward": 0.0,
-                    "output_grading": 0.0,
-                    "methodology_knowhow": 0.0,
-                    "code_data_handling": 0.0,
-                    "reasoning_coherence": 0.0,
-                    "rubric_total": 0.0,
-                    "rubric_rationale": "Task does not support rubric evaluation",
-                    "rubric_weaknesses": []
-                }
+                result = _FAILED_RESULT.copy()
+                result["rubric_rationale"] = "Task does not support rubric evaluation"
+                return result
             
             rubric = task.get_rubric(instance_id, parsed_output, raw_output)
             rubric = rubric + "\n" + RUBRIC_MODIFIER
             
-            # Invoke the LLM judge
             judge_messages = [
                 SystemMessage(content=SYSTEM_PROMPT),
                 HumanMessage(content=rubric)
             ]
             
-            eval_output: CriticMetrics = cls._llm_judge.invoke(judge_messages)
+            max_retries = 3
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    if attempt < max_retries - 1:
+                        eval_output: CriticMetrics = cls._llm_judge.invoke(judge_messages)
+                    else:
+                        # Last retry: fall back to judge without thinking to avoid
+                        # the "structured output + thinking" incompatibility
+                        logger.warning(
+                            f"Rubric eval attempt {attempt + 1}/{max_retries} for {task_name}: "
+                            f"falling back to non-thinking judge"
+                        )
+                        fallback_llm = ChatAnthropic(
+                            model=cls._llm_judge.bound.first.model if hasattr(cls._llm_judge, 'bound') else "claude-sonnet-4-5",
+                            temperature=1.0,
+                            max_tokens=32768,
+                        )
+                        fallback_judge = fallback_llm.with_structured_output(CriticMetrics)
+                        eval_output = fallback_judge.invoke(judge_messages)
+                    break
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        backoff = 2 ** (attempt + 1)
+                        logger.warning(
+                            f"Rubric eval attempt {attempt + 1}/{max_retries} failed for {task_name}: {e}. "
+                            f"Retrying in {backoff}s..."
+                        )
+                        _time.sleep(backoff)
+                    else:
+                        logger.warning(
+                            f"Rubric eval failed after {max_retries} attempts for {task_name}: {e}"
+                        )
+                        import traceback
+                        traceback.print_exc()
+                        result = _FAILED_RESULT.copy()
+                        result["rubric_rationale"] = f"Error during evaluation after {max_retries} retries: {str(e)}"
+                        return result
             
             # Validate scores are within bounds
             assert 0 <= eval_output.output_grading <= 20, f"output_grading out of bounds: {eval_output.output_grading}"
@@ -419,7 +463,6 @@ class BiomniRubricRewardAdapter:
             assert 0 <= eval_output.reasoning_coherence <= 10, f"reasoning_coherence out of bounds: {eval_output.reasoning_coherence}"
             assert 0 <= eval_output.total <= 50, f"total out of bounds: {eval_output.total}"
             
-            # Verify itemized scores add up to total
             computed_total = (
                 eval_output.output_grading + 
                 eval_output.methodology_knowhow + 
@@ -434,7 +477,6 @@ class BiomniRubricRewardAdapter:
                 )
                 eval_output.total = computed_total
             
-            # Normalize total score to 5 (divide by 10)
             rubric_reward = eval_output.total / 10.0
             
             return {
@@ -445,23 +487,17 @@ class BiomniRubricRewardAdapter:
                 "reasoning_coherence": eval_output.reasoning_coherence,
                 "rubric_total": eval_output.total,
                 "rubric_rationale": eval_output.rationale,
-                "rubric_weaknesses": eval_output.weaknesses
+                "rubric_weaknesses": eval_output.weaknesses,
+                "rubric_eval_failed": False,
             }
             
         except Exception as e:
             logger.warning(f"Error in rubric evaluation for {task_name}: {e}")
             import traceback
             traceback.print_exc()
-            return {
-                "rubric_reward": 0.0,
-                "output_grading": 0.0,
-                "methodology_knowhow": 0.0,
-                "code_data_handling": 0.0,
-                "reasoning_coherence": 0.0,
-                "rubric_total": 0.0,
-                "rubric_rationale": f"Error during evaluation: {str(e)}",
-                "rubric_weaknesses": []
-            }
+            result = _FAILED_RESULT.copy()
+            result["rubric_rationale"] = f"Error during evaluation: {str(e)}"
+            return result
 
     @classmethod
     def compute_rewards(
@@ -507,7 +543,8 @@ class BiomniRubricRewardAdapter:
             "reasoning_coherence": 0.0,
             "rubric_total": 0.0,
             "rubric_rationale": "",
-            "rubric_weaknesses": []
+            "rubric_weaknesses": [],
+            "rubric_eval_failed": False,
         }
         
         logger.info("-----------Computing rubric reward for task: %s, instance_id: %s-------------", task_name, instance_id)
@@ -575,11 +612,16 @@ class BiomniRubricRewardAdapter:
         logger.info("total_reward: %s (gt=%s + rubric=%s + ft=%s)", 
                    total_reward, gt_reward, rubric_reward, ft_reward)
         
+        rubric_eval_failed = rubric_results.get("rubric_eval_failed", False)
+        if rubric_eval_failed:
+            logger.warning("Rubric evaluation failed for task=%s instance=%s; trajectory will be masked from training", task_name, instance_id)
+
         return {
             "score": total_reward,
             "gt_reward": gt_reward,
             "rubric_reward": rubric_reward,
             "ft_reward": ft_reward,
+            "rubric_eval_failed": rubric_eval_failed,
             "rubric_details": {
                 "output_grading": rubric_results["output_grading"],
                 "methodology_knowhow": rubric_results["methodology_knowhow"],

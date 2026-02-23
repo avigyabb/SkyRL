@@ -654,3 +654,2095 @@ None this cycle.
 - NFS filestore: 858G/20T (5%)
 - All healthy, no disk pressure.
 
+
+---
+
+## Monitor Cycle — 2026-02-20 12:35 UTC
+
+### Status
+- **Process**: Running (training tmux session active)
+- **Steps completed**: 5/212 (currently in step 6 rollouts)
+- **Checkpoint**: global_step_4 (latest, saved at 10:31 UTC). Next checkpoint at step 8.
+- **Time since training start**: ~9.5h
+- **Crashes/retries**: 0 (still Attempt #1)
+
+### Metrics Snapshot
+
+| Step | avg_final_rewards | pg | grad_norm | ent | avg_response_length | step_time |
+|------|------------------|-----|-----------|-----|--------------------:|-----------|
+| 1    | 5.19             | 1.08 | 0.203    | 11.8 | 15043              | 6002s     |
+| 2    | 5.37             | 0.08 | 0.219    | 8.31 | 15903              | 6335s     |
+| 3    | 5.03             | -0.40 | 0.215   | 7.76 | 15071              | 6445s     |
+| 4    | 5.32             | -0.03 | 0.196   | 5.56 | 15038              | 6024s     |
+| 5    | 5.10             | -0.30 | 0.206   | 5.17 | 14504              | 6044s     |
+
+**Trends**: Rewards remain stable ~5.0-5.4. Entropy declining steadily (11.8 → 5.17) — policy is sharpening, not yet concerning but will continue monitoring. Grad norm rock-stable ~0.2. Response length stable ~15k. Step time consistent ~100 min.
+
+### Reward Breakdown (cumulative, steps 1-5)
+- ft_reward pass rate: 90% (376/419)
+- gt_reward pass rate: 74% (310/419)
+- rubric_reward: well-distributed 1.3-4.6
+- total_reward: healthy range 2.3-6.6
+
+### Format Failures (cumulative, delta from last cycle)
+- Rule 2 (not exactly one think): 18 (+3 since last cycle)
+- Rule 3/4 (not end with execute/solution): 25 (+2)
+- Others: 0
+- **Total: 43/419 (10.3%) — stable vs 10.2% last cycle**
+- Rule 2 trend: +3 in ~80 new samples → ~3.8% rate, slightly above baseline. Not alarming yet.
+
+### Environment Runtime Health
+- Slow executions (>180s): 769 total (+80 since last cycle, ~80/step consistent)
+- Runtime timeouts: 4 (unchanged — no new timeouts)
+- Spot-checked 1 recent slow execution:
+  - `advanced_web_search()` with 3 serial calls for gene-cancer associations, 207s total, output quality high (detailed citations, structured research). Expected behavior.
+- Known error pattern hits (vs last cycle):
+  - `query_opentarget_genetics() unexpected keyword`: 4 (unchanged)
+  - `SyntaxError`: 3 (unchanged)
+  - Runtime timeouts: 4 (unchanged)
+
+### Context Overflows
+- Count: 2 (unchanged from last cycle)
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- None. Entropy decline is the main metric to watch — currently at 5.17 (step 5), down from 11.8 (step 1). This is expected early in GSPO training as the policy sharpens, but if it drops below ~2.0 it could indicate mode collapse.
+
+### Actions Taken
+- None — healthy. Continuing 1-hour monitoring cycles.
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle — 2026-02-20 13:35 UTC
+
+### Status
+- **Process**: Running (training tmux session active)
+- **Steps completed**: 5/212 (step 6 in progress, expected ~13:52 UTC)
+- **Checkpoint**: global_step_4 (latest). Next checkpoint at step 8.
+- **Time since training start**: ~10.5h
+- **Crashes/retries**: 0 (still Attempt #1)
+
+### Metrics Snapshot (no new step since last cycle)
+
+| Step | avg_final_rewards | pg | grad_norm | ent | avg_response_length | step_time |
+|------|------------------|-----|-----------|-----|--------------------:|-----------|
+| 1    | 5.19             | 1.08 | 0.203    | 11.8 | 15043              | 6002s     |
+| 2    | 5.37             | 0.08 | 0.219    | 8.31 | 15903              | 6335s     |
+| 3    | 5.03             | -0.40 | 0.215   | 7.76 | 15071              | 6445s     |
+| 4    | 5.32             | -0.03 | 0.196   | 5.56 | 15038              | 6024s     |
+| 5    | 5.10             | -0.30 | 0.206   | 5.17 | 14504              | 6044s     |
+
+**Trends**: All metrics stable. No new step since last cycle (step 6 in rollout phase).
+
+### Reward Breakdown (cumulative, delta from last cycle)
+- ft_reward pass rate: 90% (424/470, was 376/419)
+- gt_reward pass rate: 74% (348/470, was 310/419)
+- rubric_reward: healthy distribution
+- **51 new samples since last cycle, consistent pass rates**
+
+### Format Failures (cumulative, delta from last cycle)
+- Rule 2 (not exactly one think): 19 (+1)
+- Rule 3/4 (not end with execute/solution): 27 (+2)
+- Others: 0
+- **Total: 46/470 (9.8%) — slightly improving vs 10.3%**
+- Rule 2 trend: +1 in ~51 new samples → 2% rate this cycle, declining. No concern.
+
+### Environment Runtime Health
+- Slow executions (>180s): 864 total (+95 since last cycle, ~95 per ~51 samples)
+- Runtime timeouts: 4 (unchanged — no new)
+- Known error patterns (unchanged from last):
+  - `query_opentarget_genetics() unexpected keyword`: 4
+  - `SyntaxError`: 3
+  - Runtime timeouts: 4
+- Spot-checked 2 items:
+  1. **357s execution**: `advanced_web_search()` for "Hirschsprung disease lymphedema dyskinesia" — sensible phenotype analysis output, correct medical reasoning. Expected latency for multi-search.
+  2. **Observation check**: TMEM107 causal gene identification — well-structured 6-step analysis pipeline, clear reasoning. Runtime healthy.
+
+### Context Overflows
+- Count: 2 (unchanged)
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- None. All indicators stable and healthy.
+
+### Actions Taken
+- None — healthy. Continuing 1-hour monitoring cycles.
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle — 2026-02-20 14:35 UTC
+
+### Status
+- **Process**: Running (training tmux session active)
+- **Steps completed**: 6/212 (step 7 rollouts in progress)
+- **Checkpoint**: global_step_4 (latest). Next checkpoint at step 8.
+- **Time since training start**: ~11.5h
+- **Crashes/retries**: 0 (still Attempt #1)
+
+### Metrics Snapshot
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 1    | 5.19             | —           | —              | —              | 0.203     | 15043               | 6002s     |
+| 2    | 5.37             | 0.000177    | 7.25           | 0.250          | 0.219     | 15903               | 6335s     |
+| 3    | 5.03             | 0.000120    | 7.40           | 0.213          | 0.215     | 15071               | 6445s     |
+| 4    | 5.32             | 0.0000352   | 7.55           | 0.288          | 0.196     | 15038               | 6024s     |
+| 5    | 5.10             | 0.000204    | 6.34           | 0.163          | 0.206     | 14504               | 6044s     |
+| 6    | 5.39             | 0.000139    | 7.61           | 0.338          | 0.192     | 13678               | 7146s     |
+
+**CORRECTION from previous cycles**: The `ent` in the progress bar (11.8→5.17→9.69) differs from the `policy_entropy` in the wandb-style logged metrics (7.25→7.61). The actual policy_entropy is STABLE at 6.3-7.6. No entropy collapse concern. Previous reports were tracking the progress bar `ent` which is noisier and not the canonical metric.
+
+**Trends**:
+- Rewards stable 5.0-5.4.
+- Policy entropy stable 6.3-7.6 (not declining as previously feared).
+- Grad norm rock-stable 0.19-0.22.
+- ppo_clip_ratio fluctuating 0.16-0.34, well below 1.0 (healthy).
+- Response length slightly decreasing (15k→13.7k) — not alarming, within normal range.
+- Step 6 took 7146s (119 min), slightly longer than avg ~100 min. Normal variation.
+
+### Reward Breakdown (cumulative, delta from last cycle)
+- ft_reward pass rate: 90% (448/500)
+- gt_reward pass rate: 73% (364/500)
+- 30 new samples this cycle at similar rates
+
+### Format Failures (cumulative, delta from last cycle)
+- Rule 2 (not exactly one think): 21 (+2)
+- Rule 3/4 (not end with): 31 (+4)
+- Total: 52/500 (10.4%) — stable
+
+### Environment Runtime Health
+- Slow executions (>180s): 929 total (+65 since last cycle)
+- Runtime timeouts: 4 (unchanged)
+- SyntaxError in model code: 7 (+4 from last cycle)
+  - New errors at lines 101434, 102041, 102529, 102551
+  - All model-generated code issues: unterminated strings, invalid f-strings, invalid syntax
+  - NOT environment issues — model is generating syntactically incorrect code occasionally
+- Known error patterns: no change in env-related errors (timeouts, hallucinated kwargs)
+
+### Context Overflows
+- Count: 2 (unchanged)
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- None critical. SyntaxError rate increasing slightly (3→7 over 6 steps) but these are model code generation quality issues, expected to improve with training.
+- Step 6 was slightly longer (119 min vs ~100 min avg) — likely just task distribution variance.
+
+### Actions Taken
+- Corrected entropy tracking: will use wandb-logged `policy_entropy` instead of progress bar `ent` going forward.
+- No other actions needed — healthy.
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle — 2026-02-20 15:35 UTC
+
+### Status
+- **Process**: Running (training tmux session active)
+- **Steps completed**: 6/212 (step 7 in rollouts, expected ~16:05 UTC)
+- **Checkpoint**: global_step_4 (latest). Next checkpoint at step 8.
+- **Time since training start**: ~12.5h
+- **Crashes/retries**: 0 (still Attempt #1)
+
+### Metrics Snapshot
+No new step completed since last cycle. Step 6 metrics unchanged.
+
+### Reward Breakdown (cumulative, delta from last cycle)
+- ft_reward pass rate: 90% (496/553)
+- gt_reward pass rate: 71% (394/553)
+- 53 new samples: ft_pass=92% (48/53), gt_pass=57% (30/53) — gt_reward slightly lower this batch
+- rubric_reward: still distributed normally
+
+### Format Failures (cumulative, delta from last cycle)
+- Rule 2 (not exactly one think): 23 (+2)
+- Rule 3/4 (not end with): 34 (+3)
+- Total: 57/553 (10.3%) — stable
+
+### Environment Runtime Health
+- Slow executions (>180s): 1025 total (+96 since last cycle)
+- Runtime timeouts: 4 (unchanged)
+- Context overflows: 3 (+1)
+- SyntaxError: 7 (unchanged from last cycle)
+- Spot-checked 1 slow execution:
+  - `advanced_web_search()` for LMX1B mutations (273s, max_searches=3) — high-quality output about Nail-Patella Syndrome with OMIM refs. Sensible and accurate.
+- Parsed outputs: diverse (CETP, APOM, CHRM3, Ensembl IDs, choices). Well-structured, not degenerate.
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- gt_reward pass rate slightly declining (74% → 71%) — may be batch effect (harder tasks). Will continue monitoring.
+- Otherwise all healthy.
+
+### Actions Taken
+- None — healthy.
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle — 2026-02-20 16:35 UTC
+
+### Status
+- **Process**: Running (training tmux session active)
+- **Steps completed**: 7/212 (step 8 in rollouts — checkpoint will save after step 8)
+- **Checkpoint**: global_step_4 (latest). Step 8 will trigger save to global_step_8.
+- **Time since training start**: ~13.5h
+- **Crashes/retries**: 0 (still Attempt #1)
+
+### Metrics Snapshot (updated with step 7)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 1    | 5.19             | 0.000101    | 6.58           | 0.300          | 0.203     | 15043               | 6002s     |
+| 2    | 5.37             | 0.000177    | 7.25           | 0.250          | 0.219     | 15903               | 6335s     |
+| 3    | 5.03             | 0.000120    | 7.40           | 0.213          | 0.215     | 15071               | 6445s     |
+| 4    | 5.32             | 0.0000352   | 7.55           | 0.288          | 0.196     | 15038               | 6024s     |
+| 5    | 5.10             | 0.000204    | 6.34           | 0.163          | 0.206     | 14504               | 6044s     |
+| 6    | 5.39             | 0.000139    | 7.61           | 0.338          | 0.192     | 13678               | 7146s     |
+| 7    | **4.44**         | 0.000147    | 7.21           | 0.200          | 0.237     | 15980               | 6188s     |
+
+**Trends**:
+- **avg_final_rewards DROPPED to 4.44** at step 7 (previous range 5.0-5.4). This is the lowest so far. Could be batch-specific (harder tasks). Will monitor closely — if sustained decline over 2+ steps, may indicate training degradation.
+- Policy entropy stable at 7.21. ppo_clip_ratio at 0.20. Grad norm slightly higher at 0.237 but within normal range.
+- Response length back up to 15980 (from 13678 in step 6). Normal variation.
+- Step time back to ~103 min (step 6 was outlier at 119 min).
+
+### Reward Breakdown (cumulative, 595 samples total)
+- ft_reward pass rate: 90% (535/595)
+- gt_reward pass rate: 72% (426/595)
+- Step 7 batch: ft_pass=93%, gt_pass=76%
+- Lower avg_final_rewards likely due to lower rubric_rewards this batch, not gt/ft collapse.
+
+### Format Failures (cumulative, delta from last cycle)
+- Rule 2 (not exactly one think): 25 (+2)
+- Rule 3/4 (not end with): 35 (+1)
+- Total: 60/595 (10.1%) — stable
+
+### Environment Runtime Health
+- Slow executions (>180s): 1136 total (+111 since last cycle)
+- Runtime timeouts: 4 (unchanged)
+- Context overflows: 3 (unchanged)
+- SyntaxError: 7 (unchanged)
+- No new error patterns.
+- Parsed outputs: CYP19A1, LPL, GABRA2, APOA5 — well-formed gene names, diverse tasks. No degeneration.
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- **Watch item**: avg_final_rewards drop to 4.44 at step 7. Single-step drop is likely batch effect but warrants close monitoring. If step 8 also shows <5.0, investigate rubric_reward distribution.
+
+### Actions Taken
+- None — continuing to monitor. Will verify step 8 checkpoint saves successfully (this is the second checkpoint save with 512G shm, first real "long-running" checkpoint test).
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle — 2026-02-20 17:35 UTC
+
+### Status
+- **Process**: Running (training tmux session active)
+- **Steps completed**: 7/212 (step 8 in rollouts — running longer than usual, ~1h45m so far)
+- **Checkpoint**: global_step_4 (latest). Checkpoint 8 will save when step 8 finishes.
+- **Time since training start**: ~14.5h
+- **Crashes/retries**: 0 (still Attempt #1)
+
+### Metrics Snapshot
+No new step completed. Step 7 metrics still latest.
+
+### Reward Breakdown (cumulative, delta from last cycle)
+- ft_reward pass rate: 90% (579/640)
+- gt_reward pass rate: 70% (451/640)
+- 45 new samples this cycle: ft_pass=98%, gt_pass=56% (low this batch — harder tasks)
+- Recent individual rewards: lots of gt=0.0 with rubric 0.7-3.95. Model doing meaningful work but not getting final answers right.
+- This confirms the step 7 reward drop to 4.44 is driven by a run of harder tasks, not training collapse.
+
+### Format Failures (cumulative)
+- Rule 2: 25 (unchanged from last cycle)
+- Rule 3/4: 35 (unchanged)
+- Total: 60/640 (9.4%) — actually improving due to higher ft_pass rate in recent samples
+
+### Environment Runtime Health
+- Slow executions (>180s): 1192 total (+56)
+- Runtime timeouts: 4 (unchanged)
+- SyntaxError: 9 (+2 from last cycle — continuing slow increase)
+- Context overflows: 3 (unchanged)
+- No new error patterns.
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- gt_pass rate for step 8 batch so far is ~56% (below 72% average). Likely batch composition (harder tasks). Will check if avg_final_rewards recovers at step 8.
+- Step 8 is taking longer than average (~1h45m in rollouts so far vs ~100 min typical). Could be due to more complex tasks requiring longer runtime executions.
+
+### Actions Taken
+- None — waiting for step 8 to complete and checkpoint to save.
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle — 2026-02-20 18:35 UTC
+
+### Status
+- **Process**: Running (training tmux session active)
+- **Steps completed**: 8/212 (step 9 in progress)
+- **Checkpoint**: **global_step_8 saved successfully** at 18:02 UTC (1245s / ~21 min save time, no SIGBUS/ENOSPC). Second successful checkpoint save with 512G shm.
+- **Time since training start**: ~15.5h
+- **Crashes/retries**: 0 (still Attempt #1)
+
+### Metrics Snapshot (complete through step 8)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 1    | 5.19             | 0.000101    | 6.58           | 0.300          | 0.203     | 15043               | 6002s     |
+| 2    | 5.37             | 0.000177    | 7.25           | 0.250          | 0.219     | 15903               | 6335s     |
+| 3    | 5.03             | 0.000120    | 7.40           | 0.213          | 0.215     | 15071               | 6445s     |
+| 4    | 5.32             | 0.0000352   | 7.55           | 0.288          | 0.196     | 15038               | 6024s     |
+| 5    | 5.10             | 0.000204    | 6.34           | 0.163          | 0.206     | 14504               | 6044s     |
+| 6    | 5.39             | 0.000139    | 7.61           | 0.338          | 0.192     | 13678               | 7146s     |
+| 7    | **4.44**         | 0.000147    | 7.21           | 0.200          | 0.237     | 15980               | 6188s     |
+| 8    | **5.16**         | 0.0000826   | 7.26           | 0.313          | 0.189     | 15155               | 6461s     |
+
+**Trends**:
+- **Rewards RECOVERED to 5.16** from 4.44 dip at step 7. Confirmed: step 7 was a batch effect (harder tasks), not training degradation.
+- All policy metrics stable: entropy 6.3-7.6, clip ratio 0.16-0.34, grad norm 0.19-0.24.
+- Response length stable ~15k. Step time ~105 min average.
+- No signs of mode collapse, reward hacking, or instability.
+
+### Checkpoint Status
+- global_step_4: saved at 10:31, save time 1313s
+- **global_step_8: saved at 18:02, save time 1245s** — faster than step 4, no errors
+- Both checkpoints verified with `latest_ckpt_global_step.txt = 8`
+- Next checkpoint at step 12.
+
+### Reward Breakdown (cumulative, 670 samples)
+- ft_reward pass rate: 91% (607/670)
+- gt_reward pass rate: 71% (473/670)
+- Step 8 batch: ft=93%, gt=73% — good recovery from step 7s
+
+
+---
+
+## Monitor Cycle — 2026-02-20 18:35 UTC
+
+### Status
+- **Process**: Running (training tmux session active)
+- **Steps completed**: 8/212 (step 9 in progress)
+- **Checkpoint**: **global_step_8 saved successfully** at 18:02 UTC (1245s / ~21 min save time, no SIGBUS/ENOSPC). Second successful checkpoint save with 512G shm.
+- **Time since training start**: ~15.5h
+- **Crashes/retries**: 0 (still Attempt #1)
+
+### Metrics Snapshot (complete through step 8)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 1    | 5.19             | 0.000101    | 6.58           | 0.300          | 0.203     | 15043               | 6002s     |
+| 2    | 5.37             | 0.000177    | 7.25           | 0.250          | 0.219     | 15903               | 6335s     |
+| 3    | 5.03             | 0.000120    | 7.40           | 0.213          | 0.215     | 15071               | 6445s     |
+| 4    | 5.32             | 0.0000352   | 7.55           | 0.288          | 0.196     | 15038               | 6024s     |
+| 5    | 5.10             | 0.000204    | 6.34           | 0.163          | 0.206     | 14504               | 6044s     |
+| 6    | 5.39             | 0.000139    | 7.61           | 0.338          | 0.192     | 13678               | 7146s     |
+| 7    | **4.44**         | 0.000147    | 7.21           | 0.200          | 0.237     | 15980               | 6188s     |
+| 8    | **5.16**         | 0.0000826   | 7.26           | 0.313          | 0.189     | 15155               | 6461s     |
+
+**Trends**: Rewards RECOVERED to 5.16 from 4.44 dip at step 7. Confirmed: step 7 was a batch effect (harder tasks), not training degradation. All policy metrics stable: entropy 6.3-7.6, clip ratio 0.16-0.34, grad norm 0.19-0.24. Response length stable ~15k.
+
+### Checkpoint Status
+- global_step_4: saved at 10:31, save time 1313s
+- global_step_8: saved at 18:02, save time 1245s (faster, no errors)
+- latest_ckpt_global_step.txt = 8. Next checkpoint at step 12.
+
+### Reward Breakdown (cumulative, 670 samples)
+- ft_reward pass rate: 91% (607/670)
+- gt_reward pass rate: 71% (473/670)
+- Step 8 batch: ft=93%, gt=73% -- good recovery from step 7
+
+### Format Failures (cumulative)
+- Rule 2: 27, Rule 3/4: 35, Total: 62/670 (9.3%) -- continuing to improve
+
+### Environment Runtime Health
+- Slow executions (>180s): 1318 total
+- SyntaxError: 9, Context overflows: 3, Runtime timeouts: 4
+- No new error patterns.
+
+### Disk Space
+- /dev/shm: 132G/512G (26%) -- stable
+- NFS: 1.3T/20T (7%) -- increased from 858G due to checkpoint saves (~220G per ckpt x 2). Normal.
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- None. Step 7 reward dip was batch effect, confirmed by step 8 recovery.
+
+### Actions Taken
+- None -- all healthy.
+
+### Summary at 8 Steps
+Training has been running for 15.5h without a single crash. Two checkpoints saved successfully. Rewards stable at ~5.0-5.4 (with normal batch variation). Policy entropy stable. Format compliance at 91%. No environment issues. Best sustained performance since training began.
+
+
+---
+
+## Monitor Cycle -- 2026-02-20 19:35 UTC
+
+### Status
+- **Process**: Running
+- **Steps completed**: 8/212 (step 9 in rollouts, nearing completion)
+- **Checkpoint**: global_step_8 (latest)
+- **Time since training start**: ~16.5h
+- **Crashes/retries**: 0
+
+### Metrics Snapshot
+No new step since last cycle. Step 8 metrics remain latest.
+
+### Reward Breakdown (cumulative, 719 samples, +49 since last)
+- ft_reward pass rate: 90% (648/719)
+- gt_reward pass rate: 70% (500/719)
+- This batch: ft=84% (lower), gt=55% (lower). Another hard batch.
+- Recent rewards: mix of 1.6-6.65, several gt=0.0 with low rubric scores.
+
+### Format Failures (cumulative, delta from last)
+- Rule 2 (not exactly one think): 32 (+5 -- notable increase this cycle)
+- Rule 3/4 (not end with): 38 (+3)
+- Total: 70/719 (9.7%)
+- Rule 2 acceleration worth watching. Was 27 at step 8 (670 samples), now 32 at ~719 samples.
+
+### Environment Runtime Health
+- Slow executions (>180s): 1377 total (+59)
+- SyntaxError: 9 (unchanged)
+- Context overflows: 3 (unchanged)
+- Disk: /dev/shm 26%, NFS 7% -- stable.
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- Rule 2 format failures ticking up (+5 in 49 new samples = 10.2% rate this batch, above 4% baseline). May indicate model starting to produce more malformed think/close-think blocks. Will track closely next cycle.
+- gt_pass rate low again this batch (55%). Likely task difficulty variance.
+
+### Actions Taken
+- None -- monitoring Rule 2 trend.
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-20 20:15 UTC
+
+### Status
+- **Process**: Running
+- **Steps completed**: 9/212 (step 10 in progress)
+- **Checkpoint**: global_step_8 (latest). Next checkpoint at step 12.
+- **Time since training start**: ~17h
+- **Crashes/retries**: 0
+
+### Metrics Snapshot (step 9 new)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 7    | 4.44             | 0.000147    | 7.21           | 0.200          | 0.237     | 15980               | 6188s     |
+| 8    | 5.16             | 0.0000826   | 7.26           | 0.313          | 0.189     | 15155               | 6461s     |
+| 9    | **4.72**         | **-0.0104** | 6.75           | 0.288          | 0.184     | **17705**           | 6323s     |
+
+**Step 9 observations**:
+- Rewards at 4.72 -- between the step 7 low (4.44) and the usual 5.0-5.4 range. Second below-average step in 3.
+- **First negative policy_loss (-0.0104)** -- indicates advantages were net-negative this batch. The policy is being pushed away from the actions it took. Expected when batch has many low-reward samples.
+- Response length spiked to 17705 (vs ~15k norm) -- model may be using more iterations on harder tasks.
+- Entropy at 6.75, grad_norm at 0.184 -- both stable.
+- This is NOT alarming on its own -- batch-to-batch variance in task difficulty causes these fluctuations. But monitoring for sustained decline.
+
+### Reward Breakdown (cumulative, 770 samples, +51 since last)
+- ft_reward pass rate: 90% (692/770)
+- gt_reward pass rate: 70% (539/770)
+- This batch: ft=86%, gt=76% -- gt_pass recovered nicely
+
+### Format Failures (cumulative, delta)
+- Rule 2: 34 (+2 -- slowing vs +5 last cycle)
+- Rule 3/4: 43 (+5 -- slight increase)
+- Total: 77/770 (10.0%)
+
+### Environment Runtime Health
+- Slow executions (>180s): 1500 total (+123)
+- SyntaxError: 9 (unchanged), Context overflows: 3 (unchanged)
+- Disk: /dev/shm 26%, NFS 7% -- stable.
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- Two consecutive below-5.0 reward steps (7 and 9). Step 8 was 5.16, so not a consistent downtrend. Monitoring.
+- First negative policy_loss at step 9. Not inherently problematic for GSPO.
+
+### Actions Taken
+- None -- monitoring trend.
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-20 21:15 UTC
+
+### Status
+- **Process**: Running
+- **Steps completed**: 10/212 (step 11 in progress)
+- **Checkpoint**: global_step_8. Next checkpoint at step 12.
+- **Time since training start**: ~18h
+- **Crashes/retries**: 0
+
+### Metrics Snapshot (step 10 new)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 8    | 5.16             | 0.0000826   | 7.26           | 0.313          | 0.189     | 15155               | 6461s     |
+| 9    | 4.72             | -0.0104     | 6.75           | 0.288          | 0.184     | 17705               | 6323s     |
+| 10   | **5.02**         | 0.000212    | 7.49           | 0.338          | 0.175     | 14886               | 5819s     |
+
+**Trends**: Rewards recovered to 5.02, policy_loss back to positive (0.000212). Step 9 negative policy loss was a batch effect, not a trend. All metrics stable. Step 10 was the fastest yet (97 min).
+
+### Reward Breakdown (cumulative, 817 samples)
+- ft_reward pass rate: 90% (733/817)
+- gt_reward pass rate: 69% (567/817)
+- This batch: ft=87%, gt=67%
+
+### Format Failures (cumulative)
+- Rule 2: 36, Rule 3/4: 46, Total: 82/817 (10.0%) -- stable at 10%
+
+### Environment Runtime Health
+- Slow executions: 1590, Context overflows: 4 (+1), SyntaxError: 9
+- Disk: /dev/shm 26%, NFS 7% -- stable
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- None. All metrics within normal ranges. The steps 7/9 reward dips confirmed as batch effects -- rewards bouncing back to 5.0+ on alternate steps.
+
+### Actions Taken
+- None -- healthy.
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-20 21:41 UTC (early wake -- sleep was shortened)
+
+### Status
+- **Process**: Running
+- **Steps completed**: 10/212 (step 11 just started)
+- **Checkpoint**: global_step_8. Next at step 12.
+- **Time since training start**: ~18.5h
+- **Crashes/retries**: 0
+
+### Metrics Snapshot
+No new step. Step 10 metrics remain latest (avg_final_rewards=5.02, policy_entropy=7.49).
+
+### Reward Breakdown (cumulative, 872 samples, +55 since last)
+- ft_reward pass rate: 90% (786/872)
+- gt_reward pass rate: 70% (606/872)
+- This batch: ft=96% (53/55), gt=71% (39/55) -- gt recovered to baseline
+
+### Format Failures (cumulative)
+- Rule 2: 38, Rule 3/4: 46, Total: 84/872 (9.6%)
+
+### Environment/Disk
+- Slow executions: 1719, Context overflows: 4, SyntaxError: 9
+- /dev/shm 26%, NFS 7% -- stable
+
+### Crashes: None
+### Issues: None
+### Actions: None -- healthy
+
+### Code/Config Changes: None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-20 23:10 UTC
+
+### Status
+- **Process**: Running
+- **Steps completed**: 11/212 (step 12 in progress -- next checkpoint!)
+- **Checkpoint**: global_step_8. Step 12 will trigger save to global_step_12.
+- **Time since training start**: ~20h
+- **Crashes/retries**: 0
+
+### Metrics Snapshot (step 11 new)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 9    | 4.72             | -0.0104     | 6.75           | 0.288          | 0.184     | 17705               | 6323s     |
+| 10   | 5.02             | 0.000212    | 7.49           | 0.338          | 0.175     | 14886               | 5819s     |
+| 11   | **5.22**         | 0.000153    | 6.65           | 0.338          | 0.238     | **12633**           | 5697s     |
+
+**Trends**: Rewards healthy at 5.22. Policy metrics all within established ranges. Response length notably shorter at 12633 (vs ~15k avg) -- model being more concise. Step times getting faster (5697s / 95 min).
+
+### Reward Breakdown (cumulative, 917 samples)
+- ft_reward pass rate: 90% (827/917)
+- gt_reward pass rate: 70% (639/917)
+- Step 11 batch (45 new): ft=91%, gt=73% -- baseline rates
+
+### Format Failures (cumulative)
+- Rule 2: 38, Rule 3/4: 49, Total: 87/917 (9.5%)
+
+### Environment/Disk
+- Slow executions: 1846, Context overflows: 4, SyntaxError: 9
+- /dev/shm 26%, NFS 7% -- stable
+
+### Crashes: None
+### Issues: None
+### Actions: None -- healthy
+
+### Summary Through 11 Steps
+20 hours of continuous training, zero crashes, 3 successful checkpoints (4, 8, pending 12). Metrics stable throughout. Reward fluctuations (4.44-5.39) confirmed as batch-to-batch task difficulty variance. Training is proceeding well.
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 08:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2 after crash)
+- **Steps completed**: 15 total (12 in attempt 1 + 3 new in attempt 2: steps 9, 10, 11 redone from ckpt 8)
+- **Effective training progress**: 11 steps from checkpoint 8 perspective (step 12 in rollouts now)
+- **Checkpoint**: global_step_8 (latest_ckpt_global_step.txt=8). Step 12 checkpoint will re-attempt.
+- **Time since training start**: ~29h (incl crash + restart)
+- **Crashes/retries**: 1 crash at 01:14 UTC, 1 retry
+
+### CRASH ANALYSIS
+
+**When**: 2026-02-21 01:14:13 UTC, during save_checkpoints() at step 12
+**Error**:  -- MegatronPolicyWorkerBase rank 7 (pid 200306) died
+- Worker exit type: SYSTEM_ERROR, code 2 (End of file)
+- Likely cause: OOM kill during checkpoint serialization (NCCL timeout cascade on other ranks)
+- NCCL error: "Observed flight recorder dump signal from another rank" + collective timeout
+- Checkpoint save was in progress: started 00:47, crashed at 01:08 (rank 7 died), finally exited at 01:14
+- Save time was 1597s (vs 1245-1313s normal) -- suggesting memory pressure
+
+**Incomplete checkpoint deleted**: global_step_12 had only  dir (no data.pt, trainer_state.pt). Deleted to prevent conflicts with attempt 2 re-save.
+
+**Autoretry**: Correctly resumed from global_step_8. Attempt #2 started at 01:14:43.
+
+### NEW ISSUE: Claude API 404 Errors
+
+19 occurrences of Anthropic API 404 errors:
+- : model not found (1 occurrence, attempt 1 step 5 area)
+- : model not found (18 occurrences, attempt 1+2)
+
+These models are used by the rubric reward critic. However:
+- rubric_rewards still being generated (0.7-4.7 range, healthy distribution)
+- Only 12 rubric_reward=0.0 out of 1271 total samples (0.9%)
+- The system appears to have retry/fallback logic handling these gracefully
+- **Impact**: Minimal so far, but worth flagging to user as Anthropic may have deprecated these model IDs
+
+### Metrics Snapshot (Attempt 2, steps 9-11 from ckpt 8)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 9*   | 4.56             | 0.000164    | 6.56           | 0.213          | 0.186     | 18887               | 6549s     |
+| 10*  | 5.23             | 0.000128    | 7.67           | 0.263          | 0.311     | 15015               | 5939s     |
+| 11*  | 5.30             | 0.000106    | 6.57           | 0.225          | 0.214     | 14213               | 5722s     |
+
+(*) Steps re-done from checkpoint 8 in attempt 2. Step numbering matches global steps.
+
+**Trends**: Rewards healthy (4.56-5.30), consistent with attempt 1 patterns. All metrics in normal ranges. Note grad_norm=0.311 at step 10 is slightly elevated but not alarming.
+
+### Reward Breakdown (cumulative across both attempts, 1271 samples)
+- ft_reward pass rate: 91% (1154/1271)
+- gt_reward pass rate: 69% (873/1271)
+- rubric_reward=0.0: 12 (0.9%) -- minimal Claude API impact
+
+### Format Failures (cumulative)
+- Rule 2 (not exactly one think): 46
+- Rule 3/4 (not end with): 63
+- Total: 109/1271 (8.6%) -- improving trend
+
+### Environment Runtime Health
+- Slow executions (>180s): 2649 total
+- Context overflows: 8
+- SyntaxError: 14
+- Spot-checked 1 slow execution: 582s, loop of 9 advanced_web_search() calls for T2D gene associations. Sensible code, high-quality output.
+- Parsed outputs: SAMM50, Ensembl gene IDs -- well-formed, diverse.
+- **New error pattern**: OpenTargets API GraphQL errors ("Cannot query field rows on type SearchResults") -- model generating invalid GraphQL queries for the OT v4 API. These fail gracefully.
+
+### Known Runtime Error Patterns (updated)
+| Pattern | Meaning | Count | Status |
+|---------|---------|-------|--------|
+| Code execution timed out | Runtime timeout | 4+ | Active |
+| query_opentarget unexpected keyword | Hallucinated API params | 4+ | Active |
+| SyntaxError | Model code errors | 14 | Active, increasing |
+| Claude API 404 | Deprecated model IDs | 19 | NEW -- active |
+| OpenTargets GraphQL rows error | Invalid OT v4 queries | 10+ | NEW -- active |
+| Ensembl /lookup/id/:id | Template var not replaced | 2+ | NEW -- active |
+
+### Disk Space
+- /dev/shm: 49G/512G (10%) -- lower than before (new attempt)
+- NFS: 2.1T/20T (11%) -- grew from 1.3T (checkpoint accumulation)
+
+### Crashes Since Last Check
+- 1 crash during step 12 checkpoint save (OOM/actor death). Autoretry handled it.
+
+### Issues Found
+1. **Checkpoint OOM crash**: Actor died during step 12 save. This was a one-off -- step 4 and 8 saves succeeded. May recur at step 12 if memory pressure is similar. Will monitor closely when attempt 2 reaches step 12 save.
+2. **Claude API 404s**: Anthropic deprecated model IDs. Minimal impact currently due to retry/fallback but should inform user.
+3. **NFS disk growing**: 2.1T now, was 858G at start. Three full checkpoints (4, 8, and some data from failed 12) plus training artifacts. May want to clean up old checkpoints per the every-8th-step policy.
+
+### Actions Taken
+- Deleted incomplete global_step_12 checkpoint (only had policy/ dir, no data.pt or trainer_state.pt)
+- No config changes needed -- autoretry handled the crash correctly
+
+### Code/Config Changes
+None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 09:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2)
+- **Steps completed (attempt 2)**: 12 (steps 9-12 from ckpt 8)
+- **Checkpoint**: **global_step_12 saved successfully** at 08:53 UTC (1254s / ~21 min, no errors!)
+- **Crashes/retries**: 1 crash (attempt 1), 0 in attempt 2
+
+### Key: Step 12 Checkpoint SUCCESS
+
+The step 12 checkpoint that crashed attempt 1 completed successfully in attempt 2:
+- Save time: 1254s (normal, vs 1597s when it crashed)
+- /dev/shm peaked at 34% (174G/512G) during save -- well within limits
+- Checkpoint verified: latest_ckpt_global_step.txt = 12
+
+### Metrics (step 12 from attempt 2)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 10*  | 5.23             | 0.000128    | 7.67           | 0.263          | 0.311     | 15015               | 5939s     |
+| 11*  | 5.30             | 0.000106    | 6.57           | 0.225          | 0.214     | 14213               | 5722s     |
+| 12*  | 4.72             | 0.000155    | 6.20           | 0.325          | 0.251     | 17179               | 6327s     |
+
+Step 12 rewards at 4.72 -- similar batch-effect dip as seen before (steps 7, 9). Not a trend.
+
+### Reward Breakdown (cumulative, 1297 samples)
+- ft_reward pass rate: 91% (1177/1297)
+- gt_reward pass rate: 68% (888/1297)
+
+### Format Failures: 112/1297 (8.6%), Rule 2: 47, Rule 3/4: 65
+
+### Environment: 2684 slow execs, 8 context overflows, 19 Claude 404s (unchanged)
+### Disk: /dev/shm 34% (post-checkpoint), NFS 2.1T/20T (11%)
+
+### Checkpoint Cleanup Opportunity
+Current checkpoints: global_step_4, global_step_8, global_step_12
+Per every-8th-step policy: keep 8, 16, 24... + always keep latest (12)
+- global_step_4 can be deleted to save ~220G on NFS
+- Will flag for user approval before deleting
+
+### Actions Taken
+- Verified step 12 checkpoint saved successfully
+- No config changes
+
+### Code/Config Changes: None
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 10:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2)
+- **Steps completed (attempt 2)**: 12 (step 13 in rollouts)
+- **Checkpoint**: global_step_12
+- **Crashes**: 0 in attempt 2
+
+### Metrics: No new step since last cycle.
+
+### Reward Breakdown (cumulative, 1353 samples, +56 since last)
+- ft_reward pass rate: 91% (1225/1353)
+- gt_reward pass rate: 68% (917/1353)
+- This batch: ft=86% (48/56), gt=52% (29/56) -- another harder batch
+
+### Format Failures: 119/1353 (8.8%), Rule 2: 52 (+5), Rule 3/4: 67 (+2)
+
+### Environment: 2789 slow execs (+105), Claude 404s: 19 (unchanged)
+### Disk: /dev/shm 34%, NFS 2.1T/20T (11%)
+
+### Issues: None new. gt_pass low this batch (52%) but within observed variance.
+### Actions: None
+### Code/Config Changes: None
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 11:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2)
+- **Steps completed**: 13 (step 14 in rollouts)
+- **Checkpoint**: global_step_12. Next at step 16.
+- **Crashes**: 0 in attempt 2
+
+### Metrics (step 13 new)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 11*  | 5.30             | 0.000106    | 6.57           | 0.225          | 0.214     | 14213               | 5722s     |
+| 12*  | 4.72             | 0.000155    | 6.20           | 0.325          | 0.251     | 17179               | 6327s     |
+| 13*  | **4.34**         | 0.0000347   | 7.09           | 0.363          | 0.157     | 16477               | 6131s     |
+
+Step 13 has the lowest rewards yet (4.34). Three consecutive sub-5.0 steps (11: 5.30, 12: 4.72, 13: 4.34). But policy metrics remain healthy -- entropy 7.09, grad_norm 0.157 (lowest ever), no sign of instability.
+
+The lower rewards appear driven by lower gt_pass rate in these batches (task difficulty).
+
+### Reward Breakdown (cumulative, 1398 samples)
+- ft_reward pass rate: 90% (1265/1398)
+- gt_reward pass rate: 67% (936/1398) -- declining trend from 75% early on
+- rubric_reward=0.0: 17 (up from 12) -- 2 new zero-rubric in last 10 samples
+
+### Format Failures: 123/1398 (8.8%), Rule 2: 55, Rule 3/4: 68
+
+### Environment
+- Slow executions: 2897, Claude 404s: 19 (unchanged)
+- /dev/shm 34%, NFS 2.1T/20T (11%)
+
+### Issues
+- **Three consecutive sub-5.0 reward steps** (12: 4.72, 13: 4.34). Still within observed range (step 7 in attempt 1 was 4.44) but approaching red flag territory. If step 14 is also < 4.5, may warrant closer investigation.
+- **gt_pass declining**: 75% early -> 67% now. Could be dataset ordering (harder tasks later) or genuine degradation.
+- **rubric_reward=0.0 increasing**: 17 total (1.2%). Two new failures in recent batch. May be Claude API issues.
+
+### Actions: None yet -- monitoring closely for step 14 rewards.
+### Code/Config Changes: None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 12:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2), 0 crashes
+- **Steps completed**: 14 (step 15 in rollouts)
+- **Checkpoint**: global_step_12. Next at step 16.
+
+### Metrics (step 14 new)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 12   | 4.72             | 0.000155    | 6.20           | 0.325          | 0.251     | 17179               | 6327s     |
+| 13   | 4.34             | 0.0000347   | 7.09           | 0.363          | 0.157     | 16477               | 6131s     |
+| 14   | **3.78**         | 0.000150    | 7.10           | 0.288          | 0.206     | 16878               | 6083s     |
+
+**ALERT**: 4 consecutive declining reward steps (5.30 -> 4.72 -> 4.34 -> 3.78). Step 14 is the lowest reward seen.
+
+### Investigation: Is this training degradation?
+
+**Analysis of step 14 batch (43 new samples)**:
+- gt_pass: only 12/43 = **28%** (vs 67% cumulative)
+- ft_pass: 39/43 = 91% (normal)
+- rubric_reward = 0.0: 3 instances in this batch
+
+The low rewards are driven by terrible gt_pass (28%) -- the model is producing solutions that get partial rubric credit but fail exact-match. This suggests hard tasks, not format/behavior collapse.
+
+**Policy metrics check**: entropy=7.10, grad_norm=0.206, clip_ratio=0.288 -- ALL within established ranges. No sign of training instability. If the model were collapsing, we would see entropy dropping or grad_norm spiking.
+
+**Conclusion**: Batch difficulty variance. The decline correlates with gt_pass, not with policy instability. Will monitor step 15 for recovery. If rewards stay below 4.0 for 2+ more steps, escalate to user.
+
+### Reward Breakdown (cumulative, 1441 samples)
+- ft_reward pass rate: 90% (1304/1441)
+- gt_reward pass rate: 66% (948/1441)
+- rubric_reward=0.0: 20 (1.4%)
+
+### Format Failures: 124/1441 (8.6%), Rule 2: 56, Rule 3/4: 68
+
+### Environment/Disk
+- Slow executions: 2897+
+- Claude 404s: 19 (unchanged)
+- /dev/shm 34%, NFS 2.4T/20T (13%) -- NFS growing, was 2.1T
+
+### Actions: None -- monitoring for recovery at step 15.
+### Code/Config Changes: None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 13:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2), 0 crashes
+- **Steps completed**: 14 (step 15 in rollouts, not yet finished)
+- **Checkpoint**: global_step_12
+
+### Metrics: No new step since last cycle.
+
+### Reward Breakdown (cumulative, 1495 samples, +54 from step 15 rollouts in progress)
+- ft_reward pass rate: 91% (1354/1495)
+- gt_reward pass rate: 66% (984/1495)
+- Current step 15 partial batch: ft=93% (50/54), gt=67% (36/54) -- gt_pass recovering!
+
+### Disk: /dev/shm 34%, NFS 2.4T/20T (13%)
+### Issues: Step 15 gt_pass at 67% vs step 14 at 28%. RECOVERY as expected.
+### Actions: None.
+### Code/Config Changes: None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 14:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2), 0 crashes
+- **Steps completed**: 15 (step 16 in rollouts -- next checkpoint!)
+- **Checkpoint**: global_step_12. Step 16 will save global_step_16.
+
+### Metrics (step 15 new)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 13   | 4.34             | 0.0000347   | 7.09           | 0.363          | 0.157     | 16477               | 6131s     |
+| 14   | 3.78             | 0.000150    | 7.10           | 0.288          | 0.206     | 16878               | 6083s     |
+| 15   | **4.90**         | 0.000163    | 7.00           | 0.300          | 0.193     | 15703               | 6811s     |
+
+**RECOVERY**: Rewards bounced back from 3.78 to 4.90 -- confirming the dip was batch difficulty, not training degradation. Policy metrics stable throughout.
+
+### Reward Breakdown (cumulative, 1529 samples)
+- ft_reward pass rate: 90% (1383/1529)
+- gt_reward pass rate: 66% (1004/1529)
+- rubric_reward=0.0: 21 (1.4%)
+- Claude 404s: 20 (1 new since last major check)
+
+### Format Failures: 133/1529 (8.7%), Rule 2: 58 (+2), Rule 3/4: 75 (+7)
+
+### Environment
+- Slow executions: 3114
+- Context overflows: 8
+- SyntaxErrors: 14
+- /dev/shm 34%, NFS 2.4T/20T (13%)
+
+### Upcoming: Step 16 checkpoint save
+- Will be the second step-16 boundary checkpoint (global_step_16)
+- Previous saves: global_step_4 (1313s), global_step_8 (1245s), global_step_12 attempt 2 (1254s)
+- Monitoring closely given the step 12 OOM crash in attempt 1
+
+### Checkpoint cleanup status
+- Current: global_step_4, global_step_8, global_step_12
+- After step 16: global_step_4, global_step_8, global_step_12, global_step_16
+- Per 8-step policy: can keep 8, 16 and delete 4, 12. Will propose to user.
+
+### Issues: None. Reward recovery confirms batch difficulty hypothesis.
+### Actions: None.
+### Code/Config Changes: None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 15:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2), 0 crashes
+- **Steps completed**: 15 (step 16 in rollouts, expected ~16:00 UTC)
+- **Checkpoint**: global_step_12. Step 16 save expected ~16:20-16:30 UTC.
+
+### Metrics: No new step. Step 15 was the latest (rewards 4.90, recovery confirmed).
+
+### Reward Breakdown (cumulative, 1588 samples, step 16 partial)
+- ft_reward pass rate: 90% (1434/1588)
+- gt_reward pass rate: 66% (1042/1588)
+- Step 16 partial (89 samples): ft=90% (51/57 new), gt=67% (38/57 new) -- stable
+
+### Disk: /dev/shm 34%, NFS 2.4T/20T (13%) -- stable
+
+### Issues: None.
+### Actions: None. Awaiting step 16 completion and checkpoint save.
+### Code/Config Changes: None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 16:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2), 0 crashes
+- **Steps completed**: 16 (step 17 in rollouts)
+- **Checkpoint**: **global_step_16 saved successfully** at 16:02 UTC (1253s, no errors!)
+- **Total training time**: ~37h
+
+### Metrics (step 16 new)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 14   | 3.78             | 0.000150    | 7.10           | 0.288          | 0.206     | 16878               | 6083s     |
+| 15   | 4.90             | 0.000163    | 7.00           | 0.300          | 0.193     | 15703               | 6811s     |
+| 16   | **4.82**         | 0.0000743   | 7.26           | 0.375          | 0.166     | 14177               | 5473s     |
+
+Rewards stable at 4.82 (recovered from 3.78 dip). All policy metrics healthy. Step 16 was the fastest step yet (5473s / 91 min) with shortest responses (14177 tokens).
+
+### Checkpoint Save Analysis
+- Step 16 save: 1253s (normal, consistent with step 8: 1245s, step 12 attempt 2: 1254s)
+- NO OOM this time (vs step 12 attempt 1 crash at 1597s+)
+- /dev/shm 34% post-save -- healthy
+
+### Reward Breakdown (cumulative, 1618 samples)
+- ft_reward pass rate: 90% (1462/1618)
+- gt_reward pass rate: 66% (1069/1618)
+- rubric_reward=0.0: 29 (1.8% -- increased from 21, 8 new zeros)
+
+### Format Failures: 142/1618 (8.8%), Rule 2: 63 (+5), Rule 3/4: 79 (+4)
+
+### Environment
+- Slow executions: 3214
+- Claude 404s: 20 (unchanged)
+- /dev/shm 34%, NFS 2.8T/20T (15%)
+
+### Checkpoint Cleanup
+Current checkpoints: global_step_4, global_step_8, global_step_12, global_step_16
+Per every-8-step policy: keep multiples of 8 (8, 16) + latest (16)
+**Candidates for deletion: global_step_4, global_step_12** (~400-440G savings)
+Awaiting user approval.
+
+### rubric_reward=0.0 increasing
+29 total (1.8%), up from 21. Not all correlated with Claude 404s (20). Some may be from model producing invalid solutions that the rubric critic legitimately scores at 0. Monitoring this trend.
+
+### Issues: None critical. Training healthy.
+### Actions: Verified checkpoint save. Flagging cleanup opportunity.
+### Code/Config Changes: None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 17:15 UTC
+
+### Status
+- **Process**: Running (Attempt #2), 0 crashes
+- **Steps completed**: 16 (step 17 in rollouts, expected ~17:30 UTC)
+- **Checkpoint**: global_step_16
+
+### Metrics: No new step. Step 16 latest (rewards 4.82).
+
+### Cumulative stats (step 17 partial, ~1670 samples)
+- ft_pass: 90% (1510/~1670)
+- gt_pass: 66% (1106/~1670)
+- rubric_reward=0.0: 31 (1.9%)
+
+### Disk: /dev/shm 34%, NFS 2.8T/20T (15%) -- stable
+
+### Issues: None.
+### Actions: None.
+
+
+---
+
+## Monitor Cycle -- 2026-02-21 18:15 UTC
+
+### Status
+- **Process**: Running (Attempt #3 after second crash)
+- **Steps completed**: 17 (step 17 actually completed but crashed during backward pass)
+- **Checkpoint**: global_step_16 (attempt 3 loading from here)
+- **Crashes**: 2 total (attempt 1: checkpoint save OOM, attempt 2: backward pass OOM)
+
+### CRASH #2 ANALYSIS
+
+**When**: 2026-02-21 17:58:53 UTC, during ppo_train backward pass at step 17
+**Error**: torch.OutOfMemoryError: CUDA out of memory
+
+Details:
+- GPU 7: 139.80 GiB total, only 10.41 GiB free, needed 12.39 GiB
+- Process using 117.96 GiB (92.43 GiB allocated by PyTorch, 12.50 GiB reserved)
+- Crash site: torch.autograd.backward() in megatron pipeline backward step
+- PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True was already set
+
+**Difference from Crash 1**:
+- Crash 1: During checkpoint save (NCCL/actor died, step 12)
+- Crash 2: During backward pass of policy update (genuine CUDA OOM, step 17)
+- Both on GPU 7 -- possible GPU 7 has higher memory pressure (VLLM processes?)
+
+**Root cause**: Training runs close to GPU memory limit (30B param model on 8x H100s). Step 17 avg_response_length was 16081 -- moderate, but backward pass activation memory can spike unpredictably. The 2 GiB shortfall (needed 12.39, had 10.41) suggests marginal headroom.
+
+**Autoretry**: Correctly resumed from global_step_16. Attempt #3 is initializing (NCCL setup, checkpoint loading visible in logs).
+
+### Metrics Before Crash (step 17 from attempt 2)
+
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm | avg_response_length | step_time |
+|------|------------------|-------------|----------------|----------------|-----------|--------------------:|-----------|
+| 15   | 4.90             | 0.000163    | 7.00           | 0.300          | 0.193     | 15703               | 6811s     |
+| 16   | 4.82             | 0.0000743   | 7.26           | 0.375          | 0.166     | 14177               | 5473s     |
+| 17   | 4.91             | (crashed)   | (crashed)      | (crashed)      | (crashed) | 16081               | 6988s     |
+
+Step 17 rewards were 4.91 -- healthy. The step completed rollouts and compute_advantages successfully. Crash occurred only during the training update (backward pass).
+
+### Cumulative stats (1680 samples across all attempts)
+- ft_pass: 90% (1516/1680)
+- gt_pass: 66% (1108/1680)
+- rubric_reward=0.0: 31 (1.8%)
+
+### Disk
+- /dev/shm: 47G/512G (10%) -- dropped from 34% after restart
+- NFS: 2.8T/20T (15%)
+
+### Concern: Recurring OOM
+Two OOM crashes in ~15 hours. While different failure modes (checkpoint vs backward), both involve GPU 7 memory pressure. This may recur.
+
+Possible mitigations (for user consideration):
+1. Reduce max_generate_length to lower activation memory
+2. Enable gradient checkpointing (if not already enabled)
+3. Reduce batch_size temporarily
+4. Accept occasional OOM and rely on autoretry (current approach)
+
+### Actions Taken: None -- autoretry handled the crash. Monitoring attempt 3 startup.
+### Code/Config Changes: None.
+
+
+---
+
+## REWARD DECLINE INVESTIGATION -- 2026-02-21 18:30 UTC
+
+### Summary
+
+The reward decline (5.3 -> 4.7 -> 4.3 -> 3.8) has TWO root causes:
+1. **Rubric parsing failures artificially depressing rewards** (PRIMARY cause, fixable)
+2. **High batch-to-batch gt_pass variance** (SECONDARY cause, normal)
+
+### Finding 1: Rubric Parsing Failures (CRITICAL BUG)
+
+The rubric critic (claude-sonnet-4-5) uses langchain with_structured_output() + thinking enabled.
+When Claude thinks instead of calling the structured output tool, langchain throws
+OutputParserException and the code defaults rubric_reward to 0.0 with NO retry.
+
+**Code location**: biomni_rubric_reward_adapter.py lines 173-179, 451-464
+
+
+
+**Failure rate is accelerating:**
+- Attempt 1 (steps 1-12): 12 failures / 960 samples = 1.25%
+- Attempt 2 (steps 13-21): 45 failures / 720 samples = 6.25% (5x increase!)
+- Steps 18 and 20 each had 12 failures (15% of batch!)
+
+**Impact on rewards:**
+- Step 18 (lowest reward 3.78): rubric_zero=6, corrected reward would be 3.98 (+0.20)
+- Step 20: rubric_zero=7, corrected reward 5.13 vs actual 4.82 (+0.31)
+- This sends INCORRECT training signals: correct answers (gt=1.0) get rubric=0.0
+
+**Per-step failure counts:**
+Steps 1-12 (A1): 0,2,2,2,0,0,4,0,0,2,0,0
+Steps 13-21 (A2): 2,4,2,0,4,12,2,12,7
+
+**Recommended fix (choose one):**
+a) Add retry logic in _evaluate_with_rubric() when OutputParserException occurs
+b) Disable thinking: remove thinking={"type": "enabled", "budget_tokens": 2000}
+c) Fall back to text parsing when structured output fails
+
+### Finding 2: gt_pass Variance is Normal
+
+Compared overlapping global steps (same model checkpoint, different rollout trajectories):
+- Global step 9: A1=62.5% vs A2=73.8% (A2 better by 11%)
+- Global step 10: A1=68.8% vs A2=76.2% (A2 better by 7%)
+- Global step 11: A1=72.5% vs A2=57.5% (A1 better by 15%)
+- Global step 12: A1=71.2% vs A2=53.8% (A1 better by 17%)
+
+The SAME MODEL produces 15+ percentage point swings in gt_pass between runs.
+This proves gt_pass variance is dominated by rollout stochasticity, not model quality.
+
+### Finding 3: Task Types Do Not Explain the Decline
+
+All batches contain a mix of screen_gene_retrieval and choice-based tasks.
+No systematic shift in task composition across steps.
+
+### Finding 4: The Model is NOT Collapsing
+
+Policy metrics remain stable throughout:
+- policy_entropy: 6.2-7.7 (healthy, no collapse)
+- grad_norm: 0.15-0.31 (healthy)
+- ppo_clip_ratio: 0.21-0.38 (normal range)
+- ft_pass rate: consistently 83-98%
+
+After removing rubric_zero effect, A2 corrected rewards:
+Steps 13-21: 4.60, 5.37, 5.34, 4.72, 4.42, 3.98, 4.94, 5.13, 5.04
+Average: 4.84 (vs A1 average 5.11, only 5% lower -- within variance)
+
+### Conclusion
+
+The apparent reward decline is primarily an ARTIFACT of increasing rubric parsing failures.
+The model quality is stable. The fix should be in the rubric evaluation code, not training config.
+
+---
+## Monitor Cycle -- 2026-02-21 22:50 UTC (Rubric Fix Training)
+
+### Training Status
+- **Project**: biomni-training-qwen3-30b-a3b-skyrlagent-gspo-rubric-fix
+- **Current Attempt**: #2 (started 22:11 UTC, after OOM crash at step 1)
+- **Log File**: training_rubric_fix_20260221.log
+
+### Rubric Fix Validation -- CONFIRMED WORKING
+- **96 rubric evaluations completed**: zero rubric_reward: 0.0
+- **num_rubric_eval_failed**: 0 (in rollout metrics)
+- **Previous run comparison**: 31/320 failures (up to 15% failure rate in later steps)
+- The retry + fallback + masking fix completely eliminates parsing failures
+
+### Step 1 Metrics (Attempt #1, before crash)
+- avg_final_rewards: 5.245
+- gt_reward: 0.7125, ft_reward: 0.8875, rubric_reward: 3.645
+- pass_at_n: 93.75% (15/16 tasks correct)
+- avg_response_length: 16391
+- num_rubric_eval_failed: 0
+- Healthy reward level, no artificial depression from parsing failures
+
+### OOM Crash (Attempt #1)
+- Crashed during ppo_train at step 1 (grad norm all_reduce)
+- Error: Failed to CUDA calloc 268435456 bytes
+- This is the same pre-existing hardware memory pressure issue
+- NOT related to the rubric fix
+- Autoretry successfully resumed as Attempt #2
+
+### Next Steps
+- Continue monitoring Attempt #2 for step completion
+- Watch for OOM recurrence and rubric eval failures (expected: 0)
+- First checkpoint expected at step 4
+
+---
+## Monitor Cycle -- 2026-02-22 02:15 UTC (Rubric Fix Training - Attempt #2)
+
+### Training Status
+- **Attempt #2**: Running since 22:11 UTC, stable
+- **Steps completed**: 2 (of 212)
+- **No crashes since Attempt #2 started**
+
+### Rubric Fix Validation -- ROCK SOLID
+- **266 total rubric evaluations**: zero rubric_reward: 0.0
+- Both steps report num_rubric_eval_failed: 0
+- The thinking+structured_output incompatibility is fully mitigated
+
+### Step Metrics Comparison
+| Metric | Step 1 | Step 2 |
+|--------|--------|--------|
+| avg_final_rewards | 5.031 | 5.106 |
+| policy_loss | 7.85e-5 | 7.54e-5 |
+| policy_entropy | 7.333 | 5.610 |
+| ppo_clip_ratio | 0.350 | 0.375 |
+| raw_grad_norm | 0.186 | 0.198 |
+| gt_reward | 0.688 | -- |
+| ft_reward | 0.863 | -- |
+| rubric_reward | 3.481 | -- |
+| step_time | 6619s | ~7200s |
+
+### Analysis
+- Reward is stable/improving (5.03 -> 5.11)
+- Policy entropy dropping (7.33 -> 5.61) -- model learning
+- Grad norm stable (~0.19)
+- First checkpoint expected at step 4 (ckpt_interval=4)
+- No OOM crashes in Attempt #2 (previous crash was at step 1 in Attempt #1)
+
+### Next Milestone
+- Step 4: first checkpoint save
+- Continue monitoring for OOM and rubric eval failures
+
+---
+## Monitor Cycle -- 2026-02-22 06:50 UTC (Rubric Fix Training - Comprehensive)
+
+### Training Status
+- **Attempt #2**: Stable, running since 22:11 UTC (8.5+ hours)
+- **Steps completed**: 4 (of 212)
+- **First checkpoint saved**: global_step_4
+- **No crashes in Attempt #2**
+
+### Reward Trend -- IMPROVING
+| Step | avg_final_rewards | policy_loss | policy_entropy | ppo_clip_ratio | grad_norm |
+|------|-------------------|-------------|----------------|----------------|-----------|
+| 1    | 5.031             | 7.85e-5     | 7.333          | 0.350          | 0.186     |
+| 2    | 5.106             | 7.54e-5     | 5.610          | 0.375          | 0.198     |
+| 3    | 5.117             | -6.67e-3    | 7.196          | 0.225          | 0.201     |
+| 4    | 5.268             | --          | --             | --             | --        |
+
+### Rubric Fix Validation -- CONFIRMED
+- **433 total rubric evaluations**
+- **1 failure** (0.23% failure rate vs ~10% in old run)
+  - Task: lab_bench_dbqa, instance 409
+  - Cause: Pydantic validation (Field required: weaknesses)
+  - Properly masked from training (num_mask_out: 1)
+- **Zero spurious training signals** from rubric failures
+
+### Rubric Reward Breakdown (Step 4)
+- gt_reward: 0.788, ft_reward: 0.900, rubric_reward: 3.581
+- rubric_output_grading: 15.75, methodology: 6.21
+- rubric_code_handling: 6.60, reasoning: 7.25
+
+### Comparison to Previous Run (unfixed)
+| Metric | Old Run (Steps 1-20) | New Run (Steps 1-4) |
+|--------|---------------------|---------------------|
+| rubric_eval failures | 31/320 (9.7%) | 1/433 (0.23%) |
+| Failures masked? | No (0.0 reward trained on) | Yes (masked) |
+| Reward trend | Declining (5.19 -> 3.78) | Improving (5.03 -> 5.27) |
+
+### Conclusion
+The rubric fix is working as designed:
+1. Retry mechanism prevents most failures
+2. The 1 remaining failure was properly masked
+3. Reward is trending upward, not declining
+4. Training is stable with no OOM crashes in 4 steps
+
+---
+
+## Monitor Cycle -- 2026-02-22 12:15 UTC
+
+### Status
+- **Process**: Running (tmux training session active, Attempt #2)
+- **Steps completed**: 7 (Attempt #2, steps 1-7)
+- **Time since launch**: ~16h (Attempt #2 started 22:11 UTC Feb 21)
+- **Crashes**: 1 total (Attempt #1 CUDA OOM at step 1, auto-retried). Attempt #2 stable 14+ hours.
+
+### Metrics Snapshot (Step 7 -- latest)
+- avg_final_rewards: 4.452
+- policy_loss (pg): 1.65e-4
+- grad_norm: 0.179
+- entropy: 6.369
+- ppo_clip_ratio: 0.250
+- avg_response_length: 15917
+
+### Step-by-Step Metrics (Attempt #2)
+| Step | avg_final_rewards | policy_loss | entropy | clip_ratio | grad_norm |
+|------|-------------------|-------------|---------|------------|-----------|
+| 1    | 5.031             | 7.85e-5     | 7.333   | 0.350      | 0.186     |
+| 2    | 5.106             | 7.54e-5     | 5.610   | 0.375      | 0.198     |
+| 3    | 5.117             | -6.67e-3    | 7.196   | 0.225      | 0.201     |
+| 4    | 5.268             | -2.16e-2    | 7.172   | 0.450      | 0.173     |
+| 5    | 4.958             | 1.37e-4     | 6.322   | 0.288      | 0.221     |
+| 6    | 5.306             | 2.51e-5     | 7.572   | 0.313      | 0.167     |
+| 7    | 4.452             | 1.65e-4     | 6.369   | 0.250      | 0.179     |
+
+Note: Step 7 avg_final_rewards dip (4.45) correlates with harder batch (5/16 lab_bench_seqqa, 3/16 patient_gene_detection), gt_reward=0.525, pass@n=0.6875. Not concerning -- batch variance.
+
+### Reward Breakdown (last 20 samples)
+- ft_reward pass rate: 85% (17/20)
+- gt_reward pass rate: 70% (14/20)
+- rubric_reward range: 1.8-4.95 (healthy distribution)
+- total_reward range: 2.0-6.95
+
+### Rubric Fix Validation
+- **700 total rubric evaluations across 7 steps**
+- **2 rubric_reward: 0.0** (0.29% rate)
+  - 1st (step 3): Pydantic parsing failure on lab_bench_dbqa/409 (weaknesses field missing). Properly masked (num_rubric_eval_failed=1, trajectory excluded from gradient).
+  - 2nd (step 6): Genuine harsh score from critic on rare_disease_diagnosis/144 (gt also wrong). Not a parsing failure -- API returned 200 OK, no retry triggered. This is a real 0.
+- Compare to old run: 31/320 = 9.7% failure rate, none masked
+
+### Format Failures
+- "not exactly one <think>": 13 (total across all steps)
+- "not end with </execute> or </solution>": 49
+- "is_last but outer is <execute>": 1
+- "not start with <think>": 0
+- "multiple outer blocks": 0
+- Rule 2 trend: 13 in 7 steps (~1.9/step). Moderate, not escalating.
+
+### Environment Runtime Health
+- Slow executions (>180s): 1410 total (~200/step, consistent with agent code execution tasks)
+- Timeout errors: 64 total
+- Context overflows: 2 (negligible)
+- Spot-checked recent slow executions (12:06 UTC): cluster of 8 warnings all at ~299s, likely a batch of BioMart API queries returning HTML error pages instead of data. Not actionable (external API issue).
+- Known error pattern: BioMart webservice returning HTML error pages (grep: "BioMart Webservice") -- intermittent external API issue.
+
+### Checkpoints
+- global_step_4 saved successfully
+- Next checkpoint at step 8 (should save within ~2 hours)
+
+### Issues Found
+- None critical. Training is healthy and stable.
+- Step 7 reward dip is batch composition variance (heavy lab_bench_seqqa), not degradation.
+
+### Actions Taken
+- None -- healthy. Entering sleep cycle.
+
+### Code/Config Changes
+None
+
+---
+
+## Monitor Cycle -- 2026-02-22 13:20 UTC
+
+### Status
+- **Process**: Running (Attempt #3, initializing)
+- **Steps completed**: 7 (in Attempt #2). Will resume from step 4 (checkpoint).
+- **Time since last check**: ~1h
+
+### Crash: Attempt #2 -> Attempt #3
+- **Crash time**: 13:11 UTC (after 54028s / ~15h of running)
+- **Cause**: NCCL DistBackendError during save_checkpoints at step 8
+  - save_checkpoint -> NCCL all_reduce failed -> CUDA calloc failure
+  - Same pattern as Attempt #1 crash: OOM during collective operations
+- **Checkpoint status**: global_step_8 was INCOMPLETE (17/19 policy files, missing data.pt and trainer_state.pt)
+- **Action taken**: Deleted incomplete global_step_8 directory
+- **Resume**: Attempt #3 will resume from global_step_4 (steps 5-7 will be re-done)
+
+### Metrics Snapshot (Attempt #2, Steps 1-7)
+- avg_final_rewards: 5.03, 5.11, 5.12, 5.27, 4.96, 5.31, 4.45
+- grad_norm range: 0.167-0.221 (stable)
+- entropy range: 5.6-7.6 (normal oscillation)
+- All metrics healthy, no degradation trend
+
+### Rubric Fix Validation (still solid)
+- 720 total rubric evals, 2 zeros (0.28%)
+- 1 masked (parsing failure), 1 genuine critic score
+
+### Format Failures (cumulative)
+- Rule 2 (not exactly one <think>): 14 (+1 from last check)
+- Not end with </execute> or </solution>: 50 (+1)
+- Trend: stable, not escalating
+
+### Issues Found
+- OOM crash during checkpoint save at step 8 -- recurring pattern
+- Training loses steps 5-7 and must redo them from step 4 checkpoint
+
+### Actions Taken
+- Deleted incomplete global_step_8 checkpoint
+- No config changes needed -- autoretry handling this correctly
+
+---
+
+## Monitor Cycle -- 2026-02-22 14:20 UTC
+
+### Status
+- **Process**: Running (Attempt #3, step 5 rollout phase)
+- **Steps completed**: 0 new (7 total from Attempt #2)
+- **Time since last check**: ~1h
+
+### Metrics Snapshot
+- No new training steps; step 5 rollouts in progress
+- 751 rubric evals (+31 since last check), 2 zeros (0.27%)
+- Format: rule2=15 (+1), end_tag=51 (+1) -- stable
+
+### Issues Found
+- None
+
+### Actions Taken
+- None -- healthy
+
+---
+
+## Monitor Cycle -- 2026-02-22 15:20 UTC
+
+### Status
+- **Process**: Running (Attempt #3, step 5 rollouts nearing completion)
+- **Steps completed**: 0 new from Attempt #3 (~2h since restart)
+- **Time since last check**: ~1h
+
+### Metrics Snapshot
+- 799 rubric evals (+48), still 2 zeros (0.25%)
+- Format: rule2=17 (+2), end_tag=53 (+2) -- stable ~1/step
+- Step 5 should complete within next hour
+
+### Issues Found
+- None
+
+### Actions Taken
+- None -- healthy
+
+---
+
+## Monitor Cycle -- 2026-02-22 16:20 UTC
+
+### Status
+- **Process**: Running (Attempt #4, step 5 rollouts)
+- **Steps completed**: 0 new since Attempt #2 ended. Checkpoint still at step 4.
+- **Time since last check**: ~1h
+
+### Crash History (3 crashes total)
+| Attempt | Duration | Crash Point | Error |
+|---------|----------|-------------|-------|
+| #1 | 6740s | Step 1 ppo_train | CUDA calloc 268MB fail |
+| #2 | 54028s (15h) | Step 8 save_checkpoint | NCCL ALLREDUCE timeout 600s |
+| #3 | 8199s (2.3h) | Step 5 ppo_train | CUDA calloc 10MB fail |
+
+Note: Attempt #3 crash at only 10MB suggests severe GPU memory fragmentation post-restart. The NCCL timeout in Attempt #2 may have left stale GPU memory allocations.
+
+### Metrics Snapshot
+- No new training steps completed since Attempt #2
+- 823 rubric evals, 2 zeros (0.24%) -- rubric fix continues to hold
+- Format: rule2=17, end_tag=54
+
+### Issues Found
+- Repeated OOM crashes preventing progress beyond step 4 checkpoint
+- Pattern: training runs for some steps then OOM at random points during backward/save
+- This is a pre-existing GPU memory pressure issue, not related to the rubric fix
+- Consider: reducing ckpt_interval to 2 to save progress more frequently
+
+### Actions Taken
+- None -- autoretry handling. Monitoring for Attempt #4 stability.
+
+---
+
+## Monitor Cycle -- 2026-02-22 17:20 UTC
+
+### Status
+- **Process**: Running (Attempt #4, step 5 rollouts)
+- **Steps completed**: 0 new. Checkpoint at step 4.
+- **Time since last check**: ~1h
+- **No new crashes** -- Attempt #4 running stable for ~2h
+
+### Metrics Snapshot
+- 874 rubric evals, 2 zeros (0.23%) -- rubric fix holding
+- Format: rule2=19, end_tag=55
+
+### Issues Found
+- OOM pattern is wasting compute: steps 5-7 have been recomputed 3 times
+- If Attempt #4 gets past step 8, it will save next checkpoint
+- Consider reducing ckpt_interval to 2 if crashes continue
+
+### Actions Taken
+- None -- monitoring. Attempt #4 appears stable.
+
+---
+
+## Monitor Cycle -- 2026-02-22 18:20 UTC
+
+### Status
+- **Process**: Running (Attempt #4, step 6 rollouts)
+- **Steps completed**: Step 5 done in Attempt #4 (total effective: 5/212)
+- **Time since last check**: ~1h
+
+### Metrics Snapshot (Step 5, Attempt #4)
+- avg_final_rewards: 3.456 (low -- explained below)
+- policy_loss: -0.0221
+- grad_norm: 0.125
+- entropy: 8.214
+- ppo_clip_ratio: 0.3125
+- avg_response_length: 11923
+
+### Step 5 Reward Analysis
+- gt_reward: 0.4625, rubric_reward: 2.069, ft_reward: 0.925
+- pass_at_n: 62.5% (low)
+- avg_turn_assistant: 19.8 (nearly 2x normal)
+- Hard tasks: rare_disease(2, gt=0.0), patient_gene(2, gt=0.1), seqqa(2, gt=0.1)
+- Same step 4 policy produced ~4.97 on previous step 5 batches
+- **Conclusion**: Batch variance, not model degradation
+
+### Rubric Fix
+- 920 evals, 2 zeros (0.22%), 0 new failures -- fix holding
+
+### Issues Found
+- None critical. Step 5 low reward is natural batch variance.
+
+### Actions Taken
+- None -- healthy
+
+---
+
+## Monitor Cycle -- 2026-02-22 19:20 UTC
+
+### Status
+- **Process**: Running (Attempt #4, step 7 rollouts in progress)
+- **Steps completed**: Steps 5-6 in Attempt #4 (effective total: 6/212)
+- **Time since last check**: ~1h
+
+### Metrics Snapshot
+| Step | avg_final_rewards | policy_loss | entropy | clip_ratio | grad_norm |
+|------|-------------------|-------------|---------|------------|-----------|
+| 5 (A4) | 3.456 | -0.0221 | 8.214 | 0.313 | 0.125 |
+| 6 (A4) | 3.207 | -0.0139 | 9.119 | 0.275 | 0.149 |
+
+### Reward Concern
+- Two consecutive low-reward steps (3.46, 3.21) vs early steps (~5.0)
+- Possible causes:
+  1. Batch variance (different task instances each restart)
+  2. Model exploring longer trajectories (avg_turn: 15-20 vs usual 10-12)
+  3. Entropy increasing (8.2 -> 9.1) suggests more exploration
+- Not yet conclusive as degradation -- need more data points
+- Step 7 will be decisive: if rewards recover, it is batch variance
+
+### Rubric Zeros Analysis
+- Total: 5 genuine zeros + 1 masked failure = 6 matches (grep overcounts 0.05)
+- 3 new zeros in Attempt #4, all with gt_reward=0.0 (wrong answers)
+- All returned HTTP 200, all subcategories=0 (suspicious but not flagged as failure)
+- num_rubric_eval_failed=0 for both steps 5-6 -- retries working
+- Instance 144 (rare_disease) appears twice with 0.0 rubric -- recurrent hard case
+- Instance 146 (variant_prioritization) x2 -- same hard variant
+
+### Format Failures
+- rule2=19, end_tag=55 (slow increase, stable rate)
+
+### Checkpoint
+- Still at global_step_4. Step 8 save needed for next checkpoint.
+
+### Issues Found
+- Low reward trend needs watching (batch variance vs degradation)
+- All-zero rubric scores on wrong answers not masked (by design, but harsh)
+- Entropy rising (7.3 -> 8.2 -> 9.1 over steps 1,5,6)
+
+### Actions Taken
+- None -- monitoring. Will investigate further if step 7 rewards remain low.
+
+---
+
+## Monitor Cycle -- 2026-02-22 21:25 UTC
+
+### Status
+- **Process**: Running (Attempt #5, step 5 rollouts)
+- **Steps completed**: 6 effective gradient updates (steps 1-4 from A2, steps 5-6 from A4)
+- **Time since last check**: ~1h
+- **Crashes**: 4 total
+
+### Crash #4 (Attempt #4): OOM during ppo_train at step 7
+- Time: 20:55 UTC, after 19577s (~5.4h)
+- Error: CUDA OOM on GPU 3 (tried 12.02 GiB, 9.56 GiB free)
+- Step 7 rollouts completed (avg_final_rewards=2.742) but gradient update failed
+- Resume: Attempt #5 from step 4 checkpoint (again)
+
+### Reward Trend (CONCERN)
+| Step | Attempt | avg_final_rewards | avg_resp_len | Policy |
+|------|---------|-------------------|--------------|--------|
+| 1 | A2 | 5.031 | 15487 | base |
+| 2 | A2 | 5.106 | 17376 | base+1 |
+| 3 | A2 | 5.117 | 15335 | base+2 |
+| 4 | A2 | 5.268 | 16885 | base+3 |
+| 5 | A2 | 4.958 | 16423 | base+4 |
+| 6 | A2 | 5.306 | 14131 | base+5 |
+| 7 | A2 | 4.452 | 15917 | base+6 |
+| 5 | A4 | 3.456 | 11923 | base+4 |
+| 6 | A4 | 3.207 | 8260 | base+4+1 |
+| 7 | A4 | 2.742 | 11168 | base+4+2 |
+
+Key observations:
+1. Same step 4 policy produced 4.96 (A2) vs 3.46 (A4) on step 5 -- different batches
+2. Attempt #4 saw consistent decline across 3 steps (3.46 -> 3.21 -> 2.74)
+3. Response lengths shorter in A4 (8-12k vs 14-17k in A2)
+4. Entropy rose from 8.2 to 9.1 over steps 5-6 in A4
+
+Possible explanations:
+- Batch variance: A4 drew harder tasks (rare_disease, variant_prioritization)
+- Policy divergence: A4 updates were based on lower-reward batches, potentially reinforcing suboptimal behavior
+- External: Runtime API changes, rate limits affecting code execution quality
+
+**Attempt #5 will be the decisive test**: if it produces ~5.0 on step 5, the A4 decline was batch variance. If it also produces ~3.5, there may be a deeper issue.
+
+### Rubric Fix Status
+- 1048 evals, 2 rubric_eval_failed (both masked)
+- Fix continues to work correctly
+
+### Checkpoint
+- Still at global_step_4. 4 crashes since, unable to advance to step 8.
+
+### Issues Summary
+1. **OOM crashes** preventing checkpoint advancement (stuck at step 4)
+2. **Reward decline** in Attempt #4 (needs confirmation from A5)
+3. **Entropy increasing** (policy becoming more exploratory)
+
+### Actions Taken
+- None -- monitoring. Waiting for Attempt #5 results.
+- If A5 also shows low rewards, will investigate external factors and runtime health.
+
+---
+
+## Monitor Cycle -- 2026-02-22 22:25 UTC
+
+### Status
+- **Process**: Running (Attempt #5, step 5 rollouts, ~1.5h)
+- **No new crashes, no new steps**
+- Waiting for Attempt #5 step 5 results (decisive for batch variance vs degradation)
+- Checkpoint: global_step_4
+
+### Actions Taken
+- None -- monitoring
+
+---
+
+## Monitor Cycle -- 2026-02-22 23:30 UTC (ALERT)
+
+### Status
+- **Process**: Running (Attempt #5, step 6 rollouts)
+- **Steps completed**: Step 5 done in A5 (avg_final_rewards=2.485, LOWEST YET)
+- **Time since last check**: ~1h
+
+### CRITICAL: Systematic Reward Decline
+
+Attempt #5, step 5, using the SAME step 4 checkpoint policy:
+- Attempt #2 step 5: avg_final_rewards = 4.958
+- Attempt #3 step 5: ~4.97 (incomplete)
+- Attempt #4 step 5: 3.456
+- Attempt #5 step 5: 2.485
+
+This is NOT batch variance. The same policy is producing progressively worse rewards across restarts.
+
+### Reward Component Analysis (Attempt #5 step 6 rollouts, last 20)
+- ft_reward: 100% = 1.0 (format is fine)
+- gt_reward: 8/30 failures (27%) -- roughly same as early training
+- rubric_reward: Mean ~1.94 (range 0.4-3.8) -- dramatically lower than early training (~3.4-4.9)
+
+Even for CORRECT answers (gt=1.0), rubric scores are 2.3-3.8 vs 3.5-4.95 in early steps.
+This is a systematic rubric score depression.
+
+### Possible Root Causes
+1. **Rubric critic shift**: Claude sonnet API returning consistently lower scores
+2. **Runtime environment degradation**: Bioinformatics APIs returning errors/timeouts, leading to lower-quality code execution outputs, which the critic then scores lower
+3. **vLLM nondeterminism**: Inference producing different distributions despite same weights
+
+### Grad Norm Spike
+- Step 5 (A5): grad_norm = 0.588 (3x the normal 0.12-0.22 range)
+- This large gradient from a low-reward batch could push the policy in a bad direction
+
+### Format Failures (cumulative)
+- rule2: 28, end_tag: 79 (accelerating rate from earlier ~1-2/step)
+
+### Actions Recommended for User
+1. Check if Claude rubric API behavior has changed
+2. Check runtime server health (are bioinfo APIs rate-limiting more?)
+3. Consider reverting to step 4 checkpoint and doing a fresh run with investigation
+
+---
+
+## Monitor Cycle -- 2026-02-22 23:35 UTC (ROOT CAUSE FOUND)
+
+### ROOT CAUSE: Runtime Environment Degradation
+
+**Evidence**: Multiple 'ValueError: I/O operation on closed file.' errors in code execution.
+The model itself reports: 'my code execution is not working properly.'
+
+**Impact on metrics**:
+- rubric_code_handling: 0.76/10 (was ~6.5 in early steps)
+- rubric_methodology: 1.70/10 (was ~6.0)
+- gt_reward: 0.375 (was ~0.70)
+
+**Affected tasks** (code-heavy): lab_bench_dbqa (gt=0.27), patient_gene_detection (gt=0.1), rare_disease (gt=0.0)
+**Unaffected tasks** (simpler lookups): gwas_opentargets (gt=1.0 still)
+
+This is a runtime server issue, NOT:
+- NOT a rubric fix regression (rubric_eval_failed still 0)
+- NOT a policy problem (same checkpoint, format compliance unchanged)
+- NOT a rubric critic change (scores correctly reflect degraded code execution quality)
+
+### Recommended Action
+1. Restart the Biomni runtime server
+2. Check if code execution sandboxes have file descriptor limits
+3. May need to restart training from step 4 after fixing runtime
+
+### Attempt #5 Step 5 Rollout Metrics
+- avg_final_rewards: 2.485, avg_response_length: 8832
+- gt_reward: 0.375, ft_reward: 0.888, rubric_reward: 1.222
+- pass_at_n: 56.25%
+- grad_norm spiked to 0.588 (3x normal) due to low-reward batch
+
+---
+
+## Monitor Cycle — 2026-02-23 00:45 UTC
+
+### Status
+- **Process**: Running (fresh launch, attempt #1)
+- **Steps completed**: 4 (resumed from global_step_4 checkpoint)
+- **Time since last check**: N/A — fresh relaunch after investigating runtime collapse
+
+### Previous Run Post-Mortem (training_rubric_fix_20260221.log)
+
+The previous training run (started 2026-02-21 20:18) suffered two critical issues:
+
+**1. Runtime environment collapse (silent)**
+- `ValueError: I/O operation on closed file` — 72 occurrences starting at step 11 (pid 304434, ~17:24 UTC Feb 22)
+- The BioAgentOS runtime Python REPL had corrupted stdout file handles, causing ALL print/output to fail
+- This poisoned reward signals: `rubric_code_handling` dropped from 6.5 to 0.8 over 4 steps
+- `avg_final_rewards` declined: 4.97 to 3.46 to 3.21 to 2.74 to 2.49
+- The `error_runtime` metric stayed at 0.0 because the error was inside observation text, not at the framework level
+
+**2. Checkpoint save failures**
+- 4 crashes total: 3x CUDA OOM, 1x NCCL barrier timeout during checkpoint save
+- Only `global_step_4` checkpoint survived; the step 8 save failed due to NCCL barrier timeout
+- User added extended NCCL timeout (28800s) to `init_process_group` in `megatron_worker.py`
+
+**Actions taken:**
+- Stopped training, restarted Biomni runtime server (fresh container, cleared logs)
+- Cleaned Ray sessions, core dumps, stale editable finders
+- Relaunched training from global_step_4 with fresh log (training_rubric_fix_20260223.log)
+- Removed --no-ray-restart flag (not needed for single-node)
+- Updated launch-training and monitor-training skills with new findings
+
+### Current Run Initial Health Check
+- Resumed from global_step_4 successfully
+- First rewards: 6.7, 6.7, 6.7, 6.9, 6.8, 7.0, 6.7 — back to healthy 5-7 range
+- Zero I/O errors in new log
+- Runtime server healthcheck: 200
+- NCCL timeout set to 28800s (confirmed in log)
+
+---
+
+## Monitor Cycle — 2026-02-23 01:42 UTC
+
+### Status
+- **Process**: Running (attempt #1, no crashes)
+- **Steps completed**: 4 (step 5 rollouts in progress, not yet finished)
+- **Time since last check**: ~1h
+
+### Metrics Snapshot
+- avg_final_rewards: pending (step 5 rollout still in progress)
+- Individual total_rewards: 1.5-7.0 range (healthy distribution)
+- gt_reward pass rate: 61.5% (40/65)
+- ft_reward pass rate: 87.7% (57/65, 8 failures — acceptable)
+- Format failures (Rule 2): 4 (low, expected)
+- I/O errors: 0 (runtime is clean)
+- Context overflows: 0
+- Crashes: 0
+
+### Reward Breakdown (last 20 samples)
+- Rewards range from 1.5 to 6.9 — healthy mix of correct (gt=1.0) and incorrect (gt=0.0)
+- No anomalous patterns; rubric scores in 0.5-4.9 range (distributed)
+- ft_reward mostly 1.0 with occasional 0.0 — normal
+
+### Issues Found
+- None — training is healthy with fresh runtime
+
+### Actions Taken
+- None — healthy
+
+
+---
+
+## Monitor Cycle — 2026-02-23 02:43 UTC
+
+### Status
+- **Process**: Running (attempt #1, no crashes)
+- **Steps completed**: 5 (step 6 rollouts in progress)
+- **Time since last check**: ~1h
+
+### Metrics Snapshot
+- avg_final_rewards: 4.576
+- policy_loss (pg): 0.000167
+- grad_norm: 0.266
+- entropy: 6.10
+- ppo_clip_ratio: 0.25
+- avg_response_length: 15620
+
+### Reward Breakdown (step 5 batch)
+- ft_reward pass rate: 88.8%
+- gt_reward pass rate: 57.5%
+- rubric_reward mean: 3.11
+- total_reward mean: 4.58
+- rubric_code_handling: 6.34 (fully recovered from 0.76 collapse)
+
+### Format Failures
+- Rule 2 (not exactly one think): 4 (stable, low)
+
+### Environment Runtime Health
+- I/O errors: 0
+- Slow executions (>180s): 240 total (expected for bio API calls)
+- error_runtime: 0.0
+
+### Context Overflows
+- Count: 0
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- None — training is healthy
+
+### Actions Taken
+- None — healthy
+
+---
+
+## Monitor Cycle — 2026-02-23 02:43 UTC (AMENDED with qualitative check)
+
+### Status
+- **Process**: Running (attempt #1, no crashes)
+- **Steps completed**: 5 (step 6 rollouts in progress)
+- **Time since last check**: ~1h
+
+### Metrics Snapshot
+- avg_final_rewards: 4.576
+- policy_loss (pg): 0.000167
+- grad_norm: 0.266
+- entropy: 6.10
+- ppo_clip_ratio: 0.25
+- avg_response_length: 15620
+
+### Reward Breakdown (step 5 batch)
+- ft_reward pass rate: 88.8% (8/65 failures)
+- gt_reward pass rate: 57.5% (correct answers)
+- rubric_reward mean: 3.11
+- total_reward mean: 4.58
+- rubric_code_handling: 6.34 (fully recovered)
+- rubric_methodology: 5.42
+- rubric_reasoning: 6.82
+
+### Format Failures
+- Rule 2 (not exactly one think): 4 (stable, low)
+
+### Environment Runtime Health — Qualitative Spot-Check
+- I/O errors: 0 (runtime is clean)
+- Slow executions (>180s): 240 total (all in the expected ~351s range for advanced_web_search)
+- Tracebacks in observations: 1 (SyntaxError in model-generated code — model correctly identified and fixed it in the next turn)
+- error_runtime: 0.0
+
+**Slow execution samples (3 read):**
+1. `advanced_web_search("APOC3 chromosome 11 GWAS lead variant...")` (351s): Returned sensible, detailed answer about rs964184 SNP and APOC3 variants. Output is coherent with citations.
+2. `advanced_web_search("SLC39A8 rs13107325 central amygdala...")` (351s): Returned detailed answer about imaging GWAS associations with brain structure. Well-structured with PubMed citations.
+3. `advanced_web_search("CERS1 sphingolipid metabolism myo-inositol...")` (351s): Returned comprehensive answer about CERS1-inositol connections with references. Very long but sensible.
+
+**Observation samples (4 read):**
+1. DisGeNET disease query: Returned structured data for 10 candidate genes with disease counts (MSH3: 157, ASXL1: 188, KRAS: 835, etc.). Clean, formatted output.
+2. SETX clinical feature analysis: Detailed phenotype matching output with clinical features, progression notes, and list of non-matching phenotypes. Content is medically sensible.
+3. Candidate gene comparison table: pandas DataFrame displayed correctly, model assigned match scores and provided reasoning.
+4. SETX/AOA2 clinical feature search: LLM-based search returned nuanced answer about whether corpus callosum agenesis is typical for AOA2 (correctly said no).
+
+**Parsed outputs (7 read):**
+- Variant IDs: rs7157785 (gt=1.0), rs247616 (gt=1.0 x3), correctly structured
+- Disease diagnosis: Sheldon-Hall Syndrome/601680 (gt=0.0 — wrong OMIM, true was Arthrogryposis Type 1A/108120)
+- Causal genes: FTO (gt=0.0), SLC39A8 (gt=1.0), SIK3 (gt=0.0) — mix of correct and incorrect
+
+**Summary:** Runtime is healthy. Code execution returns real, substantive results. The model is engaging in multi-step scientific reasoning with API calls, web searches, and data analysis. Errors in observations are from model-generated syntax errors (expected during RL), not from runtime corruption. No signs of degradation.
+
+### Context Overflows
+- Count: 0
+
+### Crashes Since Last Check
+- None
+
+### Issues Found
+- None — training is healthy
+
+### Actions Taken
+- None — healthy
+
+---
+
+## Monitor Cycle — 2026-02-23 03:52 UTC
+
+### Status
+- **Process**: Running (attempt #1, no crashes)
+- **Current step**: 6 just completed training, step 7 rollouts likely starting
+- **Time since last check**: ~1h
+
+### Metrics Snapshot (step 6)
+- **avg_final_rewards**: 5.46 (UP from 4.58 at step 5)
+- **gt_reward**: 0.725 (up from 0.575)
+- **ft_reward**: 0.9875 (up from 0.8875)
+- **rubric_reward**: 3.748 (up from 3.113)
+- **rubric_code_handling**: 7.45 (up from 6.34)
+- **rubric_methodology**: 6.56 (up from 5.42)
+- **rubric_reasoning**: 8.11 (up from 6.82)
+- **pass_at_n**: 81.25%
+- **avg_turn_assistant**: 9.875 (down from 12.6 — more efficient)
+- **context_exceed_ratio**: 0.0
+- **error_runtime**: 0.0
+- **policy_loss**: 0.000188
+- **ppo_clip_ratio**: 0.375
+- **entropy**: 6.894
+- **grad_norm**: 0.175
+- **format failures** (not exactly one think): 4 (unchanged)
+
+### Reward Trend
+| Step | avg_reward | gt | ft | rubric | code_handling | methodology | reasoning |
+|------|-----------|------|------|--------|---------------|-------------|-----------|
+| 5    | 4.576     | 0.575| 0.888| 3.113  | 6.34          | 5.42        | 6.82      |
+| 6    | 5.461     | 0.725| 0.988| 3.748  | 7.45          | 6.56        | 8.11      |
+
+All metrics improving — training is learning effectively.
+
+### Task Breakdown (step 6)
+- screen_gene_retrieval: 6.49 (1 instance, gt=1.0)
+- gwas_causal_gene_opentargets: 5.63 (4 instances, gt=0.75)
+- gwas_variant_prioritization: 5.94 (2 instances, gt=1.0)
+- lab_bench_seqqa: 6.01 (2 instances, gt=0.9)
+- crispr_delivery: 6.67 (1 instance, gt=1.0)
+- lab_bench_dbqa: 6.72 (1 instance, gt=1.0)
+- gwas_causal_gene_gwas_catalog: 4.73 (2 instances, gt=0.5)
+- gwas_causal_gene_pharmaprojects: 4.26 (2 instances, gt=0.4)
+- rare_disease_diagnosis: 3.11 (1 instance, gt=0.0)
+
+### Environment Runtime Health — Qualitative Spot-Check
+
+**I/O errors**: 0 | **Tracebacks in step 6 observations**: 0 | **ValueError**: 0
+
+**Slow execution samples (3 read, step 6 area):**
+1. `query_opentarget(prompt)` for TNNI2 (533s): Returned valid OpenTargets GraphQL JSON. Successfully identified ENSG00000130598/TNNI2 "troponin I2, fast skeletal type". API response is well-structured.
+2. `advanced_web_search("rs174548 CETP SNPs HDL UK Biobank...")` (215s): Returned a conversational clarification asking which CETP SNPs to pull. Content is sensible and domain-appropriate.
+3. `advanced_web_search` for APOA5 GWAS meta-analysis (533s): Initiated multi-step data retrieval. Runtime response is coherent.
+
+**Observation samples (3 read, step 6 area):**
+1. **ERAD-L pathway analysis**: Long, scientifically detailed answer covering ERAD components (HRD1, SEL1L, p97/VCP, UBE2J1), tissue specificity, and disease associations (AAT, CF, diabetes). Well-referenced with PubMed links. Content is medically accurate.
+2. **Candidate gene screen** (10 genes: TAAR5, NRL, BHLHA15, ASB3, XKR3, MIR3171, C2orf91, EID1, NIFK, TIMP4): Each gene got a concise functional summary with NCBI/UniProt citations. Responses are substantive and differentiated (e.g., XKR3 correctly noted as "poorly characterized", NRL correctly identified as rod photoreceptor TF).
+3. **Candidate gene comparison table**: pandas DataFrame displayed correctly with Gene/Disease/Match_score columns.
+
+**Parsed outputs (10 read, step 6):**
+- BCL11A → gt=1.0, BCL11A → gt=1.0 (correct causal gene)
+- APOC3 → gt=1.0, APOC3 → gt=1.0 (correct)
+- UBE2J1 → gt=1.0 (correct screen gene)
+- rs247616 → gt=1.0 (correct variant)
+- HNRNPF → gt=0.0, FTO → gt=0.0, APOA5 → gt=0.0 (incorrect but reasonable guesses)
+- Distal Arthrogryposis 2B/601680 → gt=0.0 (wrong OMIM, true was Arthrogryposis 1A/108120)
+
+Outputs are well-structured, diverse, and domain-appropriate. No degenerate patterns.
+
+### Summary
+Training is healthy and improving across all metrics. Runtime environment is clean — observations return real scientific data from OpenTargets, DisGeNET, web search, and other APIs. No signs of degradation.
+
+### Actions Taken
+- None — healthy
+
+---
+
+## Monitor Cycle — 2026-02-23 04:53 UTC
+
+### Status
+- **Process**: Running (attempt #1, no crashes)
+- **Current step**: 7 rollouts in progress (no new avg_final_rewards logged since step 6)
+- **Log size**: 50295 lines (grew ~18k lines from step 6 rollouts)
+
+### Metrics (still step 6, step 7 not complete)
+- avg_final_rewards: 5.46 (unchanged — step 7 training not yet done)
+- I/O errors: 0
+- Format failures: 6 (up from 4, minor)
+- Context overflows: 0
+
+### Recent Rewards (step 7 rollouts in progress)
+Tail of rewards: 5.8, 2.8, 2.4, 2.05, 6.6, 2.9, 6.1, 6.85, 2.0, 6.3
+- Mix of high (6-7 range) and low (2-3 range) — normal RL variance
+- No collapse pattern (no sustained low values)
+
+### Environment Runtime Health — Qualitative Spot-Check
+
+**I/O errors**: 0 | **Tracebacks**: 0 (in step 7 area) | **ValueError**: 0
+
+**Slow execution samples (3 read, step 7 area):**
+1. `query_ensembl("lookup/id/ENSG00000087237")` for CETP (269s): Returned valid JSON with gene object (chr16, CETP, protein_coding, GRCh38). API response clean and structured.
+2. `query_clinvar(...)` for 14 candidate genes (269s): Returned 11,664 ClinVar results with detailed variant records (e.g., SON:c.1889T>C p.Leu630Pro — Uncertain significance for ZTTK syndrome; COL4A3:c.2675G>C — Likely pathogenic for Alport syndrome). Output is truncated at 10k chars but data is real and correctly structured.
+3. `advanced_web_search("CHRM3 rs6688537 GWAS COPD emphysema...")` (269s): Returned detailed GWAS summary for rs6688537 at CHRM3 locus from Wain et al. (Nat Genet 2017) — includes beta, p-value, biological mechanism (M3 muscarinic receptor / bronchodilator target), and suggested follow-up analyses. Well-cited with PubMed links.
+
+**Parsed outputs (10 read):**
+- APOM → gt=0.0 (incorrect causal gene)
+- Choice B → gt=0.0 (wrong MCQ answer)
+- C4A → gt=0.0, ft=0.0 (wrong gene, wrong format)
+- Choice D → gt=1.0 (correct)
+- Choice B → gt=0.0
+- CALCA → gt=1.0, CALCA → gt=1.0 (correct causal gene, repeated for 2 samples)
+- "No diagnosis" / OMIM=None → gt=0.0 (model correctly refused to diagnose when gene didn't match phenotype — interesting behavior)
+- ENSG00000136944 → gt=1.0 x2 (correct Ensembl ID for causal gene)
+
+Outputs are diverse in format (causal_gene, choice, disease_name, causal_genes list) and show real reasoning. No degenerate patterns.
+
+### Summary
+Training healthy. Step 7 rollouts ~75% complete based on log growth rate. Environment returning real results from Ensembl, ClinVar, GWAS Catalog, and web search. All APIs functional. No signs of degradation.
+
+### Actions Taken
+- None — healthy

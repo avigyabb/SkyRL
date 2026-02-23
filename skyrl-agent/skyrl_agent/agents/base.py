@@ -308,12 +308,14 @@ class AgentRunner:
                 global_fallback_set = [copy.deepcopy(res) for _, res in results]
                 break
         # get reward before handling empty messages
+        rubric_eval_failed_list = []
         for idx, result in enumerate(matched_results):
             reward = result.get("reward", False)
             raw_reward_list.append(reward)
             gt_reward_list.append(result.get("gt_reward", 0.0))
             ft_reward_list.append(result.get("ft_reward", 0.0))
             rubric_reward_list.append(result.get("rubric_reward", 0.0))
+            rubric_eval_failed_list.append(result.get("rubric_eval_failed", False))
             # Collect itemized rubric scores if available
             rubric_details = result.get("rubric_details", {})
             rubric_output_grading_list.append(rubric_details.get("output_grading", 0.0))
@@ -463,6 +465,19 @@ class AgentRunner:
                         f"response_len={response_len} > threshold={overlong_threshold}, ft_reward={ft_reward}"
                     )
 
+        # Mask out trajectories where the rubric LLM judge failed (spurious 0 reward)
+        num_rubric_eval_failed = 0
+        for idx, result in enumerate(matched_results):
+            if result.get("rubric_eval_failed", False):
+                loss_mask[idx] = [0] * len(loss_mask[idx])
+                response_assistant_mask[idx] = [0] * len(response_assistant_mask[idx])
+                raw_reward_list[idx] = 0.0
+                num_rubric_eval_failed += 1
+                logger.info(
+                    f"[Rubric Eval Failed] Masked out rollout {idx}: "
+                    f"rubric evaluation failed, excluding from advantage and loss"
+                )
+
         rollout_metrics = {}
         # Compute assistant-based turn average and record metric
         avg_turn_assistant = (sum(num_turns) / len(num_turns)) if len(num_turns) > 0 else 0.0
@@ -529,15 +544,30 @@ class AgentRunner:
         )
         # Track overlong + bad format filtered rollouts
         rollout_metrics["rollout_metrics/num_overlong_filtered"] = num_overlong_filtered if overlong_filter_enabled else 0
-        rollout_metrics["rollout_metrics/raw_reward"] = raw_reward
-        rollout_metrics["rollout_metrics/gt_reward"] = sum(gt_reward_list) / len(gt_reward_list) if gt_reward_list else 0.0
-        rollout_metrics["rollout_metrics/ft_reward"] = sum(ft_reward_list) / len(ft_reward_list) if ft_reward_list else 0.0
-        rollout_metrics["rollout_metrics/rubric_reward"] = sum(rubric_reward_list) / len(rubric_reward_list) if rubric_reward_list else 0.0
+        rollout_metrics["rollout_metrics/num_rubric_eval_failed"] = num_rubric_eval_failed
+
+        # Filter out failed rubric evaluations from logged reward metrics
+        # so reported averages reflect true model performance, not eval failures
+        _valid = [not f for f in rubric_eval_failed_list]
+        _filter = lambda lst: [v for v, ok in zip(lst, _valid) if ok]
+        _valid_raw = _filter(raw_reward_list)
+        _valid_gt = _filter(gt_reward_list)
+        _valid_ft = _filter(ft_reward_list)
+        _valid_rubric = _filter(rubric_reward_list)
+        _valid_output_grading = _filter(rubric_output_grading_list)
+        _valid_methodology = _filter(rubric_methodology_list)
+        _valid_code_handling = _filter(rubric_code_handling_list)
+        _valid_reasoning = _filter(rubric_reasoning_list)
+
+        rollout_metrics["rollout_metrics/raw_reward"] = sum(_valid_raw) / len(_valid_raw) if _valid_raw else 0.0
+        rollout_metrics["rollout_metrics/gt_reward"] = sum(_valid_gt) / len(_valid_gt) if _valid_gt else 0.0
+        rollout_metrics["rollout_metrics/ft_reward"] = sum(_valid_ft) / len(_valid_ft) if _valid_ft else 0.0
+        rollout_metrics["rollout_metrics/rubric_reward"] = sum(_valid_rubric) / len(_valid_rubric) if _valid_rubric else 0.0
         # Itemized rubric scores (for rubric-based evaluation)
-        rollout_metrics["rollout_metrics/rubric_output_grading"] = sum(rubric_output_grading_list) / len(rubric_output_grading_list) if rubric_output_grading_list else 0.0
-        rollout_metrics["rollout_metrics/rubric_methodology"] = sum(rubric_methodology_list) / len(rubric_methodology_list) if rubric_methodology_list else 0.0
-        rollout_metrics["rollout_metrics/rubric_code_handling"] = sum(rubric_code_handling_list) / len(rubric_code_handling_list) if rubric_code_handling_list else 0.0
-        rollout_metrics["rollout_metrics/rubric_reasoning"] = sum(rubric_reasoning_list) / len(rubric_reasoning_list) if rubric_reasoning_list else 0.0
+        rollout_metrics["rollout_metrics/rubric_output_grading"] = sum(_valid_output_grading) / len(_valid_output_grading) if _valid_output_grading else 0.0
+        rollout_metrics["rollout_metrics/rubric_methodology"] = sum(_valid_methodology) / len(_valid_methodology) if _valid_methodology else 0.0
+        rollout_metrics["rollout_metrics/rubric_code_handling"] = sum(_valid_code_handling) / len(_valid_code_handling) if _valid_code_handling else 0.0
+        rollout_metrics["rollout_metrics/rubric_reasoning"] = sum(_valid_reasoning) / len(_valid_reasoning) if _valid_reasoning else 0.0
         
         # Calculate pass@n (percentage of instances with at least one success)
         # Note: num_none_resolved counts instances where resolution rate is 0 (meaning 0 successes)
@@ -576,6 +606,30 @@ class AgentRunner:
 
         for task_name, count in task_counts.items():
             rollout_metrics[f"rollout_metrics/instances_per_task/{task_name}"] = int(count)
+
+        # Per-task reward breakdown (avg reward, gt_reward, rubric_reward, ft_reward per task)
+        # Excludes trajectories where rubric evaluation failed
+        task_rewards = defaultdict(lambda: {"total": [], "gt": [], "rubric": [], "ft": []})
+        for inst, reward, gt, rubric, ft, failed in zip(
+            instance_list, raw_reward_list, gt_reward_list, rubric_reward_list, ft_reward_list, rubric_eval_failed_list
+        ):
+            if failed:
+                continue
+            task_name = inst.get("task_name")
+            if task_name is None:
+                continue
+            task_rewards[task_name]["total"].append(reward)
+            task_rewards[task_name]["gt"].append(gt)
+            task_rewards[task_name]["rubric"].append(rubric)
+            task_rewards[task_name]["ft"].append(ft)
+
+        for task_name, rewards in task_rewards.items():
+            n = len(rewards["total"])
+            if n > 0:
+                rollout_metrics[f"rollout_metrics/reward_per_task/{task_name}/total"] = sum(rewards["total"]) / n
+                rollout_metrics[f"rollout_metrics/reward_per_task/{task_name}/gt"] = sum(rewards["gt"]) / n
+                # rollout_metrics[f"rollout_metrics/reward_per_task/{task_name}/rubric"] = sum(rewards["rubric"]) / n
+                # rollout_metrics[f"rollout_metrics/reward_per_task/{task_name}/ft"] = sum(rewards["ft"]) / n
 
         # Optional aggregation of tool-call profiling if available
         try:

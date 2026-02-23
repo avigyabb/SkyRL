@@ -64,6 +64,7 @@ class BiomniCodeActRubricTrajectory(BiomniCodeActTrajectory):
             self.result["gt_reward"] = metrics["gt_reward"]
             self.result["rubric_reward"] = metrics["rubric_reward"]
             self.result["ft_reward"] = metrics["ft_reward"]
+            self.result["rubric_eval_failed"] = metrics.get("rubric_eval_failed", False)
             
             # Store detailed rubric information for logging
             self.result["rubric_details"] = metrics.get("rubric_details", {})
@@ -86,4 +87,5 @@ class BiomniCodeActRubricTrajectory(BiomniCodeActTrajectory):
             self.result["gt_reward"] = 0
             self.result["rubric_reward"] = 0
             self.result["ft_reward"] = 0
+            self.result["rubric_eval_failed"] = True
             self.result["eval_error"] = str(e)

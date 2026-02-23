@@ -199,8 +199,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
 
         if not torch.distributed.is_initialized():
-            _logging.info(f"[PolicyWorker] rank={self._rank} calling torch.distributed.init_process_group(backend='nccl')...")
-            torch.distributed.init_process_group(backend="nccl")
+            import datetime
+            _nccl_timeout = int(os.environ.get("NCCL_TIMEOUT", 1800))
+            _logging.info(f"[PolicyWorker] rank={self._rank} calling torch.distributed.init_process_group(backend='nccl', timeout={_nccl_timeout}s)...")
+            torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=_nccl_timeout))
             _logging.info(f"[PolicyWorker] rank={self._rank} init_process_group DONE")
         else:
             _logging.info(f"[PolicyWorker] rank={self._rank} torch.distributed already initialized, skipping")
@@ -517,8 +519,10 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
 
         if not torch.distributed.is_initialized():
-            _logging.info(f"[RefWorker] rank={self._rank} calling torch.distributed.init_process_group(backend='nccl')...")
-            torch.distributed.init_process_group(backend="nccl")
+            import datetime
+            _nccl_timeout = int(os.environ.get("NCCL_TIMEOUT", 1800))
+            _logging.info(f"[RefWorker] rank={self._rank} calling torch.distributed.init_process_group(backend='nccl', timeout={_nccl_timeout}s)...")
+            torch.distributed.init_process_group(backend="nccl", timeout=datetime.timedelta(seconds=_nccl_timeout))
             _logging.info(f"[RefWorker] rank={self._rank} init_process_group DONE")
         else:
             _logging.info(f"[RefWorker] rank={self._rank} torch.distributed already initialized, skipping")
