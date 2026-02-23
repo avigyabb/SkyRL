@@ -12,7 +12,7 @@ agent_cls: skyrl_agent.agents.biomni_codeact.BiomniCodeActRubricAgent
 # 2. Have format reward (ft_reward) == 0
 # This filters degenerated cases where agent produces very long non-compliant outputs
 overlong_filter_enabled: true
-overlong_filter_threshold: 32768  # 32k tokens
+overlong_filter_threshold: 40000
 
 # Heavy logging: log detailed trajectory samples periodically
 use_log_heavy: true
@@ -33,11 +33,12 @@ generator:
 
   num_trajectories: 8
   max_iterations: 48
-  max_prompt_length: 45056
+  max_prompt_length: 40960
   sampling_params:
     temperature: 1.0
     top_p: 1.0
     max_tokens: 4096
+    logprobs: 0
   remove_think_tokens: false
   vision_is_active: false
   qwen3_enable_thinking: true

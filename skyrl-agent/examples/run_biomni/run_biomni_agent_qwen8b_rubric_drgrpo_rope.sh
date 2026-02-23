@@ -9,34 +9,39 @@
 set -euo pipefail
 set -x
 
-# Basic environment setup
+ulimit -c 0
+
 export PYTHONUNBUFFERED=1
 export RUST_BACKTRACE=1
 export HYDRA_FULL_ERROR=1
 : "${OPENAI_API_KEY:=sc}"
 export OPENAI_API_KEY
 
-# NCCL timeouts/debug (optional)
 export NCCL_TIMEOUT=28800
 export NCCL_DEBUG=INFO
 export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_SOCKET_IFNAME=enp0s19            # force NCCL to use host network (10.138.0.x)
+export NCCL_IB_DISABLE=1                     # GCP standard VMs — no InfiniBand
+export NCCL_NET_GDR_LEVEL=LOC                # disable GPUDirect RDMA
+
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+export WANDB_API_KEY="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"
 
 export FLASHINFER_DISABLE_VERSION_CHECK=1
-
-# export VLLM_USE_V1=0
 export VLLM_DISABLE_COMPILE_CACHE=1
 export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
 export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1
 export RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES=1
-# export VLLM_ALLREDUCE_USE_SYMM_MEM=0
 
-export UV_CACHE_DIR=/dfs/scratch1/lansong/uv_cache
+export UV_CACHE_DIR=/mnt/biomni_filestore/uv_cache
 export XDG_CACHE_HOME=$UV_CACHE_DIR
-export UV_PROJECT_ENVIRONMENT=/dfs/scratch1/lansong/venvs/skyrl-agent
-export HOME=/dfs/scratch1/lansong
+export UV_PROJECT_ENVIRONMENT=/mnt/biomni_filestore/venvs/skyrl-agent
+export HOME=/workspace
+
 export RAY_RUNTIME_ENV_HOOK=ray._private.runtime_env.uv_runtime_env_hook.hook
 export UV_HTTP_TIMEOUT=1800
-export BIOMNI_RUNTIME_URL="http://172.24.75.90:8000"
+export BIOMNI_RUNTIME_URL="http://10.138.0.4:8000"
 
 # -----------------------------
 # LLM Critic Configuration
@@ -57,11 +62,11 @@ fi
 PROJECT_NAME="biomni-training-qwen3-8b-skyrlagent-rubric-drgrpo"
 EXPERIMENT_NAME="biomni-training-qwen3-8b-32bsz-temp1.0-clip-0.28-48turn-skyrlagent-rubric-drgrpo-rope"
 
-DATA_PATH="/dfs/scratch1/lansong/BioAgentOS/biomni_env_screen/data/rl_data/skyrl_agent"
-TRAIN_FILE="$DATA_PATH/train.parquet"
-VAL_FILE="$DATA_PATH/val.parquet"
-SFT_MODEL_PATH="/dfs/scratch1/lansong/models/qwen/qwen3-8b-sft-full-v1/global_step_208"
-CKPT_PATH="/dfs/scratch1/lansong/models/skyrlagent"
+DATA_PATH="/mnt/local/biomni/skyrl-data"
+TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
+VAL_FILE="$DATA_PATH/val_freeform.parquet"
+SFT_MODEL_PATH="/mnt/biomni_filestore/model_weights/qwen3-8b-sft-full-v1/global_step_208"
+CKPT_PATH="/mnt/biomni_filestore/models/skyrlagent"
 
 
 # RUNTIME_HOSTPORT="172.24.75.90:8000"
@@ -85,7 +90,7 @@ FLASH_ATTN=true
 
 # Parallelism
 TP_SIZE=1
-SP_SIZE=8
+SP_SIZE=4
 NUM_GPUS_PER_NODE=8
 NNODES=1
 
@@ -133,7 +138,14 @@ fi
 # uv pip install "torch==2.5.1" "torchvision==0.20.1" "torchaudio==2.5.1"
 
 
-PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/SkyRLV1/skyrl-agent/examples/run_biomni/.env.biomni -m skyrl_agent.integrations.skyrl_train.skyrl_train_main \
+VENV_PYTHON="$UV_PROJECT_ENVIRONMENT/bin/python"
+CUDNN_PATH="$($VENV_PYTHON -c 'import inspect, nvidia.cudnn as c, os; print(os.path.dirname(inspect.getfile(c)))' 2>/dev/null || echo '')"
+if [ -n "$CUDNN_PATH" ]; then
+  export CPATH="$CUDNN_PATH/include:${CPATH:-}"
+  export LD_LIBRARY_PATH="$CUDNN_PATH/lib:${LD_LIBRARY_PATH:-}"
+fi
+
+PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-agent/examples/run_biomni/.env.biomni -m skyrl_agent.integrations.skyrl_train.skyrl_train_main \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$VAL_FILE']" \
   trainer.algorithm.advantage_estimator="grpo" \
@@ -158,7 +170,7 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   trainer.policy_mini_batch_size=$BATCH_SIZE \
   trainer.micro_train_batch_size_per_gpu=1 \
   trainer.micro_forward_batch_size_per_gpu=1 \
-  trainer.max_prompt_length=45056 \
+  trainer.max_prompt_length=40960 \
   trainer.eval_before_train=true \
   trainer.eval_interval=-1 \
   trainer.ckpt_interval=$SAVE_FREQ \
@@ -166,7 +178,7 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   trainer.project_name="$PROJECT_NAME" \
   trainer.run_name="$EXPERIMENT_NAME" \
   trainer.logger="$LOGGER" \
-  trainer.resume_mode=none \
+  trainer.resume_mode=latest \
   trainer.gradient_checkpointing_use_reentrant=true \
   trainer.flash_attn=$FLASH_ATTN \
   trainer.use_sample_packing=true \
@@ -179,11 +191,12 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   generator.n_samples_per_prompt=$NUM_TRAJ \
   generator.inference_engine_tensor_parallel_size=$TP_SIZE \
   generator.num_inference_engines=$((NUM_GPUS_PER_NODE * NNODES / TP_SIZE)) \
-  generator.gpu_memory_utilization=0.7 \
+  generator.gpu_memory_utilization=0.35 \
   generator.sampling_params.temperature=$TEMPERATURE \
   generator.sampling_params.top_p=$TOP_P \
   generator.sampling_params.max_generate_length=4096 \
-  generator.max_input_length=45056 \
+  generator.max_input_length=40960 \
+  generator.max_num_seqs=256 \
   generator.enforce_eager=true \
   trainer.policy.fsdp_config.cpu_offload=true \
   trainer.policy.fsdp_config.reshard_after_forward=true \
@@ -191,7 +204,7 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   +generator.engine_init_kwargs.rope_scaling.rope_type=yarn \
   +generator.engine_init_kwargs.rope_scaling.factor=1.5 \
   +generator.engine_init_kwargs.rope_scaling.original_max_position_embeddings=32768 \
-  +generator.engine_init_kwargs.max_model_len=49152 \
+  +generator.engine_init_kwargs.max_model_len=47000 \
   # NOTE: use_log_heavy and log_heavy_freq are configured in the YAML file \
   # (command-line +generator.* options do not reach agent config) \
   $@
