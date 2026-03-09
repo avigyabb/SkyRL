@@ -283,25 +283,30 @@ CRITERION 4 (0-10): Reasoning quality / coherence
 This criterion assesses the agent’s reasoning coherence and scientific rigor, including correct interpretation of evidence.
 Assign points ONLY if satisfied based on explicit content in the trajectory.
 
-Item 4.1: Plan and plan adherence (2 points)
+Item 4.1: Plan and plan adherence (1 points)
 +2 if the response lays out a plan and follows it (or explicitly updates it based on findings).
 
-Item 4.2: Correct interpretation of task and key evidence (user query + any intermediate results) (2 points)
+Item 4.2: Correct interpretation of task and key evidence (user query + any intermediate results) (1 points)
 +2 if the agent correctly interprets the decision-critical information available in the task AND any intermediate evidence it cites, including dataset columns/values, directionality of comparisons, and statistical quantities (e.g., p-values/effect sizes) when they appear.
 Do NOT award if it misreads directionality, confuses labels/columns, or invents results.
 
-Item 4.3: Evidence-to-claim linkage and final answer consistency (2 points)
+Item 4.3: Evidence-to-claim linkage and final answer consistency (1 points)
 +2 if claims are clearly supported by cited evidence (no major leaps/contradictions), the conclusion follows from comparison across candidates, and the ranking logic is explicit; the final answer matches the earlier ranking/argument and the stated confidence is appropriate.
 
 Item 4.4: Rigor: considers alternatives; avoids cherry-picking / p-hacking analogs (2 points)
 +2 if the agent rules out at least one plausible alternative (or compares tradeoffs across candidates) and does not cherry-pick convenient details
 while ignoring major constraints. If quantitative results are used, avoids post hoc significance claims or selective reporting.
 
-Item 4.5: No hallucinated data/experiments/citations; calibrated claims (2 points)
+Item 4.5: No hallucinated data/experiments/citations; calibrated claims (1 points)
 +2 if the agent does not fabricate data entries, study outcomes, or citations; distinguishes assumptions from facts; avoids unjustified certainty.
 +0 if any hallucinations/fabrications are present.
 
-Max total score = 2 + 2 + 2 + 2 + 2 = 10.
+Item 4.6: Meaningful logical progression in every action (4 points)
++4 if the agent makes meaningful progress in every action; does not repeat the same reasoning or code blocks across different turns of actions.
++2 if the agent makes some progress in every action, but the actions and reasonings are verbose and somewhat unecessary or repetitive.
++0 if the agent repeats the same logic or functionally equivalent code blocks across multiple turns of actions; or gets stuck in a loop of repetition.
+
+Max total score = 1 + 1 + 2 + 1 + 1 + 4 = 10.
 
 ========================
 Return your final grading as JSON with the following keys:

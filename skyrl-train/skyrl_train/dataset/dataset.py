@@ -10,7 +10,7 @@ from transformers import PreTrainedTokenizerBase
 TASK_NAME_KEY = "task_name"
 
 # Include ONLY these tasks (None = include all). Overrides EXCLUDE_TASKS.
-TARGET_TASKS: Optional[Set[str]] = None
+TARGET_TASKS: Optional[Set[str]] = {"gwas_variant_prioritization"}
 # Example: TARGET_TASKS = {"rare_disease_diagnosis", "crispr_delivery"}
 
 # Exclude these tasks (None = exclude none). Ignored if TARGET_TASKS is set.

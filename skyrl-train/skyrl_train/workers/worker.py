@@ -723,6 +723,9 @@ class PolicyWorkerBase(Worker):
                 if "ptx_loss" in status:
                     short_status["ptx"] = status["ptx_loss"]
 
+                if "correction_loss" in status:
+                    short_status["corr"] = status["correction_loss"]
+
                 status_list.append(status)
                 for k, v in status.items():
                     all_metrics[k].append(v)
@@ -803,6 +806,18 @@ class PolicyWorkerBase(Worker):
         loss = loss / accumulation_steps
         self.strategy.backward(loss, self.model, self.optimizer)
 
+        # Auxiliary correction SFT loss (CHORD-style phi-weighted)
+        # Only computed on the first micro-batch of each accumulation cycle to avoid
+        # processing the same global correction set multiple times.
+        correction_loss_value = 0.0
+        use_correction_loss = getattr(self.cfg.trainer, "use_correction_loss", False)
+        if use_correction_loss and (local_step % accumulation_steps == 0):
+            correction_data = (experience.metadata or {}).get("correction_data")
+            if correction_data:
+                mu = getattr(self.cfg.trainer, "correction_loss_mu", 1.0)
+                logger.info(f"[PolicyWorkerBase] Using correction loss mu: {mu}")
+                correction_loss_value = self._compute_correction_loss(correction_data, mu)
+
         grad_norm = None
         if (local_step + 1) % accumulation_steps == 0:
             grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
@@ -819,6 +834,8 @@ class PolicyWorkerBase(Worker):
             "ppo_clip_ratio": clip_ratio,
             "policy_entropy": entropy.item(),
         }
+        if use_correction_loss:
+            status["correction_loss"] = correction_loss_value
         if self.cfg.trainer.algorithm.use_kl_loss:
             status["policy_kl"] = kl_loss.item()
 
@@ -834,6 +851,84 @@ class PolicyWorkerBase(Worker):
 
         status["response_length"] = num_actions
         return status
+
+    def _compute_correction_loss(self, correction_data: list, mu: float) -> float:
+        """Compute CHORD-style phi-weighted SFT loss on correction sequences.
+        
+        phi(p) = p * (1-p), detached from gradient. Focuses supervision on tokens where
+        the model is uncertain (p near 0.5), avoiding reinforcing confident predictions
+        or fighting very low-probability tokens.
+        
+        Each correction has prompt_ids + response_ids (like RL data). The model forward
+        uses num_actions to extract response log_probs, matching the RL code path.
+        
+        Processes corrections in sub-batches with per-sub-batch backward to avoid
+        keeping all computation graphs in memory simultaneously.
+        """
+        device = torch.cuda.current_device()
+        max_corrections_per_batch = getattr(self.cfg.trainer, "max_corrections_per_batch", 4)
+
+        # Pre-compute total supervised tokens for correct normalization across sub-batches
+        total_supervised_tokens = sum(sum(c["loss_mask"]) for c in correction_data)
+        if total_supervised_tokens == 0:
+            return 0.0
+
+        total_loss_for_logging = 0.0
+
+        for batch_start in range(0, len(correction_data), max_corrections_per_batch):
+            batch_slice = correction_data[batch_start:batch_start + max_corrections_per_batch]
+
+            max_prompt_len = max(len(c["prompt_ids"]) for c in batch_slice)
+            max_resp_len = max(len(c["response_ids"]) for c in batch_slice)
+            pad_id = 0
+
+            batch_seqs = []
+            batch_attn = []
+            batch_loss_mask = []
+            for c in batch_slice:
+                p_ids = c["prompt_ids"]
+                r_ids = c["response_ids"]
+                lm = c["loss_mask"]
+
+                prompt_pad = max_prompt_len - len(p_ids)
+                resp_pad = max_resp_len - len(r_ids)
+
+                seq = [pad_id] * prompt_pad + p_ids + r_ids + [pad_id] * resp_pad
+                attn = [0] * prompt_pad + [1] * (len(p_ids) + len(r_ids)) + [0] * resp_pad
+                mask = [0] * max_prompt_len + lm + [0] * resp_pad
+
+                batch_seqs.append(seq)
+                batch_attn.append(attn)
+                batch_loss_mask.append(mask)
+
+            seq_tensor = torch.tensor(batch_seqs, dtype=torch.long, device=device)
+            attn_tensor = torch.tensor(batch_attn, dtype=torch.long, device=device)
+            loss_mask_tensor = torch.tensor(batch_loss_mask, dtype=torch.float32, device=device)
+
+            num_actions = max_resp_len
+
+            with torch.autocast(dtype=torch.bfloat16, device_type="cuda"):
+                action_log_probs = self.model(
+                    seq_tensor,
+                    num_actions,
+                    attention_mask=attn_tensor,
+                    return_output=False,
+                )
+
+                action_loss_mask = loss_mask_tensor[:, -num_actions:]
+
+                p = torch.exp(action_log_probs).detach()
+                phi = p * (1.0 - p)
+
+                # Normalize by total tokens across ALL sub-batches (pre-computed)
+                sub_loss_sum = -(action_log_probs * phi * action_loss_mask).sum()
+                scaled_sub_loss = mu * sub_loss_sum / total_supervised_tokens
+
+            # Backward per sub-batch: frees activations immediately, gradients accumulate
+            self.strategy.backward(scaled_sub_loss, self.model, self.optimizer)
+            total_loss_for_logging += sub_loss_sum.detach().item()
+
+        return total_loss_for_logging / total_supervised_tokens
 
     def save_checkpoint(self, ckpt_dir: Path, tokenizer=None):
         self.strategy.save_checkpoint(

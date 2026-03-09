@@ -222,6 +222,8 @@ class AgentRunner:
 
             use_log_heavy = self.cfg.get("use_log_heavy", True)
             log_heavy_freq = self.cfg.get("log_heavy_freq", 8)
+            generate_corrections = self.cfg.get("generate_corrections", False)
+            max_corrections_per_trajectory = self.cfg.get("max_corrections_per_trajectory", 5)
 
             for traj_id in range(num_trajectories):
                 traj_cfg = TrajectoryConfig(
@@ -239,6 +241,8 @@ class AgentRunner:
                     debug_log=debug_log,
                     use_log_heavy=use_log_heavy,
                     log_heavy_freq=log_heavy_freq,
+                    generate_corrections=generate_corrections,
+                    max_corrections_per_trajectory=max_corrections_per_trajectory,
                 )
                 traj: BaseTrajectory = self.traj_cls(
                     cfg=traj_cfg,
@@ -740,6 +744,21 @@ class AgentRunner:
                     # "rollout_metrics": rollout_metrics, # Can be verbose to print every time
                     "finish_reason": res.get("finish_reason"),
                 }
+
+                traj_corrections = res.get("corrections", [])
+                if traj_corrections:
+                    traj_messages = res.get("messages", [])
+                    correction_logs = []
+                    for corr in traj_corrections:
+                        msg_idx = corr.get("assistant_msg_index", -1)
+                        original = traj_messages[msg_idx].get("content", "") if 0 <= msg_idx < len(traj_messages) else "<out of range>"
+                        correction_logs.append({
+                            "target": corr.get("target_label", "?"),
+                            "msg_index": msg_idx,
+                            "original": original[:800] + ("..." if len(original) > 800 else ""),
+                            "correction": corr.get("correction_text", "")[:800] + ("..." if len(corr.get("correction_text", "")) > 800 else ""),
+                        })
+                    log_payload["corrections"] = correction_logs
                 
                 print(f"--- Sample {idx} ---")
                 try:
@@ -748,6 +767,93 @@ class AgentRunner:
                     print(f"Failed to json dump payload: {e}")
                     print(log_payload)
                 print("------------------\n")
+
+        # Tokenize corrections for the auxiliary SFT loss.
+        # Must tokenize in a single apply_chat_template call (not separate context + correction)
+        # because special tokens like <think> are only correctly encoded within a full conversation.
+        correction_data = []
+        max_correction_seq_len = self.cfg.get("max_correction_seq_len", 16384) if hasattr(self.cfg, 'get') else 16384
+        for idx, result in enumerate(matched_results):
+            traj_corrections = result.get("corrections", [])
+            if not traj_corrections:
+                continue
+            messages = result.get("messages", [])
+            for corr in traj_corrections:
+                msg_idx = corr["assistant_msg_index"]
+                correction_text = corr["correction_text"]
+                if msg_idx >= len(messages):
+                    continue
+                try:
+                    # Build full message list: context up to corrected turn + correction
+                    full_msgs = messages[:msg_idx] + [{"role": "assistant", "content": correction_text}]
+
+                    # Split into prompt/response the same way the RL code does
+                    starting_index = 0
+                    for i, msg in enumerate(full_msgs):
+                        if msg["role"] == "assistant":
+                            starting_index = i
+                            break
+                    if starting_index == 0:
+                        continue
+                    prompt_msgs = full_msgs[:starting_index]
+                    response_msgs = full_msgs[starting_index:]
+
+                    # Tokenize prompt (add_generation_prompt=False to match RL code --
+                    # the response tokenization already includes the assistant role prefix)
+                    prompt_ids = self.tokenizer.apply_chat_template(
+                        prompt_msgs, add_generation_prompt=False,
+                    )
+
+                    # Tokenize full response (earlier turns + correction) as one call
+                    resp_encoding = self.tokenizer.apply_chat_template(
+                        response_msgs,
+                        chat_template=traj_template_thinking if self.cfg.generator.remove_think_tokens else traj_template,
+                        return_assistant_tokens_mask=True,
+                        add_generation_prompt=False,
+                        return_dict=True,
+                    )
+                    resp_ids = resp_encoding["input_ids"]
+                    resp_assistant_mask = resp_encoding["assistant_masks"]
+
+                    # Build loss mask: only supervise on the LAST assistant message (the correction).
+                    # Use the assistant mask directly — find contiguous 1-blocks and keep only the last.
+                    num_assistant_msgs = sum(1 for m in response_msgs if m.get("role") == "assistant" and m.get("content"))
+                    num_mask_blocks = sum(
+                        1 for i in range(len(resp_assistant_mask))
+                        if resp_assistant_mask[i] == 1 and (i == 0 or resp_assistant_mask[i - 1] == 0)
+                    )
+                    assert num_mask_blocks == num_assistant_msgs, (
+                        f"Mask 1-blocks ({num_mask_blocks}) != non-empty assistant messages "
+                        f"({num_assistant_msgs}) in correction for trajectory {idx}. "
+                        f"Roles: {[m.get('role') for m in response_msgs]}"
+                    )
+
+                    # Find the start of the last 1-block (the correction turn)
+                    last_block_start = 0
+                    for i in range(len(resp_assistant_mask)):
+                        if resp_assistant_mask[i] == 1 and (i == 0 or resp_assistant_mask[i - 1] == 0):
+                            last_block_start = i
+                    corr_loss_mask = [0] * last_block_start + resp_assistant_mask[last_block_start:]
+
+                    total_len = len(prompt_ids) + len(resp_ids)
+                    if total_len > max_correction_seq_len:
+                        logger.info(f"Correction too long ({total_len} > {max_correction_seq_len}), skipping")
+                        continue
+
+                    correction_data.append({
+                        "prompt_ids": prompt_ids,
+                        "response_ids": resp_ids,
+                        "loss_mask": corr_loss_mask,
+                        "num_actions": len(resp_ids),
+                    })
+                except Exception as e:
+                    logger.warning(f"Failed to tokenize correction for trajectory {idx}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+
+        if correction_data:
+            logger.info(f"Tokenized {len(correction_data)} corrections across all trajectories")
 
         # Build rollout_logprobs aligned with response_ids (for TIS)
         # Each trajectory may have logprobs from multiple assistant generation steps
@@ -826,6 +932,7 @@ class AgentRunner:
             "stop_reasons": None,
             "rollout_logprobs": rollout_logprobs,
             "rollout_metrics": rollout_metrics,
+            "correction_data": correction_data if correction_data else None,
         }
 
         return output

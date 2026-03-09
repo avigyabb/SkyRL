@@ -640,6 +640,13 @@ class RayPPOTrainer:
         training_input.metadata["avg_response_length"] = sum(
             len(sample_response_ids) for sample_response_ids in response_ids
         ) / len(response_ids)
+
+        # Thread correction data through for auxiliary SFT loss
+        correction_data = generator_output.get("correction_data", None)
+        if correction_data:
+            training_input.metadata["correction_data"] = correction_data
+            logger.info(f"[convert_to_training_input] {len(correction_data)} corrections passed to training batch")
+
         return training_input
 
     @torch.no_grad()

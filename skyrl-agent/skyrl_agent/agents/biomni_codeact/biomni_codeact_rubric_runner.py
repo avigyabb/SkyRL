@@ -47,6 +47,8 @@ class BiomniCodeActRubricTrajectory(BiomniCodeActTrajectory):
             
             # Get LLM model for critic from environment or use default
             critic_model = os.getenv("BIOMNI_CRITIC_MODEL", "claude-sonnet-4-5")
+            gen_corrections = getattr(self.cfg, "generate_corrections", False)
+            max_corrections = getattr(self.cfg, "max_corrections_per_trajectory", 5)
             
             # task_name is inside instance, not at top-level data
             task_name = instance.get("task_name") if isinstance(instance, dict) else None
@@ -57,7 +59,9 @@ class BiomniCodeActRubricTrajectory(BiomniCodeActTrajectory):
                 messages=self.result.get("messages", []),
                 instance_id=instance_id,
                 task_name=task_name,
-                model=critic_model
+                model=critic_model,
+                generate_corrections=gen_corrections,
+                max_corrections=max_corrections,
             )
             
             self.result["reward"] = metrics["score"]
@@ -65,6 +69,7 @@ class BiomniCodeActRubricTrajectory(BiomniCodeActTrajectory):
             self.result["rubric_reward"] = metrics["rubric_reward"]
             self.result["ft_reward"] = metrics["ft_reward"]
             self.result["rubric_eval_failed"] = metrics.get("rubric_eval_failed", False)
+            self.result["corrections"] = metrics.get("corrections", [])
             
             # Store detailed rubric information for logging
             self.result["rubric_details"] = metrics.get("rubric_details", {})
