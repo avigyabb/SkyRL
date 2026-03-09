@@ -855,6 +855,46 @@ class AgentRunner:
         if correction_data:
             logger.info(f"Tokenized {len(correction_data)} corrections across all trajectories")
 
+        sdft_data = []
+        sdft_enabled = self.cfg.get("sdft_enabled", False) if hasattr(self.cfg, 'get') else False
+        if sdft_enabled and hasattr(self.task, 'get_demonstration'):
+            for idx, (resp_ids, resp_mask) in enumerate(
+                zip(response_ids, response_assistant_mask)
+            ):
+                inst = instance_list[idx]
+                instance_id = inst.get("instance_id") if hasattr(inst, 'get') else inst["instance_id"]
+                try:
+                    demo = self.task.get_demonstration(int(instance_id))
+                except Exception as e:
+                    logger.warning(f"Failed to get SDFT demonstration for instance {instance_id}: {e}")
+                    sdft_data.append(None)
+                    continue
+
+                prompt_msgs = all_prompts[idx]
+                system_content = prompt_msgs[0]["content"]
+                user_content = prompt_msgs[-1]["content"]
+                teacher_messages = [
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": (
+                        f"{user_content}\n\n{demo}\n\n"
+                        "Now answer with a response of your own, including the thinking process."
+                    )},
+                ]
+
+                teacher_prompt_ids = self.tokenizer.apply_chat_template(
+                    teacher_messages, add_generation_prompt=False,
+                )
+
+                sdft_data.append({
+                    "teacher_prompt_ids": teacher_prompt_ids,
+                    "response_ids": list(resp_ids),
+                    "loss_mask": list(resp_mask),
+                    "num_actions": len(resp_ids),
+                })
+
+            n_valid = sum(1 for x in sdft_data if x is not None)
+            logger.info(f"Built SDFT data for {n_valid}/{len(sdft_data)} trajectories")
+
         # Build rollout_logprobs aligned with response_ids (for TIS)
         # Each trajectory may have logprobs from multiple assistant generation steps
         # Note: response_ids and response_assistant_mask are already truncated at this point
@@ -933,6 +973,7 @@ class AgentRunner:
             "rollout_logprobs": rollout_logprobs,
             "rollout_metrics": rollout_metrics,
             "correction_data": correction_data if correction_data else None,
+            "sdft_data": sdft_data if sdft_data else None,
         }
 
         return output

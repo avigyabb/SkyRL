@@ -118,6 +118,16 @@ class PromptManager:
         ]
     
     
+    def get_teacher_messages(self, user_prompt, task_name, demonstration):
+        """Build teacher-conditioned messages for SDFT: same system prompt, demo-augmented user message."""
+        messages = self.get_initial_messages(user_prompt, task_name)
+        messages[-1]["content"] = (
+            f"{user_prompt}\n\n"
+            f"{demonstration}\n\n"
+            f"Now answer with a response of your own, including the thinking process."
+        )
+        return messages
+
     def _generate_system_prompt(self, tool_desc, data_lake_content, library_content_list, library_content_dict, data_lake_dict, self_critic=False, is_retrieval=False):
         """
         Generate the system prompt based on the provided resources.

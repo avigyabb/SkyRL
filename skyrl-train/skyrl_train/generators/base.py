@@ -36,6 +36,7 @@ class GeneratorOutput(TypedDict):
     rollout_metrics: Optional[Dict[str, Any]]
     rollout_logprobs: Optional[List[List[float]]]
     correction_data: Optional[List[Dict]]
+    sdft_data: Optional[List[Dict]]
 
 
 class GeneratorInterface(ABC):

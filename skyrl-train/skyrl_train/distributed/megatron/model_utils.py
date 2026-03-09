@@ -588,3 +588,66 @@ def vocab_parallel_entropy(vocab_parallel_logits: torch.Tensor) -> torch.Tensor:
 
     """
     return _VocabParallelEntropy.apply(vocab_parallel_logits)
+
+
+class _VocabParallelKLDiv(torch.autograd.Function):
+    """Reverse KL(student || teacher) from TP-sharded logits.
+
+    Forward: distributed softmax for student (via TP all-reduce),
+    distributed log_softmax for both, per-token KL (via TP all-reduce sum).
+    Backward: analytical gradient w.r.t. student logits only.
+
+    Only uses TP group -- CP gathering already happened in postprocess_packed_seqs.
+    """
+
+    @staticmethod
+    def forward(ctx, student_vocab_parallel_logits, teacher_vocab_parallel_logits):
+        tp_group = mpu.get_tensor_model_parallel_group()
+        orig_dtype = student_vocab_parallel_logits.dtype
+
+        s_logits = student_vocab_parallel_logits.float()
+        t_logits = teacher_vocab_parallel_logits.float()
+
+        s_max = s_logits.max(dim=-1, keepdim=True).values
+        dist.all_reduce(s_max, op=dist.ReduceOp.MAX, group=tp_group)
+        s_shifted = s_logits - s_max
+        s_exp = s_shifted.exp()
+        s_sum_exp = s_exp.sum(dim=-1, keepdim=True)
+        dist.all_reduce(s_sum_exp, group=tp_group)
+        s_softmax = s_exp / s_sum_exp
+        s_log_softmax = s_shifted - s_sum_exp.log()
+
+        t_max = t_logits.max(dim=-1, keepdim=True).values
+        dist.all_reduce(t_max, op=dist.ReduceOp.MAX, group=tp_group)
+        t_shifted = t_logits - t_max
+        t_sum_exp = t_shifted.exp().sum(dim=-1, keepdim=True)
+        dist.all_reduce(t_sum_exp, group=tp_group)
+        t_log_softmax = t_shifted - t_sum_exp.log()
+
+        log_ratio = s_log_softmax - t_log_softmax
+        local_kl = (s_softmax * log_ratio).sum(dim=-1, keepdim=True)
+        kl = local_kl.clone()
+        dist.all_reduce(kl, group=tp_group)
+
+        ctx.save_for_backward(s_softmax, log_ratio, kl)
+        ctx.orig_dtype = orig_dtype
+        return kl.squeeze(-1).to(orig_dtype)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        s_softmax, log_ratio, kl = ctx.saved_tensors
+        # d KL / d student_logit[i] = p_s(i) * (log_ratio[i] - KL)
+        grad_input = s_softmax * (log_ratio - kl) * grad_output.float().unsqueeze(-1)
+        return grad_input.to(ctx.orig_dtype), None
+
+
+def vocab_parallel_kl_div(student_logits: torch.Tensor, teacher_logits: torch.Tensor) -> torch.Tensor:
+    """Compute KL(student || teacher) when logits are TP-sharded.
+
+    Args:
+        student_logits: (..., vocab_size // tp_size) -- requires grad
+        teacher_logits: (..., vocab_size // tp_size) -- detached
+
+    Returns: (...,) per-token KL values
+    """
+    return _VocabParallelKLDiv.apply(student_logits, teacher_logits)

@@ -647,6 +647,12 @@ class RayPPOTrainer:
             training_input.metadata["correction_data"] = correction_data
             logger.info(f"[convert_to_training_input] {len(correction_data)} corrections passed to training batch")
 
+        sdft_data = generator_output.get("sdft_data", None)
+        if sdft_data:
+            training_input.metadata["sdft_data"] = sdft_data
+            n_valid = sum(1 for x in sdft_data if x is not None)
+            logger.info(f"[convert_to_training_input] {n_valid}/{len(sdft_data)} SDFT entries passed to training batch")
+
         return training_input
 
     @torch.no_grad()
