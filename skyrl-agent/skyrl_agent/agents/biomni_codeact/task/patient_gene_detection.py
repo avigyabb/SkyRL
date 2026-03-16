@@ -98,7 +98,7 @@ Justify your answer."""
         class GeneDetectionOutput(BaseModel):
             """List of predicted causal genes for a patient."""
 
-            causal_genes: list = Field(
+            causal_genes: list[str] = Field(
                 description="The list of causal gene(s) identified, e.g., ['ENSG00000138449']. Please Use ENSG ID."
             )
         
@@ -135,16 +135,18 @@ Justify your answer."""
         # -----------------------
         # Normalize predictions
         # -----------------------
-        if not isinstance(parsed_output, dict):
+        if parsed_output is None:
+            parsed_output = {}
+        elif not isinstance(parsed_output, dict):
             try:
                 parsed_output = json.loads(parsed_output)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):
                 try:
                     parsed_output = ast.literal_eval(parsed_output)
-                except (ValueError, SyntaxError):
-                    # If both fail, return 0
+                except (ValueError, SyntaxError, TypeError):
                     print("Error: Failed to parse parsed_output")
                     print(parsed_output)
+                    parsed_output = {}
         def _norm_gene(x):
             s = "" if x is None else str(x)
             s = s.strip().strip('"').strip("'").strip()

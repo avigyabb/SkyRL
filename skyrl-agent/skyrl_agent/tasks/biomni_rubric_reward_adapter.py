@@ -176,7 +176,7 @@ class BiomniRubricRewardAdapter:
             max_tokens=32768,
             thinking={"type": "enabled", "budget_tokens": 2000},
         )
-        cls._llm_judge = llm.with_structured_output(CriticMetrics)
+        cls._llm_judge = llm.with_structured_output(CriticMetrics, method="json_schema")
         
         # Initialize auxiliary LLM for result formatting (no structured output)
         cls._aux_llm = ChatAnthropic(
@@ -337,7 +337,7 @@ class BiomniRubricRewardAdapter:
             last_message = last_message[-1].get('text', '') if last_message else ""
         
         try:
-            checker_llm = format_check_prompt | cls._aux_llm.with_structured_output(output_class)
+            checker_llm = format_check_prompt | cls._aux_llm.with_structured_output(output_class, method="json_schema")
             result = checker_llm.invoke({"messages": [("user", last_message)]})
             if not isinstance(result, dict):
                 result = result.dict() if hasattr(result, 'dict') else result.model_dump()
@@ -420,22 +420,7 @@ class BiomniRubricRewardAdapter:
             last_error = None
             for attempt in range(max_retries):
                 try:
-                    if attempt < max_retries - 1:
-                        eval_output: CriticMetrics = cls._llm_judge.invoke(judge_messages)
-                    else:
-                        # Last retry: fall back to judge without thinking to avoid
-                        # the "structured output + thinking" incompatibility
-                        logger.warning(
-                            f"Rubric eval attempt {attempt + 1}/{max_retries} for {task_name}: "
-                            f"falling back to non-thinking judge"
-                        )
-                        fallback_llm = ChatAnthropic(
-                            model=cls._llm_judge.bound.first.model if hasattr(cls._llm_judge, 'bound') else "claude-sonnet-4-5",
-                            temperature=1.0,
-                            max_tokens=32768,
-                        )
-                        fallback_judge = fallback_llm.with_structured_output(CriticMetrics)
-                        eval_output = fallback_judge.invoke(judge_messages)
+                    eval_output: CriticMetrics = cls._llm_judge.invoke(judge_messages)
                     break
                 except Exception as e:
                     last_error = e
@@ -516,7 +501,7 @@ class BiomniRubricRewardAdapter:
         2. Rubric reward from LLM critic (normalized to 5)
         3. Format reward from format validation (max 1)
         
-        Total reward = gt_reward + rubric_reward + ft_reward (max score 7)
+        Total reward = (gt_reward + rubric_reward) * ft_reward (max score 6)
         
         Returns:
             Dictionary containing:
@@ -605,9 +590,9 @@ class BiomniRubricRewardAdapter:
             logger.warning(f"Unexpected task name: {task_name}, or solution is None")
         
         
-        # Total reward = gt_reward + rubric_reward + ft_reward (max score 7)
+        # Total reward = (gt_reward + rubric_reward) * ft_reward (max score 6)
         rubric_reward = rubric_results["rubric_reward"]
-        total_reward = gt_reward + rubric_reward + ft_reward
+        total_reward = (gt_reward + rubric_reward) * ft_reward
         
         logger.info("total_reward: %s (gt=%s + rubric=%s + ft=%s)", 
                    total_reward, gt_reward, rubric_reward, ft_reward)
