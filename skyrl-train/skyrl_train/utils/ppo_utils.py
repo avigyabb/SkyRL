@@ -467,6 +467,7 @@ class PolicyLossType(StrEnum):
     REGULAR = "regular"
     DUAL_CLIP = "dual_clip"
     GSPO = "gspo"
+    GSPO_DUAL_CLIP = "gspo_dual_clip"
     CISPO = "cispo"
     CLIP_COV = "clip_cov"
     KL_COV = "kl_cov"
@@ -496,6 +497,7 @@ class PolicyLossRegistry(BaseFunctionRegistry):
             "regular": [PolicyLossType.REGULAR, ppo_policy_loss],
             "dual_clip": [PolicyLossType.DUAL_CLIP, ppo_policy_loss],
             "gspo": [PolicyLossType.GSPO, gspo_policy_loss],
+            "gspo_dual_clip": [PolicyLossType.GSPO_DUAL_CLIP, gspo_dual_clip_policy_loss],
             "clip_cov": [PolicyLossType.CLIP_COV, compute_policy_loss_clip_cov],
             "kl_cov": [PolicyLossType.KL_COV, compute_policy_loss_kl_cov],
         }
@@ -659,6 +661,63 @@ def gspo_policy_loss(
             raise ValueError("use_tis=True but tis_imp_ratio_cap is not set.")
 
         # w = pi_old / pi_rollout  (in log space: old_log_probs - rollout_logprobs)
+        tis_delta = old_log_probs - rollout_logprobs
+        if tis_mode == "sequence":
+            tis_delta = masked_mean(tis_delta, loss_mask, dim=-1).unsqueeze(-1)
+        tis_w = _safe_exp_delta(tis_delta, clip=20.0, out_dtype=log_probs.dtype)
+        tis_w = torch.clamp(tis_w, max=cap)
+        loss = loss * tis_w
+
+    loss = reduce_loss(loss, loss_mask, loss_reduction, config.max_seq_len)
+
+    return loss, clip_ratio
+
+
+@register_policy_loss(PolicyLossType.GSPO_DUAL_CLIP)
+def gspo_dual_clip_policy_loss(
+    log_probs: torch.Tensor,
+    old_log_probs: torch.Tensor,
+    advantages: torch.Tensor,
+    config: DictConfig,
+    loss_mask: Optional[torch.Tensor] = None,
+    rollout_logprobs: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, float]:
+    """
+    GSPO with dual-clip: combines GSPO's sequence-level importance sampling
+    (for MoE routing stability) with DAPO's dual-clip lower bound
+    (maintains gradient signal for negative-advantage trajectories).
+    """
+    loss_reduction = config.loss_reduction
+    if loss_reduction not in ("sequence_mean", "token_mean", "seq_mean_token_sum_norm"):
+        raise ValueError(f"Unsupported loss_reduction for gspo_dual_clip: {loss_reduction}")
+
+    log_ratio = log_probs - old_log_probs
+
+    log_importance_weights = masked_mean(log_ratio, loss_mask, dim=-1).unsqueeze(-1)
+
+    log_token_importance_weights = log_probs - log_probs.detach() + log_importance_weights.detach()
+    log_token_importance_weights = torch.clamp(log_token_importance_weights, max=10)
+    ratio = torch.exp(log_token_importance_weights)
+
+    surr1 = ratio * advantages
+    surr2 = ratio.clamp(1 - config.eps_clip_low, 1 + config.eps_clip_high) * advantages
+    loss = -torch.min(surr1, surr2)
+
+    clip_ratio = masked_mean((-surr2 > -surr1).float(), loss_mask).mean().detach().item()
+
+    # Dual-clip: lower-bound the loss for negative-advantage tokens so the model
+    # keeps pushing away from bad trajectories even when the ratio is clipped.
+    pg_losses3 = -advantages * config.clip_ratio_c
+    clip_pg_losses2 = torch.min(pg_losses3, loss)
+    loss = torch.where(advantages < 0, clip_pg_losses2, loss)
+
+    if config.use_tis:
+        if rollout_logprobs is None:
+            raise ValueError("use_tis=True but rollout_logprobs is None")
+        tis_mode = getattr(config, "tis_mode", "token")
+        cap = getattr(config, "tis_imp_ratio_cap", None)
+        if cap is None:
+            raise ValueError("use_tis=True but tis_imp_ratio_cap is not set.")
         tis_delta = old_log_probs - rollout_logprobs
         if tis_mode == "sequence":
             tis_delta = masked_mean(tis_delta, loss_mask, dim=-1).unsqueeze(-1)

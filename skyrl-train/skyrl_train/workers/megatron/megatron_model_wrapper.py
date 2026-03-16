@@ -223,6 +223,21 @@ class MegatronModelWrapper:
 
             action_log_probs = token_logprobs[:, -num_actions:]
 
+            # Diagnostic: measure log-prob discrepancy between ref fwd pass and train fwd pass
+            with torch.no_grad():
+                _diff = (action_log_probs - old_action_log_probs).abs()
+                _valid = loss_mask.bool() if loss_mask is not None else torch.ones_like(_diff, dtype=torch.bool)
+                _valid_diff = _diff[_valid]
+                if _valid_diff.numel() > 0:
+                    _mean = _valid_diff.mean().item()
+                    _max = _valid_diff.max().item()
+                    for _thresh in [1e-4, 3e-4, 1e-3, 1e-2, 1e-1]:
+                        _frac = (_valid_diff > _thresh).float().mean().item()
+                        print(
+                            f"[LOGPROB DIAG] mean|diff|={_mean:.6f} max|diff|={_max:.4f} "
+                            f"frac>{_thresh:.0e}={_frac:.4f} n_tokens={_valid_diff.numel()}"
+                        )
+
             # policy loss should be calculated based on the selected token logprobs
             policy_loss, clip_ratio = self.policy_loss_fn(
                 action_log_probs,
