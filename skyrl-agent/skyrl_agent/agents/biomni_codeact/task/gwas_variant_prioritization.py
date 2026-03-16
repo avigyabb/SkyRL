@@ -31,6 +31,71 @@ class gwas_variant_prioritization(base_task):
                 "answer": q.rsid,
                 "instance_id": index}
 
+    def get_demonstration(self, index):
+        """Return a per-instance demonstration for SDFT teacher conditioning."""
+        ex = self.get_example(index)
+        gt_variant = ex["answer"]
+        prompt = ex["prompt"]
+
+        trait = None
+        candidates = []
+        for line in prompt.splitlines():
+            if "GWAS phenotype:" in line:
+                trait = line.split(":", 1)[1].strip()
+            if "Variants:" in line:
+                cand_str = line.split(":", 1)[1]
+                candidates = [c.strip() for c in cand_str.split(",") if c.strip()]
+        n_candidates = len(candidates)
+
+        return f"""The top associated variant is {gt_variant}.
+
+Here is the recommended workflow:
+
+Step 1 — Direct GWAS association evidence for "{trait}":
+Use authoritative GWAS resources (GWAS Catalog, Open Targets Genetics, or large
+biobank portals) to query associations for EACH of the {n_candidates} candidate
+variants with "{trait}". For each variant, retrieve at minimum p-value AND effect
+size (OR or beta), noting study context (cohort, ancestry, sample size) and
+replication where available.
+
+Step 2 — PheWAS / cross-phenotype expansion:
+Expand to related traits or run a PheWAS-style scan with biological justification.
+Check whether {gt_variant}'s signal is consistent across related endpoints. Flag
+pleiotropy if present.
+
+Step 3 — Variant-to-gene mapping:
+Map {gt_variant} to effector gene(s) using eQTL/colocalization, chromatin
+interaction data, or fine-mapping evidence. Tie the gene's function specifically
+to "{trait}".
+
+Step 4 — Functional annotation independent of p-values:
+Evaluate at least 2 distinct functional evidence types (coding consequence,
+CADD/SpliceAI, regulatory overlap, conservation, tissue-relevant eQTL) and
+explain how they influence the ranking.
+
+Step 5 — Systematic ranking of ALL {n_candidates} candidates:
+Build a comparison table across all evidence types for every candidate. Do not
+stop after finding strong evidence for one variant — compare the strength of
+evidence against other candidates. Apply a consistent weighting scheme and handle
+missing data explicitly.
+
+Guidelines:
+- Never fabricate observation blocks or claim results that were not returned
+  by actual code execution. All evidence must come from real tool outputs.
+- Before accessing tabular data, inspect the schema: print columns, confirm
+  variant identifier format, verify decision-critical fields (p-value, effect
+  size, allele) exist.
+- Make meaningful progress each turn — no repeated reasoning or equivalent
+  code across turns.
+
+Final answer format:
+<solution>
+**Final answer: {gt_variant}**
+
+[Concise Markdown report: evidence summary with numbered references,
+candidate comparison, justification for ranking]
+</solution>"""
+
     def split(self, ratio = 0.8, seed = 42):
         np.random.seed(seed)
         indices = np.arange(self.num_examples)
@@ -304,7 +369,7 @@ Item 4.5: No hallucinated data/experiments/citations; calibrated claims (1 point
 Item 4.6: Meaningful logical progression in every action (4 points)
 +4 if the agent makes meaningful progress in every action; does not repeat the same reasoning or code blocks across different turns of actions.
 +2 if the agent makes some progress in every action, but the actions and reasonings are verbose and somewhat unecessary or repetitive.
-+0 if the agent repeats the same logic or functionally equivalent code blocks across multiple turns of actions.
++0 if the agent repeats the same logic or functionally equivalent code blocks across multiple turns of actions; or gets stuck in a loop of repetition.
 
 Max total score = 1 + 1 + 2 + 1 + 1 + 4 = 10.
 

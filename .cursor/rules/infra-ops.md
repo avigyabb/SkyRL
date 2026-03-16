@@ -41,8 +41,25 @@ docker exec skyrl-train bash -c 'apt-get update -qq && apt-get install -y -qq tm
 - Provides code execution endpoint at `http://localhost:8000`
 - Health check: `curl http://localhost:8000/healthcheck`
 - Managed by: `~/BioAgentOS/biomni_env_screen/restart_server.sh` (auto-restarts on crash)
-- Logs: `~/BioAgentOS/biomni_runtime.log`
-- Runs in host tmux session 0 (`tmux a -t 0` or alias `tx 0`)
+- Logs: `~/BioAgentOS/exec_service_ampere9.log`
+- Runs in host tmux session `exec_service` (`tmux a -t exec_service`)
+- Data lake volume mount: `/mnt/biomni_filestore/biomni/biomni_data/data_lake` (read-only)
+- The script does NOT use `--rm`; it uses explicit `docker stop` + `docker rm -f` cleanup before each launch
+
+### Docker Ghost Containers
+
+A "ghost" container occurs when Docker reserves a container name internally but the container is invisible to `docker ps -a` and immune to `docker rm -f`. This happens when `docker run --rm` is combined with ungraceful process termination:
+
+| Cause | Mechanism |
+|-------|-----------|
+| `pkill -9 restart_server.sh` | Kills the bash script but orphans the child `docker run --rm` process. When the orphan eventually exits, `--rm` cleanup may fail silently. |
+| `systemctl restart docker` while `--rm` container is running | Daemon shuts down before completing `--rm` async cleanup, leaving a phantom name reservation. |
+
+**Prevention (current setup):**
+- `restart_server.sh` does NOT use `--rm` (removed 2026-03-02). Containers stay in `docker ps -a` as "Exited" entries and are explicitly cleaned by `cleanup_container()` which runs `docker stop` + `docker rm -f` unconditionally.
+- Never `pkill -9` the restart script. Use `tmux kill-session -t exec_service` for clean shutdown.
+
+**Recovery:** The only fix for an existing ghost is `sudo systemctl restart docker`. This clears the daemon's internal state. After restart, `docker start skyrl-train` to bring back the training container, then relaunch the exec service.
 
 ## Autoretry Wrapper
 
@@ -67,7 +84,8 @@ docker exec skyrl-train bash -c 'apt-get update -qq && apt-get install -y -qq tm
 | CUDA OOM in `get_grad_norm_fp32` | Same as above | Same as above |
 | Ray fails to start | Stale `/tmp/ray/session_*` | `rm -rf /tmp/ray/session_*` |
 | Ray `/tmp/ray` fills disk (47GB+) | `working_dir_files` accumulates across restarts when `--no-ray-restart` is used | Clean stale ray packages: `du -sh /tmp/ray/*/runtime_resources/working_dir_files/*` |
-| Runtime server unreachable (HTTP errors in rollout) | `biomni_exec_service` container down | Restart via tmux session 0 |
+| Runtime server unreachable (HTTP errors in rollout) | `biomni_exec_service` container down | Restart via `tmux kill-session -t exec_service` then relaunch |
+| `docker run --name biomni_exec_service` "name already in use" but `docker ps -a` empty | Docker ghost container (phantom name reservation) | `sudo systemctl restart docker` then `docker start skyrl-train` then relaunch exec service. See "Docker Ghost Containers" above. |
 | Training restarts but no progress | `resume_mode=none` or `latest_ckpt_global_step.txt` missing | Check for missing tracking file, change to `resume_mode=latest` |
 | Rapid crash loop (<120s per attempt) | Config/code bug, not transient | Stop autoretry, read the actual error, trace through code |
 

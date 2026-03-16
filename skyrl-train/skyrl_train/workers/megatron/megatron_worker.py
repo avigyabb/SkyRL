@@ -25,6 +25,7 @@ from omegaconf import OmegaConf
 #     get_megatron_optimizer_param_scheduler,
 # )
 
+from contextlib import contextmanager
 from skyrl_train.distributed.dispatch import MeshRank
 # from skyrl_train.distributed.megatron.megatron_strategy import MegatronStrategy
 # from skyrl_train.distributed.megatron.megatron_utils import freeze_moe_router, print_model_size
@@ -297,6 +298,67 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             policy_loss_fn=self.policy_loss_fn,
         )
 
+        sdft_enabled = getattr(self.cfg.trainer, 'sdft_enabled', False)
+        if sdft_enabled:
+            self._init_ema()
+            if self._rank == 0:
+                ema_mem = sum(p.numel() * p.element_size() for p in self.ema_params.values())
+                print(f"[SDFT] Initialized EMA parameters: {ema_mem / 1e9:.2f} GB on rank 0")
+
+    def _init_ema(self):
+        """Initialize EMA parameters by cloning the current model's local shards."""
+        self.ema_params = {}
+        for name, param in self.actor_module[0].module.named_parameters():
+            self.ema_params[name] = param.data.clone()
+
+    def _ema_update(self, decay: float):
+        """Update EMA: ema = decay * ema + (1 - decay) * student."""
+        with torch.no_grad():
+            for name, param in self.actor_module[0].module.named_parameters():
+                self.ema_params[name].mul_(decay).add_(param.data, alpha=1.0 - decay)
+
+    @contextmanager
+    def _ema_weights(self):
+        """Swap student<->EMA via pointer exchange. No memory allocation."""
+        for name, param in self.actor_module[0].module.named_parameters():
+            param.data, self.ema_params[name] = self.ema_params[name], param.data
+        try:
+            yield
+        finally:
+            for name, param in self.actor_module[0].module.named_parameters():
+                param.data, self.ema_params[name] = self.ema_params[name], param.data
+
+    def _build_sdft_teacher_micro_batches(self, sdft_data, micro_sample_indices, device):
+        """Build teacher micro-batches from SDFT data for EMA forward pass.
+
+        Returns a list aligned with micro_sample_indices (same length).
+        Entries are None where sdft_data has no data for that sample.
+        """
+        teacher_micro_batches = []
+        for idx in micro_sample_indices:
+            entry = sdft_data[idx]
+            if entry is None:
+                teacher_micro_batches.append(None)
+                continue
+
+            teacher_prompt_ids = entry["teacher_prompt_ids"]
+            response_ids = entry["response_ids"]
+            full_ids = teacher_prompt_ids + response_ids
+            seq_tensor = torch.tensor([full_ids], dtype=torch.long, device=device)
+            attn_mask = torch.ones_like(seq_tensor, dtype=torch.long)
+            position_ids = attn_mask.long().cumsum(-1) - 1
+
+            teacher_micro_batches.append({
+                "sequences": seq_tensor,
+                "attention_mask": attn_mask,
+                "position_ids": position_ids,
+                "num_actions": entry["num_actions"],
+            })
+
+        if not any(mb is not None for mb in teacher_micro_batches):
+            return None
+        return teacher_micro_batches
+
     def ppo_train(self, train_data) -> "TrainingOutputBatch":
         """
         Overrides `PolicyWorkerBase.ppo_train` for megatron.
@@ -319,6 +381,9 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         if self.profiler is not None:
             self.profiler.start()
 
+        sdft_enabled = getattr(self.cfg.trainer, 'sdft_enabled', False)
+        sdft_data = train_data.metadata.get("sdft_data") if sdft_enabled else None
+
         for epoch in range(self.cfg.trainer.update_epochs_per_batch):
             self.optimizer.zero_grad()
             pbar = tqdm(
@@ -328,6 +393,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             )
 
             micro_buffer = []
+            micro_sample_indices = []
             for local_step, experience in enumerate(pbar):
                 experience.to_device(torch.cuda.current_device())
                 sequences = experience.sequences
@@ -348,6 +414,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                         "rollout_action_logprobs": experience.rollout_logprobs,
                     }
                 )
+                micro_sample_indices.append(local_step)
 
                 if len(micro_buffer) == micro_batches_per_mini_batch:
                     # run mini-batch forward-backward and then one optimizer step
@@ -357,6 +424,61 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                         chunk.zero_grad_buffer()
                     seq_len = micro_buffer[0]["sequences"].shape[1]
                     micro_bsz = micro_buffer[0]["sequences"].shape[0]
+                    device = micro_buffer[0]["sequences"].device
+
+                    if sdft_data:
+                        kl_estimator = getattr(self.cfg.trainer, 'sdft_kl_estimator', 'reinforce')
+                        sdft_coeff = getattr(self.cfg.trainer, 'sdft_loss_coef', 1.0)
+                        temperature = self.cfg.generator.sampling_params.temperature
+
+                        teacher_micro_batches = self._build_sdft_teacher_micro_batches(
+                            sdft_data, micro_sample_indices, device
+                        )
+
+                        if teacher_micro_batches:
+                            with torch.no_grad():
+                                with self._ema_weights():
+                                    if kl_estimator == "reinforce":
+                                        teacher_outputs = []
+                                        for tmb in teacher_micro_batches:
+                                            if tmb is None:
+                                                teacher_outputs.append(None)
+                                                continue
+                                            logps = self.model.forward(
+                                                [tmb],
+                                                seq_len=tmb["sequences"].shape[1],
+                                                micro_batch_size=1,
+                                                temperature=temperature,
+                                            )
+                                            teacher_outputs.append(logps)
+                                    else:
+                                        valid_tmbs = [mb for mb in teacher_micro_batches if mb is not None]
+                                        valid_logits = self.model.forward_teacher_logits(
+                                            valid_tmbs,
+                                            seq_len=max(mb["sequences"].shape[1] for mb in valid_tmbs),
+                                            micro_batch_size=1,
+                                            temperature=temperature,
+                                        )
+                                        teacher_outputs = []
+                                        vi = 0
+                                        for tmb in teacher_micro_batches:
+                                            if tmb is None:
+                                                teacher_outputs.append(None)
+                                            else:
+                                                teacher_outputs.append(valid_logits[vi])
+                                                vi += 1
+
+                            for i, mb in enumerate(micro_buffer):
+                                if teacher_outputs[i] is None:
+                                    continue
+                                idx = micro_sample_indices[i]
+                                mask = sdft_data[idx]["loss_mask"]
+                                mb["sdft_loss_mask"] = torch.tensor(mask, device=device, dtype=torch.float32).unsqueeze(0)
+                                mb["sdft_coeff"] = sdft_coeff
+                                if kl_estimator == "reinforce":
+                                    mb["sdft_teacher_logps"] = teacher_outputs[i].detach()
+                                else:
+                                    mb["sdft_teacher_logits"] = teacher_outputs[i].detach()
 
                     metrics_list = self.model.forward_backward_mini_batch(
                         micro_batches=micro_buffer,
@@ -366,6 +488,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                     )
 
                     grad_norm = self.strategy.optimizer_step(self.optimizer, self.model, self.scheduler, name="actor")
+
+                    if sdft_data:
+                        ema_decay = getattr(self.cfg.trainer, 'sdft_ema_decay', 0.99)
+                        self._ema_update(ema_decay)
 
                     # within a DP group, metrics are already the same across all workers - we then just all reduce across
                     # the whole world size to get the metrics for the global micro batch
@@ -378,6 +504,8 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                         }
                         if self.cfg.trainer.algorithm.use_kl_loss:
                             status["policy_kl"] = metrics["policy_kl"]
+                        if sdft_data:
+                            status["sdft_kl"] = metrics.get("sdft_kl", 0.0)
 
                         # Attach grad norm only for the last micro in the mini-batch
                         if i == len(metrics_list) - 1 and grad_norm is not None:
@@ -399,13 +527,17 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                     }
                     if "raw_grad_norm" in status_list[-1]:
                         short_status["grad_norm"] = status_list[-1]["raw_grad_norm"]
+                    if sdft_data and "sdft_kl" in status_list[-1]:
+                        short_status["sdft_kl"] = status_list[-1]["sdft_kl"]
                     pbar.set_postfix(short_status)
 
                     policy_update_steps += 1
                     micro_buffer = []
+                    micro_sample_indices = []
 
             # drop any trailing micros that don't fill a mini-batch (keep behavior consistent)
             micro_buffer = []
+            micro_sample_indices = []
 
         torch.distributed.barrier()
         if self.profiler is not None:

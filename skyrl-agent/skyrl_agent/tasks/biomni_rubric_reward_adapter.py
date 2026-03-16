@@ -1,4 +1,5 @@
 import logging
+import random
 import re
 import os
 import json
@@ -34,6 +35,21 @@ class CriticMetrics(BaseModel):
     total: float = Field(description="A float number between 0 and 50 representing the total score")
     rationale: str = Field(description="Detailed, concrete justification tied to the rubric items")
     weaknesses: list[str] = Field(description="A list of weaknesses in the agent's trajectory, can be an empty list if the agent's output, methodology, code and data handling, and reasoning coherence are perfect in all aspects")
+
+
+class SingleCorrection(BaseModel):
+    target: str = Field(description="'Turn N' or 'FINAL ANSWER' -- which action turn this correction targets")
+    correction: str = Field(description="Corrected assistant message in <think>...</think><execute/solution>...</execute/solution> format")
+
+
+class CorrectionOutput(BaseModel):
+    """Up to 5 corrections per rollout trajectory. Each targets a different action turn.
+    Return fewer corrections (or all null) if the trajectory is already good."""
+    correction_1: Optional[SingleCorrection] = None
+    correction_2: Optional[SingleCorrection] = None
+    correction_3: Optional[SingleCorrection] = None
+    correction_4: Optional[SingleCorrection] = None
+    correction_5: Optional[SingleCorrection] = None
 
 
 # System prompt for the LLM judge (exact wording from print_rubrics.py)
@@ -136,6 +152,45 @@ def format_messages_to_text(messages: List[Dict[str, str]]) -> str:
     return "\n".join(text_parts)
 
 
+CORRECTION_SYSTEM_PROMPT_FORMAT = """You are an expert AI trainer specializing in correcting biomedical agent trajectories. \
+Your task is to generate corrected versions of assistant turns that have FORMAT ERRORS.
+
+The agent's total reward is gated by format validation — when format fails, the total reward is 0 \
+regardless of how good the reasoning or methodology is. Fixing format is the highest priority.
+
+STRICT FORMAT RULES for every corrected assistant message:
+1. Non-final turns MUST follow: <think>REASONING</think><execute>CODE</execute>
+2. Final turn MUST follow: <think>REASONING</think><solution>ANSWER</solution>
+3. Exactly ONE <think>...</think> block
+4. Exactly ONE outer action block (<execute> or <solution>) after </think>
+5. Must END with </execute> or </solution>
+6. NO extra <think> or </think> tags after the think block
+7. The assistant MUST NOT include tool/environment outputs in its own message — observations come from the environment, not the assistant
+8. The assistant MUST NOT hallucinate execution results
+
+COMMON ERRORS TO FIX:
+- Multiple <think> or </think> tokens → merge into one <think>...</think>
+- Missing </think> → add it before the action block
+- Wrong tag nesting → restructure to proper format
+- Agent writing fake observations/outputs within its message → remove them, end with </execute>
+- Using <solution> for non-final turns → change to <execute>
+- Using <execute> for final turns → change to <solution>
+"""
+
+CORRECTION_SYSTEM_PROMPT_RUBRIC = """You are an expert AI trainer specializing in improving biomedical agent trajectories. \
+Your task is to generate improved versions of assistant turns based on rubric evaluation feedback.
+
+The agent's format is correct, so focus entirely on QUALITY improvements according to the rubric:
+- Better methodology (using authoritative databases, systematic approaches)
+- Better code and data handling (error handling, efficient queries, proper parsing)
+- Better reasoning coherence (clear chain-of-thought, justified decisions)
+- Better output quality (accurate answers, proper citations, clear presentation)
+
+Each corrected turn must still follow the format: <think>REASONING</think><execute>CODE</execute> \
+(or <think>REASONING</think><solution>ANSWER</solution> for the final turn).
+"""
+
+
 class BiomniRubricRewardAdapter:
     """
     LLM-based rubric reward adapter for Biomni tasks.
@@ -145,6 +200,7 @@ class BiomniRubricRewardAdapter:
     _task_mapping: Dict[str, Any] = {}
     _llm_judge = None
     _aux_llm = None
+    _correction_llm = None
 
     @classmethod
     def _ensure_initialized(cls, model: str = "claude-sonnet-4-5"):
@@ -184,6 +240,16 @@ class BiomniRubricRewardAdapter:
             temperature=0.7,
             max_tokens=32768
         )
+
+        # Initialize correction LLM for generating trajectory corrections
+        # Claude extended thinking requires temperature=1.0
+        correction_llm = ChatAnthropic(
+            model=model,
+            temperature=1.0,
+            max_tokens=32768,
+            thinking={"type": "enabled", "budget_tokens": 4000},
+        )
+        cls._correction_llm = correction_llm.with_structured_output(CorrectionOutput, method="json_schema")
             
         cls._initialized = True
 
@@ -422,6 +488,23 @@ class BiomniRubricRewardAdapter:
                 try:
                     eval_output: CriticMetrics = cls._llm_judge.invoke(judge_messages)
                     break
+                    # if attempt < max_retries - 1:
+                    #     eval_output: CriticMetrics = cls._llm_judge.invoke(judge_messages)
+                    # else:
+                    #     # Last retry: fall back to judge without thinking to avoid
+                    #     # the "structured output + thinking" incompatibility
+                    #     logger.warning(
+                    #         f"Rubric eval attempt {attempt + 1}/{max_retries} for {task_name}: "
+                    #         f"falling back to non-thinking judge"
+                    #     )
+                    #     fallback_llm = ChatAnthropic(
+                    #         model=cls._llm_judge.bound.first.model if hasattr(cls._llm_judge, 'bound') else "claude-sonnet-4-5",
+                    #         temperature=1.0,
+                    #         max_tokens=32768,
+                    #     )
+                    #     fallback_judge = fallback_llm.with_structured_output(CriticMetrics)
+                    #     eval_output = fallback_judge.invoke(judge_messages)
+                    # break
                 except Exception as e:
                     last_error = e
                     if attempt < max_retries - 1:
@@ -484,6 +567,232 @@ class BiomniRubricRewardAdapter:
             result["rubric_rationale"] = f"Error during evaluation: {str(e)}"
             return result
 
+    @staticmethod
+    def _per_turn_format_check(messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+        """Check format validity per assistant turn. Returns list of per-turn results."""
+
+        def _check_block(content: str, *, is_last: bool) -> tuple:
+            """Returns (is_valid, error_description)."""
+            low = content.lower()
+            stripped = low.rstrip()
+
+            if not low.lstrip().startswith("<think>"):
+                return False, "does not start with <think>"
+            if low.count("<think>") != 1 or low.count("</think>") != 1:
+                return False, f"has {low.count('<think>')} <think> and {low.count('</think>')} </think> (expected exactly 1 each)"
+            if not (stripped.endswith("</execute>") or stripped.endswith("</solution>")):
+                return False, "does not end with </execute> or </solution>"
+
+            parts = low.split("</think>", 1)
+            after_think = parts[1]
+            exec_pos = after_think.find("<execute>")
+            sol_pos = after_think.find("<solution>")
+
+            if exec_pos == -1 and sol_pos == -1:
+                return False, "no action tag after </think>"
+
+            if exec_pos == -1:
+                outer_is_execute = False
+            elif sol_pos == -1:
+                outer_is_execute = True
+            else:
+                outer_is_execute = exec_pos < sol_pos
+
+            if outer_is_execute and not stripped.endswith("</execute>"):
+                return False, "outer is <execute> but doesn't end with </execute>"
+            if not outer_is_execute and not stripped.endswith("</solution>"):
+                return False, "outer is <solution> but doesn't end with </solution>"
+
+            if is_last and outer_is_execute:
+                return False, "final turn uses <execute> instead of <solution>"
+            if not is_last and not outer_is_execute:
+                return False, "non-final turn uses <solution> instead of <execute>"
+
+            if "<think>" in after_think or "</think>" in after_think:
+                return False, "extra <think>/<\\/think> tags after the think block"
+
+            return True, "valid"
+
+        assistant_indices = [idx for idx, m in enumerate(messages) if m.get("role") == "assistant"]
+        if not assistant_indices:
+            return []
+
+        last_assistant_idx = assistant_indices[-1]
+        results = []
+        for idx in assistant_indices:
+            content = messages[idx].get("content", "")
+            is_last_msg = (idx == last_assistant_idx)
+            is_valid, error_msg = _check_block(content, is_last=is_last_msg)
+            results.append({
+                "msg_index": idx,
+                "is_last": is_last_msg,
+                "is_valid": is_valid,
+                "error": error_msg,
+            })
+        return results
+
+    @staticmethod
+    def _build_turn_mapping(messages: List[Dict[str, str]]) -> Dict[str, int]:
+        """Map 'Turn N' / 'FINAL ANSWER' labels to assistant message indices in the messages list."""
+        mapping = {}
+        i = 0
+        turn_num = 0
+
+        if i < len(messages) and messages[i].get('role') == 'system':
+            i += 1
+        if i < len(messages) and messages[i].get('role') == 'user':
+            i += 1
+
+        while i < len(messages):
+            msg = messages[i]
+            if msg.get('role') == 'assistant':
+                if i + 1 < len(messages) and messages[i + 1].get('role') == 'user':
+                    turn_num += 1
+                    mapping[f"Turn {turn_num}"] = i
+                    i += 2
+                else:
+                    mapping["FINAL ANSWER"] = i
+                    i += 1
+            else:
+                i += 1
+
+        return mapping
+
+    @classmethod
+    def _generate_corrections(
+        cls,
+        messages: List[Dict[str, str]],
+        trajectory_text: str,
+        rubric_results: Dict[str, Any],
+        ft_reward: float,
+        max_corrections: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Generate up to max_corrections corrections for problematic turns using the LLM."""
+        import time as _time
+
+        turn_mapping = cls._build_turn_mapping(messages)
+        format_failed = ft_reward == 0.0
+        weaknesses = rubric_results.get("rubric_weaknesses", [])
+        rationale = rubric_results.get("rubric_rationale", "")
+
+        if format_failed:
+            per_turn = cls._per_turn_format_check(messages)
+            reverse_mapping = {v: k for k, v in turn_mapping.items()}
+            format_lines = []
+            for info in per_turn:
+                label = reverse_mapping.get(info["msg_index"], f"msg_idx={info['msg_index']}")
+                status = "VALID" if info["is_valid"] else f"INVALID — {info['error']}"
+                format_lines.append(f"  {label}: {status}")
+            format_text = "\n".join(format_lines) if format_lines else "  (no assistant turns)"
+
+            rubric_note = ""
+            if weaknesses:
+                rubric_note = (
+                    "\n\nRUBRIC WEAKNESSES (secondary — fix format first):\n"
+                    + "\n".join(f"  - {w}" for w in weaknesses)
+                )
+
+            human_content = (
+                f"Here is an agent's trajectory for a biomedical task:\n\n"
+                f"{trajectory_text}\n\n"
+                f"FORMAT VALIDATION RESULTS (per turn):\n{format_text}\n\n"
+                f"The format check FAILED (ft_reward=0), so the total reward is 0 regardless of rubric quality. "
+                f"Fix format errors to unblock the reward signal.{rubric_note}\n\n"
+                f"Generate up to {max_corrections} corrections targeting turns with format errors. "
+                f"Each correction MUST:\n"
+                f"1. Target a specific turn (e.g., 'Turn 1', 'Turn 2', 'FINAL ANSWER')\n"
+                f"2. Provide a corrected assistant message that follows ALL format rules\n"
+                f"3. Preserve the intent of the original message while fixing the format\n"
+                f"Return fewer corrections if there are fewer format errors. Return null for unused slots."
+            )
+            system_prompt = CORRECTION_SYSTEM_PROMPT_FORMAT
+            correction_mode = "format"
+        else:
+            rubric_section = "RUBRIC EVALUATION WEAKNESSES:\n" + "\n".join(f"  - {w}" for w in weaknesses)
+            if rationale:
+                rubric_section += f"\n\nDETAILED RATIONALE:\n{rationale}"
+            scores = {
+                "output_grading": rubric_results.get("output_grading", "?"),
+                "methodology": rubric_results.get("methodology_knowhow", "?"),
+                "code_handling": rubric_results.get("code_data_handling", "?"),
+                "reasoning": rubric_results.get("reasoning_coherence", "?"),
+            }
+            scores_text = ", ".join(f"{k}={v}" for k, v in scores.items())
+
+            human_content = (
+                f"Here is an agent's trajectory for a biomedical task:\n\n"
+                f"{trajectory_text}\n\n"
+                f"RUBRIC SCORES: {scores_text}\n\n"
+                f"{rubric_section}\n\n"
+                f"According to the rubric scorings and identified weaknesses, generate up to {max_corrections} "
+                f"corrections targeting turns that would most improve the trajectory's quality. "
+                f"Each correction MUST:\n"
+                f"1. Target a specific turn (e.g., 'Turn 1', 'Turn 2', 'FINAL ANSWER')\n"
+                f"2. Provide an improved assistant message addressing the rubric weaknesses\n"
+                f"3. Preserve the overall approach while improving methodology, code quality, or reasoning\n"
+                f"Return fewer corrections if there are fewer issues. Return null for unused slots."
+            )
+            system_prompt = CORRECTION_SYSTEM_PROMPT_RUBRIC
+            correction_mode = "rubric"
+
+        correction_messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=human_content),
+        ]
+
+        prompt_without_trajectory = human_content.replace(trajectory_text, "<TRAJECTORY_OMITTED>")
+        logger.info(
+            f"Correction prompt [{correction_mode}] (ft_reward={ft_reward}, weaknesses={len(weaknesses)}):\n"
+            f"--- SYSTEM ---\n{system_prompt}\n"
+            f"--- HUMAN (trajectory omitted) ---\n{prompt_without_trajectory}"
+        )
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                result: CorrectionOutput = cls._correction_llm.invoke(correction_messages)
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    backoff = 2 ** (attempt + 1)
+                    logger.warning(f"Correction generation attempt {attempt+1}/{max_retries} failed: {e}. Retrying in {backoff}s...")
+                    _time.sleep(backoff)
+                else:
+                    logger.warning(f"Correction generation failed after {max_retries} attempts: {e}")
+                    return []
+
+        corrections = []
+        for slot in [result.correction_1, result.correction_2, result.correction_3, result.correction_4, result.correction_5]:
+            if slot is None:
+                continue
+            target = slot.target.strip()
+            msg_idx = turn_mapping.get(target)
+            if msg_idx is None:
+                for key, idx in turn_mapping.items():
+                    if key.lower().replace(" ", "") == target.lower().replace(" ", ""):
+                        msg_idx = idx
+                        break
+            if msg_idx is None:
+                logger.warning(f"Correction targets unknown turn '{target}', skipping. Available: {list(turn_mapping.keys())}")
+                continue
+            corrections.append({
+                "assistant_msg_index": msg_idx,
+                "correction_text": slot.correction,
+                "target_label": target,
+            })
+
+        logger.info(f"Generated {len(corrections)} corrections targeting: {[c['target_label'] for c in corrections]}")
+        if corrections:
+            sample = random.choice(corrections)
+            sample_idx = sample["assistant_msg_index"]
+            original_text = messages[sample_idx].get("content", "") if 0 <= sample_idx < len(messages) else "<out of range>"
+            logger.info(
+                f"Sample correction [{sample['target_label']}] (msg_idx={sample_idx}):\n"
+                f"  ORIGINAL: {original_text}\n"
+                f"  CORRECTED: {sample['correction_text']}"
+            )
+        return corrections
+
     @classmethod
     def compute_rewards(
         cls,
@@ -493,7 +802,9 @@ class BiomniRubricRewardAdapter:
         *,
         instance_id: Optional[Any] = None,
         task_name: Optional[str] = None,
-        model: str = "claude-sonnet-4-5"
+        model: str = "claude-sonnet-4-5",
+        generate_corrections: bool = False,
+        max_corrections: int = 5,
     ) -> Dict[str, Any]:
         """
         Compute rewards using:
@@ -601,12 +912,29 @@ class BiomniRubricRewardAdapter:
         if rubric_eval_failed:
             logger.warning("Rubric evaluation failed for task=%s instance=%s; trajectory will be masked from training", task_name, instance_id)
 
+        # Generate corrections if enabled
+        corrections = []
+        if generate_corrections and not rubric_eval_failed:
+            has_assistant = any(m.get("role") == "assistant" for m in messages)
+            has_issues = ft_reward == 0.0 or rubric_results.get("rubric_weaknesses", [])
+            if has_assistant and has_issues:
+                raw_output = format_messages_to_text(messages)
+                corrections = cls._generate_corrections(
+                    messages=messages,
+                    trajectory_text=raw_output,
+                    rubric_results=rubric_results,
+                    ft_reward=ft_reward,
+                    max_corrections=max_corrections,
+                )
+                logger.info("Corrections for task=%s instance=%s: %d generated", task_name, instance_id, len(corrections))
+
         return {
             "score": total_reward,
             "gt_reward": gt_reward,
             "rubric_reward": rubric_reward,
             "ft_reward": ft_reward,
             "rubric_eval_failed": rubric_eval_failed,
+            "corrections": corrections,
             "rubric_details": {
                 "output_grading": rubric_results["output_grading"],
                 "methodology_knowhow": rubric_results["methodology_knowhow"],

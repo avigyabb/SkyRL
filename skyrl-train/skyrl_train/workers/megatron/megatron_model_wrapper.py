@@ -7,7 +7,7 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 import megatron.core.parallel_state as mpu
 from megatron.core.distributed import finalize_model_grads
 
-from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs, vocab_parallel_entropy
+from skyrl_train.distributed.megatron.model_utils import from_parallel_logits_to_logprobs, vocab_parallel_entropy, vocab_parallel_kl_div
 from skyrl_train.distributed.megatron.megatron_utils import get_model_config
 from skyrl_train.utils.ppo_utils import compute_approx_kl, masked_mean
 
@@ -170,6 +170,80 @@ class MegatronModelWrapper:
             log_probs = torch.zeros(size=(1, 1), dtype=torch.bfloat16, device=device)
         return log_probs
 
+    def forward_teacher_logits(
+        self,
+        micro_batches: List[dict],
+        seq_len: int,
+        micro_batch_size: int,
+        temperature: float = 1.0,
+    ) -> List[torch.Tensor]:
+        """Forward-only pass returning TP-sharded logits at response positions (for full-vocab KL)."""
+        forward_backward_func = get_forward_backward_func()
+
+        def collection_func(logits, data):
+            if temperature != 1.0:
+                logits.div_(temperature)
+            num_actions = data["num_actions"]
+            action_logits = logits[:, -num_actions - 1 : -1, :].contiguous()
+            return torch.tensor(0.0, device=logits.device), {"logits": action_logits}
+
+        def forward_step(batch_iter, model):
+            batch = next(batch_iter)
+            sequences = batch["sequences"]
+            attention_mask = batch["attention_mask"].to(bool)
+            position_ids = batch["position_ids"]
+
+            if self.use_sample_packing:
+                new_sequences, packed_seq_params = preprocess_packed_seqs(
+                    sequences, attention_mask,
+                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
+                )
+                new_attention_mask = None
+                new_position_ids = None
+            else:
+                new_sequences, new_attention_mask, new_position_ids = remove_left_padding(
+                    sequences, attention_mask, position_ids,
+                    self.tf_config.sequence_parallel,
+                    pre_process=mpu.is_pipeline_first_stage(ignore_virtual=True),
+                )
+                packed_seq_params = None
+
+            outputs = model(
+                new_sequences, new_position_ids, new_attention_mask,
+                packed_seq_params=packed_seq_params,
+            )
+
+            if self.use_sample_packing:
+                outputs = postprocess_packed_seqs(
+                    outputs, packed_seq_params, attention_mask,
+                    micro_batch_size, seq_len,
+                    post_process=mpu.is_pipeline_last_stage(ignore_virtual=True),
+                )
+            else:
+                outputs = recover_left_padding(
+                    outputs, new_attention_mask, attention_mask, seq_len,
+                    post_process=mpu.is_pipeline_last_stage(ignore_virtual=True),
+                )
+
+            return outputs, partial(collection_func, data=batch)
+
+        batch_generator = make_batch_generator(micro_batches, vpp_size=len(self.actor_module))
+        output = forward_backward_func(
+            forward_step_func=forward_step,
+            data_iterator=batch_generator,
+            model=self.actor_module,
+            num_microbatches=len(micro_batches),
+            seq_length=seq_len,
+            micro_batch_size=micro_batch_size,
+            forward_only=True,
+        )
+
+        if mpu.is_pipeline_last_stage(ignore_virtual=True):
+            return [o["logits"] for o in output]
+        else:
+            device = micro_batches[0]["sequences"].device
+            return [torch.zeros(size=(1, 1, 1), dtype=torch.bfloat16, device=device)] * len(micro_batches)
+
     def forward_backward_mini_batch(
         self,
         micro_batches: List[dict],
@@ -266,11 +340,34 @@ class MegatronModelWrapper:
 
             loss = policy_loss + kl_loss * self.cfg.trainer.algorithm.kl_loss_coef
 
+            sdft_kl_value = 0.0
+            if "sdft_teacher_logps" in data:
+                teacher_logps = data["sdft_teacher_logps"]
+                sdft_loss_mask = data["sdft_loss_mask"]
+                sdft_coeff = data["sdft_coeff"]
+
+                advantage = (action_log_probs - teacher_logps).detach()
+                sdft_loss = (advantage * action_log_probs * sdft_loss_mask).sum() / sdft_loss_mask.sum().clamp(min=1)
+                loss = loss + sdft_loss * sdft_coeff
+                sdft_kl_value = advantage.mean().detach().item()
+
+            elif "sdft_teacher_logits" in data:
+                teacher_logits = data["sdft_teacher_logits"]
+                sdft_loss_mask = data["sdft_loss_mask"]
+                sdft_coeff = data["sdft_coeff"]
+
+                student_action_logits = logits[:, -num_actions - 1 : -1, :]
+                per_token_kl = vocab_parallel_kl_div(student_action_logits, teacher_logits)
+                sdft_loss = (per_token_kl * sdft_loss_mask).sum() / sdft_loss_mask.sum().clamp(min=1)
+                loss = loss + sdft_loss * sdft_coeff
+                sdft_kl_value = per_token_kl.mean().detach().item()
+
             metrics = {
                 "policy_loss": policy_loss.detach().item(),
                 "policy_entropy": entropy,
                 "ppo_clip_ratio": clip_ratio,
                 "policy_kl": kl_loss.detach().item(),
+                "sdft_kl": sdft_kl_value,
             }
             return loss, metrics
 

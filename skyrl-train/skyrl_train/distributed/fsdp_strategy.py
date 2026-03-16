@@ -290,11 +290,13 @@ class FSDPStrategy(DistributedStrategy):
                 weight_decay=optim_config.weight_decay,
             )
 
+            scheduler_specific_kwargs = getattr(optim_config, "scheduler_specific_kwargs", None)
             lr_scheduler = get_scheduler(
                 optim_config.scheduler,
                 new_optimizer,
                 num_warmup_steps=optim_config.num_warmup_steps,
                 num_training_steps=self.total_training_steps,
+                scheduler_specific_kwargs=scheduler_specific_kwargs,
             )
         else:
             new_optimizer = None

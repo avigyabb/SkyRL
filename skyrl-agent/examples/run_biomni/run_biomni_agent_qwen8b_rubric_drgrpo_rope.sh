@@ -47,6 +47,9 @@ export RAY_RUNTIME_ENV_HOOK=ray._private.runtime_env.uv_runtime_env_hook.hook
 export UV_HTTP_TIMEOUT=1800
 export BIOMNI_RUNTIME_URL="http://10.138.0.4:8000"
 
+export RAY_grpc_keepalive_time_ms=60000
+export RAY_grpc_keepalive_timeout_ms=600000
+
 # -----------------------------
 # LLM Critic Configuration
 # -----------------------------
@@ -64,7 +67,7 @@ fi
 # User-configurable paths
 # -----------------------------
 PROJECT_NAME="biomni-training-qwen3-8b-skyrlagent-rubric-drgrpo"
-EXPERIMENT_NAME="biomni-training-qwen3-8b-32bsz-temp1.0-clip-0.28-48turn-skyrlagent-rubric-drgrpo-rope"
+EXPERIMENT_NAME="biomni-training-qwen3-8b-32bsz-temp1.0-clip-0.28-48turn-skyrlagent-rubric-drgrpo-rope-ft-gating"
 
 DATA_PATH="/mnt/local/biomni/skyrl-data"
 TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
@@ -78,9 +81,9 @@ CKPT_PATH="/mnt/biomni_filestore/models/skyrlagent"
 # -----------------------------
 # Training hyperparameters
 # -----------------------------
-BATCH_SIZE=32
+BATCH_SIZE=16
 # MAX_NUM_ITERS=48
-NUM_TRAJ=8
+NUM_TRAJ=5
 # MAX_PARALLEL_AGENTS=128
 SAVE_FREQ=8
 
@@ -161,6 +164,8 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   trainer.algorithm.eps_clip_high=$CLIP_RATIO_HIGH \
   trainer.policy.model.path="$MODEL_PATH" \
   trainer.policy.optimizer_config.lr=1e-6 \
+  trainer.policy.optimizer_config.scheduler=cosine_with_min_lr \
+  'trainer.policy.optimizer_config.scheduler_specific_kwargs={min_lr: 1e-7}' \
   trainer.policy.sequence_parallel_size=$SP_SIZE \
   trainer.policy.megatron_config.tensor_model_parallel_size=1 \
   trainer.gradient_checkpointing=true \
@@ -169,12 +174,12 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   trainer.placement.policy_num_gpus_per_node=8 \
   trainer.placement.ref_num_gpus_per_node=0 \
   trainer.placement.critic_num_gpus_per_node=0 \
-  trainer.epochs=1 \
+  trainer.epochs=8 \
   trainer.train_batch_size=$BATCH_SIZE \
   trainer.policy_mini_batch_size=$BATCH_SIZE \
   trainer.micro_train_batch_size_per_gpu=1 \
   trainer.micro_forward_batch_size_per_gpu=1 \
-  trainer.max_prompt_length=40960 \
+  trainer.max_prompt_length=45056 \
   trainer.eval_before_train=true \
   trainer.eval_interval=-1 \
   trainer.ckpt_interval=$SAVE_FREQ \
@@ -199,7 +204,7 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   generator.sampling_params.temperature=$TEMPERATURE \
   generator.sampling_params.top_p=$TOP_P \
   generator.sampling_params.max_generate_length=4096 \
-  generator.max_input_length=40960 \
+  generator.max_input_length=45056 \
   generator.max_num_seqs=256 \
   generator.enforce_eager=true \
   trainer.policy.fsdp_config.cpu_offload=true \
@@ -208,7 +213,7 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   +generator.engine_init_kwargs.rope_scaling.rope_type=yarn \
   +generator.engine_init_kwargs.rope_scaling.factor=1.5 \
   +generator.engine_init_kwargs.rope_scaling.original_max_position_embeddings=32768 \
-  +generator.engine_init_kwargs.max_model_len=47000 \
+  +generator.engine_init_kwargs.max_model_len=49152 \
   # NOTE: use_log_heavy and log_heavy_freq are configured in the YAML file \
   # (command-line +generator.* options do not reach agent config) \
   $@
