@@ -1,0 +1,9 @@
+logs/
+outputs/
+core
+core.*
+*.core
+*.log
+__pycache__/
+.git/
+*.egg-info/

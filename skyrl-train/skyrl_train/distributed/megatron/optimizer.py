@@ -66,9 +66,8 @@ def get_megatron_optimizer_param_scheduler(
     """
     Get the optimizer parameter scheduler for Megatron.
     """
-    # TODO: support other schedulers for Megatron
-    if config.get("scheduler", "constant_with_warmup") != "constant_with_warmup":
-        raise ValueError("Only constant_with_warmup scheduler is supported for Megatron")
+    scheduler_type = config.get("scheduler", "constant_with_warmup")
+    scheduler_kwargs = config.get("scheduler_specific_kwargs", {}) or {}
 
     lr_warmup_steps = config.num_warmup_steps
     if config.get("lr_decay_steps", None) is None:
@@ -78,14 +77,29 @@ def get_megatron_optimizer_param_scheduler(
     ):
         lr_warmup_steps = int(config.lr_warmup_steps_ratio * lr_decay_steps)
 
+    if scheduler_type == "constant_with_warmup":
+        lr_decay_style = "constant"
+        min_lr = config.get("min_lr", 0.0)
+    elif scheduler_type == "cosine_with_min_lr":
+        lr_decay_style = "cosine"
+        min_lr = float(scheduler_kwargs.get("min_lr", config.get("min_lr", 0.0)))
+    elif scheduler_type == "linear":
+        lr_decay_style = "linear"
+        min_lr = float(scheduler_kwargs.get("min_lr", config.get("min_lr", 0.0)))
+    else:
+        raise ValueError(
+            f"Unsupported scheduler '{scheduler_type}'. "
+            f"Supported: constant_with_warmup, cosine_with_min_lr, linear"
+        )
+
     opt_param_scheduler = OptimizerParamScheduler(
         optimizer,
         init_lr=config.get("lr_warmup_init", 0.0),
         max_lr=config.lr,
-        min_lr=config.get("min_lr", 0.0),
+        min_lr=min_lr,
         lr_warmup_steps=lr_warmup_steps,
         lr_decay_steps=lr_decay_steps,
-        lr_decay_style="constant",
+        lr_decay_style=lr_decay_style,
         start_wd=config.weight_decay,
         end_wd=config.weight_decay,
         wd_incr_steps=num_training_steps,

@@ -70,6 +70,29 @@ log() {
     echo "[$timestamp] $*" | tee -a "$WRAPPER_LOG"
 }
 
+cleanup_gpu_processes() {
+    log "Killing all stale GPU processes..."
+    local gpu_pids
+    gpu_pids=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | tr -d ' ' | sort -u)
+    if [[ -n "$gpu_pids" ]]; then
+        local count
+        count=$(echo "$gpu_pids" | wc -l)
+        log "Found $count processes holding GPU memory — killing all"
+        echo "$gpu_pids" | xargs -r kill -9 2>/dev/null
+        sleep 5
+        local remaining
+        remaining=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | wc -l)
+        if [[ "$remaining" -gt 0 ]]; then
+            log "WARNING: $remaining GPU processes survived kill -9 (likely zombies). GPU memory may still be leaked."
+            log "If OOMs persist, restart the Docker container to reclaim zombie CUDA contexts."
+        else
+            log "All GPU memory reclaimed"
+        fi
+    else
+        log "No GPU processes found"
+    fi
+}
+
 restart_ray_head() {
     if [[ "$RAY_RESTART_ENABLED" != "true" ]]; then
         log "Ray restart disabled (--no-ray-restart), skipping..."
@@ -78,7 +101,7 @@ restart_ray_head() {
     
     log "Restarting Ray head node..."
     
-    # Source the Ray head start script
+    # Source the Ray head start script (includes `ray stop -f`)
     if [[ -f "$SCRIPT_DIR/start_ray_head.sh" ]]; then
         bash "$SCRIPT_DIR/start_ray_head.sh"
         local ray_exit_code=$?
@@ -119,8 +142,9 @@ while true; do
     log "Attempt #$ATTEMPT (Total restarts: $TOTAL_RESTARTS)"
     log "----------------------------------------------"
     
-    # Restart Ray before retries (not on first attempt)
+    # Clean up stale GPU processes and restart Ray before retries (not on first attempt)
     if [[ $TOTAL_RESTARTS -gt 0 ]]; then
+        cleanup_gpu_processes
         restart_ray_head
     fi
     

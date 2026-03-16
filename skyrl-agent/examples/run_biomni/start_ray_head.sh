@@ -29,6 +29,10 @@ export NCCL_NET_GDR_LEVEL=LOC                # disable GPUDirect RDMA (not avail
 # Increase Ray worker registration timeout (default 60s is too short with slow disk/uv)
 export RAY_worker_register_timeout_seconds=300
 
+# Ray gRPC keepalive: prevent actor timeout during long checkpoint saves to NFS
+export RAY_grpc_keepalive_time_ms=60000
+export RAY_grpc_keepalive_timeout_ms=600000
+
 # Use cached HuggingFace models only (avoid network timeouts when multiple workers access HF)
 # Disabled until model is pre-downloaded:
 # export HF_HUB_OFFLINE=1

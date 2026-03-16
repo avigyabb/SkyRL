@@ -26,6 +26,10 @@ export NCCL_NET_GDR_LEVEL=LOC                # disable GPUDirect RDMA
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# Ray gRPC keepalive: prevent actor timeout during long checkpoint saves to NFS
+export RAY_grpc_keepalive_time_ms=60000
+export RAY_grpc_keepalive_timeout_ms=600000
+
 export WANDB_API_KEY="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"
 
 export FLASHINFER_DISABLE_VERSION_CHECK=1
@@ -65,7 +69,7 @@ EXPERIMENT_NAME="biomni-training-qwen3-8b-32bsz-temp1.0-clip-0.28-48turn-skyrlag
 DATA_PATH="/mnt/local/biomni/skyrl-data"
 TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
 VAL_FILE="$DATA_PATH/val_freeform.parquet"
-SFT_MODEL_PATH="/mnt/biomni_filestore/model_weights/qwen3-8b-sft-full-v1/global_step_208"
+SFT_MODEL_PATH="/mnt/biomni_filestore/model_weights/qwen3-8b-sft-full-v1/global_step_104"
 CKPT_PATH="/mnt/biomni_filestore/models/skyrlagent"
 
 

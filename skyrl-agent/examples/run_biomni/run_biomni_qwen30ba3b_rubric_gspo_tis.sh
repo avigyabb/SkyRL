@@ -26,6 +26,10 @@ export NCCL_NET_GDR_LEVEL=LOC                # disable GPUDirect RDMA
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
+# Ray gRPC keepalive: prevent actor timeout during long checkpoint saves to NFS
+export RAY_grpc_keepalive_time_ms=60000
+export RAY_grpc_keepalive_timeout_ms=600000
+
 export WANDB_API_KEY="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"
 
 export FLASHINFER_DISABLE_VERSION_CHECK=1
@@ -59,8 +63,8 @@ fi
 # -----------------------------
 # User-configurable paths
 # -----------------------------
-PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo-rubric-fix"
-EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-8gpus-rubric-gspo-no-tis-eps3e4-4e4"
+PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-gspo-rubric-overfit"
+EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-8gpus-rubric-gspo-no-tis-eps3e4-4e4-gated-ft"
 
 DATA_PATH="/mnt/local/biomni/skyrl-data"
 TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
@@ -172,7 +176,7 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   trainer.policy.megatron_config.optimizer_config_kwargs.overlap_cpu_optimizer_d2h_h2d=true \
   trainer.policy.megatron_config.optimizer_config_kwargs.use_precision_aware_optimizer=true \
   trainer.gradient_checkpointing=true \
-  trainer.epochs=1 \
+  trainer.epochs=8 \
   trainer.train_batch_size=$TRAIN_BATCH_SIZE \
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
   trainer.micro_train_batch_size_per_gpu=1 \

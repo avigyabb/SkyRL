@@ -5,7 +5,7 @@ agent_cls: skyrl_agent.agents.biomni_codeact.BiomniCodeActAgent
 # 2. Have format reward (ft_reward) == 0
 # This filters degenerated cases where agent produces very long non-compliant outputs
 overlong_filter_enabled: true
-overlong_filter_threshold: 40000
+overlong_filter_threshold: 32768
 
 # Heavy logging: log detailed trajectory samples periodically
 use_log_heavy: true
@@ -24,9 +24,9 @@ generator:
     api_url: http://localhost:30000
 
   num_trajectories: 1
-  max_iterations: 50
+  max_iterations: 30
   # Keep prompt budget aligned with trainer.max_prompt_length & vLLM max_model_len.
-  max_prompt_length: 49152
+  max_prompt_length: 32768
   sampling_params:
     temperature: 1.0
     top_p: 1.0
