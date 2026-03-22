@@ -4561,3 +4561,200 @@ None
 ### Actions Taken
 - None — healthy
 
+
+---
+
+## Monitor Cycle — 2026-03-16 12:17 UTC
+
+### Status
+- **Process**: Running — Step 1 completed successfully, Step 2 generation started at 12:14:01
+- **Steps completed**: 1
+- **Time since launch**: ~2h10m
+- **SDFT**: First step completed with auxiliary loss — NO OOM
+
+### Metrics Snapshot (Step 1)
+- avg_final_rewards: 3.87
+- policy_loss (pg): 0.0325
+- grad_norm: 0.437
+- entropy: 7.8
+- ppo_clip_ratio: (not yet extracted from progress bar — first step)
+- avg_response_length: 12,195
+- sdft_kl: -7.51
+
+### Reward Breakdown (Step 1 batch)
+- ft_reward pass rate: 97.5% (78/80)
+- gt_reward pass rate: 70.0%
+- rubric_reward mean: 3.21
+- total_reward mean: 3.87
+
+### Rollout Metrics
+- avg_turn_assistant: 10.29
+- pass_at_n_percentage: 81.25%
+- error_runtime: 0.0
+- error_evaluation: 0.0
+- num_overlong_filtered: 0
+- rubric_code_handling: 5.04
+- rubric_methodology: 5.24
+- rubric_reasoning: 6.94
+- rubric_output_grading: 14.86
+
+### SDFT Diagnostics (Step 1)
+- SDFT data: 80/80 trajectories with demonstrations
+- EMA parameters: 8.80 GB per rank
+- Teacher forward: completed for all micro-batches, seq_len 6K-21K
+- Teacher num_actions: 3K-18K, student num_actions: 27,959 (padded)
+- SDFT KL (advantage log s/t): mean -4.8 to -8.0 (expected — teacher sees demo)
+- SDFT loss: -0.008 to -0.031 per micro-batch
+- SDFT loss coefficient: 0.8
+- KL estimator: reinforce (low memory, ~1.3 MB per batch)
+- NO OOM during teacher forward + student forward-backward
+
+### Format Failures
+- ft_reward 0.0 count: 2/80 (2.5%) — normal
+- Rule 2 (random token): not tracked yet for this run
+
+### Environment Runtime Health
+- error_runtime: 0.0 — no runtime errors
+- Spot-checked tracebacks: all from model-generated code (pandas KeyError, ValueError) — expected
+- No empty observations found
+
+### Context Overflows
+- context_exceed_ratio: 0.0
+
+### Crashes Since Last Check
+- None (Attempt #1, no retries)
+
+### Issues Found
+- None — first step completed successfully with SDFT
+
+### Actions Taken
+- None — healthy
+
+### Code/Config Changes
+```
+None
+```
+
+
+---
+
+## Monitor Cycle — 2026-03-16 14:40 UTC
+
+### Status
+- **Process**: Running — Step 2 completed, Step 3 generation starting
+- **Steps completed**: 2
+- **Time since last check**: ~2.4h
+
+### Metrics Snapshot (Step 2)
+- avg_final_rewards: 4.08 (↑ from 3.87)
+- policy_loss (pg): -0.0151 (from 0.0325 — sign change, GSPO artifact)
+- grad_norm: 0.408 (from 0.437 — stable)
+- entropy: 9.48 (from 7.8 — increased, possibly SDFT influence)
+- avg_response_length: 13,836 (from 12,195)
+- sdft_kl: -9.37 (from -7.51 — teacher increasingly more confident)
+
+### Reward Breakdown (Step 2)
+- ft_reward: monitoring
+- gt_reward: monitoring
+- rubric_reward: monitoring
+- total_reward mean: 4.08
+
+### SDFT Diagnostics (Step 2)
+- SDFT data: 80/80 trajectories with demonstrations (consistent)
+- sdft_kl: -9.37 (more negative than step 1's -7.51)
+- NO OOM during step 2 teacher forward + student forward-backward
+- Training time: 2:39 (slightly faster than step 1's 3:13)
+
+### Format Failures
+- ft_reward looks healthy based on spot checks (mostly 1.0)
+
+### Crashes Since Last Check
+- None (Attempt #1, no retries)
+
+### Issues Found
+- **Entropy increase**: 7.8 → 9.48 — unusual. Could be SDFT encouraging diversity or natural variance from different task instances. Will monitor for trend over next steps.
+- **sdft_kl becoming more negative**: -7.51 → -9.37. Expected since EMA barely changed (decay=0.99) while student got gradient updates. Not actionable yet but tracking.
+
+### Actions Taken
+- None — healthy
+
+### Code/Config Changes
+```
+None
+```
+
+
+---
+
+## Monitor Cycle — 2026-03-16 16:58 UTC
+
+### Status
+- **Process**: Running — Step 3 completed, Step 4 generation starting
+- **Steps completed**: 3 (step 4 will trigger checkpoint, ckpt_interval=4)
+
+### Metrics Trend (Step 1 → 2 → 3)
+| Metric | Step 1 | Step 2 | Step 3 | Trend |
+|--------|--------|--------|--------|-------|
+| avg_final_rewards | 3.87 | 4.08 | 3.54 | ~stable |
+| policy_loss (pg) | 0.033 | -0.015 | -0.044 | decreasing |
+| entropy | 7.8 | 9.48 | 6.24 | volatile |
+| grad_norm | 0.437 | 0.408 | 0.399 | stable ↓ |
+| sdft_kl | -7.51 | -9.37 | -5.92 | improving |
+| ft_reward | 0.975 | 0.963 | 0.838 | declining ⚠ |
+| gt_reward | 0.70 | 0.825 | 0.775 | ~stable |
+| rubric_reward | 3.21 | 3.38 | 3.23 | ~stable |
+| finish_tool_ratio | 1.0 | 0.975 | 0.925 | declining |
+| iter_cap_ratio | 0.0 | 0.013 | 0.05 | increasing ⚠ |
+| num_mask_out | 0 | 1 | 4 | increasing |
+| pass_at_n | 0.813 | 1.0 | 0.938 | ~stable |
+
+### SDFT Diagnostics (Step 3)
+- SDFT data: 80/80 trajectories
+- sdft_kl: -5.92 (improved from -9.37, student approaching teacher)
+- NO OOM on any step (3 steps completed successfully)
+- Training time: 2:36 per step (fastest yet)
+
+### Concerns to Watch
+1. **ft_reward declining**: 0.975 → 0.838 over 3 steps. Model may be losing format compliance.
+2. **iter_cap_ratio increasing**: More trajectories hitting iteration limit.
+3. **num_mask_out increasing**: 0 → 4 samples masked out.
+
+### Assessment
+Training is healthy overall. The SDFT auxiliary loss has been confirmed working across 3 steps with no OOM. The sdft_kl is trending toward zero which is the intended behavior. The reward metrics show normal variance. Format compliance is declining slightly which is worth monitoring but not alarming yet.
+
+### Actions Taken
+- None
+
+
+---
+
+## Monitor Cycle — 2026-03-16 19:36 UTC
+
+### Status
+- **Process**: Running — Step 4 completed + checkpointed, Step 5 generation in progress
+- **Steps completed**: 4
+
+### Metrics Trend (Step 1 → 2 → 3 → 4)
+| Metric | Step 1 | Step 2 | Step 3 | Step 4 | Trend |
+|--------|--------|--------|--------|--------|-------|
+| avg_final_rewards | 3.87 | 4.08 | 3.54 | 3.13 | declining ⚠ |
+| policy_loss (pg) | 0.033 | -0.015 | -0.044 | 0.334 | volatile ⚠ |
+| entropy | 7.8 | 9.48 | 6.24 | 7.21 | volatile |
+| grad_norm | 0.437 | 0.408 | 0.399 | 0.37 | stable ↓ |
+| sdft_kl | -7.51 | -9.37 | -5.92 | -7.01 | oscillating |
+| ft_reward | 0.975 | 0.963 | 0.838 | 0.925 | volatile |
+| gt_reward | 0.70 | 0.825 | 0.775 | 0.588 | declining ⚠ |
+
+### Checkpoint
+- First checkpoint saved at step 4 (async, ~13 min NFS write)
+- Saved to /mnt/biomni_filestore/models/skyrlagent/.../reinforce
+
+### Concerns
+1. **Reward declining**: 3.87 → 4.08 → 3.54 → 3.13. The gt_reward dropped to 0.588 at step 4.
+2. **Policy loss spike**: pg=0.334 at step 4 (10x larger than step 1). Could indicate instability.
+3. **SDFT KL oscillating**: -7.51 → -9.37 → -5.92 → -7.01. Not monotonically improving.
+4. Still only 4 steps, high variance expected. Not actionable yet.
+
+### Assessment
+Training is running but reward quality is declining. This needs close monitoring over the next few steps. If rewards continue to decline, this could indicate the SDFT loss is dominating too aggressively (sdft_loss_coef=0.8 is quite high). However, 4 steps is too early to conclude — the batch-to-batch variance in these agent tasks is large.
+

@@ -451,34 +451,67 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                                                 temperature=temperature,
                                             )
                                             teacher_outputs.append(logps)
+                                            print(
+                                                f"[SDFT DIAG] micro {len(teacher_outputs)-1}: "
+                                                f"teacher_seq_len={tmb['sequences'].shape[1]}, "
+                                                f"teacher_num_actions={tmb['num_actions']}, "
+                                                f"teacher_logps_shape={logps.shape}"
+                                            )
                                     else:
-                                        valid_tmbs = [mb for mb in teacher_micro_batches if mb is not None]
-                                        valid_logits = self.model.forward_teacher_logits(
-                                            valid_tmbs,
-                                            seq_len=max(mb["sequences"].shape[1] for mb in valid_tmbs),
-                                            micro_batch_size=1,
-                                            temperature=temperature,
-                                        )
                                         teacher_outputs = []
-                                        vi = 0
                                         for tmb in teacher_micro_batches:
                                             if tmb is None:
                                                 teacher_outputs.append(None)
-                                            else:
-                                                teacher_outputs.append(valid_logits[vi])
-                                                vi += 1
+                                                continue
+                                            logits_list = self.model.forward_teacher_logits(
+                                                [tmb],
+                                                seq_len=tmb["sequences"].shape[1],
+                                                micro_batch_size=1,
+                                                temperature=temperature,
+                                            )
+                                            teacher_outputs.append(logits_list[0])
 
                             for i, mb in enumerate(micro_buffer):
                                 if teacher_outputs[i] is None:
                                     continue
                                 idx = micro_sample_indices[i]
                                 mask = sdft_data[idx]["loss_mask"]
-                                mb["sdft_loss_mask"] = torch.tensor(mask, device=device, dtype=torch.float32).unsqueeze(0)
+                                mask_tensor = torch.tensor(mask, device=device, dtype=torch.float32).unsqueeze(0)
+                                student_na = mb["num_actions"]
+                                if mask_tensor.shape[1] < student_na:
+                                    mask_tensor = torch.nn.functional.pad(mask_tensor, (0, student_na - mask_tensor.shape[1]), value=0.0)
+                                elif mask_tensor.shape[1] > student_na:
+                                    mask_tensor = mask_tensor[:, :student_na]
+                                mb["sdft_loss_mask"] = mask_tensor
                                 mb["sdft_coeff"] = sdft_coeff
                                 if kl_estimator == "reinforce":
-                                    mb["sdft_teacher_logps"] = teacher_outputs[i].detach()
+                                    teacher_logps = teacher_outputs[i].detach()
+                                    student_na = mb["num_actions"]
+                                    teacher_na = teacher_logps.shape[1]
+                                    if teacher_na < student_na:
+                                        teacher_logps = torch.nn.functional.pad(
+                                            teacher_logps, (0, student_na - teacher_na), value=0.0
+                                        )
+                                    elif teacher_na > student_na:
+                                        teacher_logps = teacher_logps[:, :student_na]
+                                    mb["sdft_teacher_logps"] = teacher_logps
+                                    print(
+                                        f"[SDFT DIAG] attach micro {i}: "
+                                        f"student_num_actions={student_na}, "
+                                        f"teacher_num_actions_orig={teacher_outputs[i].shape[1]}, "
+                                        f"teacher_logps_shape={teacher_logps.shape}, "
+                                        f"mask_sum={sum(sdft_data[micro_sample_indices[i]]['loss_mask'])}"
+                                    )
                                 else:
                                     mb["sdft_teacher_logits"] = teacher_outputs[i].detach()
+                                    print(
+                                        f"[SDFT DIAG] micro {i}: "
+                                        f"teacher_seq_len={teacher_micro_batches[i]['sequences'].shape[1]}, "
+                                        f"student_seq_len={mb['sequences'].shape[1]}, "
+                                        f"teacher_num_actions={teacher_micro_batches[i]['num_actions']}, "
+                                        f"student_num_actions={mb['num_actions']}, "
+                                        f"teacher_logits_shape={teacher_outputs[i].shape}"
+                                    )
 
                     metrics_list = self.model.forward_backward_mini_batch(
                         micro_batches=micro_buffer,

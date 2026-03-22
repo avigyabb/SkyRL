@@ -857,16 +857,42 @@ class AgentRunner:
 
         sdft_data = []
         sdft_enabled = self.cfg.get("sdft_enabled", False) if hasattr(self.cfg, 'get') else False
-        if sdft_enabled and hasattr(self.task, 'get_demonstration'):
+        # Look up task objects that support get_demonstration.
+        # First try self.task; if it's a DummyReactTask, fall back to the
+        # BiomniRubricRewardAdapter's task_mapping (keyed by task_name).
+        sdft_task_lookup = {}
+        if sdft_enabled:
+            if hasattr(self.task, 'get_demonstration'):
+                sdft_task_lookup["_default"] = self.task
+                logger.info(f"[SDFT] Using self.task ({type(self.task).__name__}) for demonstrations")
+            else:
+                try:
+                    from skyrl_agent.tasks.biomni_rubric_reward_adapter import BiomniRubricRewardAdapter
+                    BiomniRubricRewardAdapter._ensure_initialized()
+                    for tname, tobj in BiomniRubricRewardAdapter._task_mapping.items():
+                        if hasattr(tobj, 'get_demonstration'):
+                            sdft_task_lookup[tname] = tobj
+                    logger.info(f"[SDFT] Found {len(sdft_task_lookup)} tasks with get_demonstration via reward adapter: {list(sdft_task_lookup.keys())}")
+                except Exception as e:
+                    logger.warning(f"[SDFT] Failed to load task mapping from BiomniRubricRewardAdapter: {e}")
+            if not sdft_task_lookup:
+                logger.warning(f"[SDFT] sdft_enabled=True but no task has get_demonstration — SDFT data will NOT be generated")
+        if sdft_enabled and sdft_task_lookup:
             for idx, (resp_ids, resp_mask) in enumerate(
                 zip(response_ids, response_assistant_mask)
             ):
                 inst = instance_list[idx]
                 instance_id = inst.get("instance_id") if hasattr(inst, 'get') else inst["instance_id"]
+                task_name = inst.get("task_name") if hasattr(inst, 'get') else None
+                # Find the right task object for this instance
+                sdft_task = sdft_task_lookup.get(task_name) or sdft_task_lookup.get("_default")
+                if sdft_task is None:
+                    sdft_data.append(None)
+                    continue
                 try:
-                    demo = self.task.get_demonstration(int(instance_id))
+                    demo = sdft_task.get_demonstration(int(instance_id))
                 except Exception as e:
-                    logger.warning(f"Failed to get SDFT demonstration for instance {instance_id}: {e}")
+                    logger.warning(f"[SDFT] Failed to get demonstration for {task_name}/{instance_id}: {e}")
                     sdft_data.append(None)
                     continue
 

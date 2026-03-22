@@ -346,21 +346,49 @@ class MegatronModelWrapper:
                 sdft_loss_mask = data["sdft_loss_mask"]
                 sdft_coeff = data["sdft_coeff"]
 
+                print(
+                    f"[SDFT KL DIAG] student_logps={action_log_probs.shape}, "
+                    f"teacher_logps={teacher_logps.shape}, "
+                    f"num_actions={num_actions}, "
+                    f"mask_sum={sdft_loss_mask.sum().item():.0f}"
+                )
+
                 advantage = (action_log_probs - teacher_logps).detach()
                 sdft_loss = (advantage * action_log_probs * sdft_loss_mask).sum() / sdft_loss_mask.sum().clamp(min=1)
                 loss = loss + sdft_loss * sdft_coeff
                 sdft_kl_value = advantage.mean().detach().item()
 
+                print(
+                    f"[SDFT KL DIAG] advantage(log s/t): mean={advantage.mean().item():.6f}, "
+                    f"max={advantage.max().item():.4f}, min={advantage.min().item():.6f}, "
+                    f"sdft_loss={sdft_loss.item():.6f}"
+                )
+
             elif "sdft_teacher_logits" in data:
-                teacher_logits = data["sdft_teacher_logits"]
+                teacher_logits = data.pop("sdft_teacher_logits")
                 sdft_loss_mask = data["sdft_loss_mask"]
                 sdft_coeff = data["sdft_coeff"]
 
                 student_action_logits = logits[:, -num_actions - 1 : -1, :]
+                print(
+                    f"[SDFT KL DIAG] student_logits={student_action_logits.shape}, "
+                    f"teacher_logits={teacher_logits.shape}, "
+                    f"num_actions={num_actions}, "
+                    f"mask_sum={sdft_loss_mask.sum().item():.0f}, "
+                    f"student_logits_norm={student_action_logits.float().norm().item():.4f}, "
+                    f"teacher_logits_norm={teacher_logits.float().norm().item():.4f}"
+                )
                 per_token_kl = vocab_parallel_kl_div(student_action_logits, teacher_logits)
                 sdft_loss = (per_token_kl * sdft_loss_mask).sum() / sdft_loss_mask.sum().clamp(min=1)
                 loss = loss + sdft_loss * sdft_coeff
                 sdft_kl_value = per_token_kl.mean().detach().item()
+                print(
+                    f"[SDFT KL DIAG] per_token_kl: mean={per_token_kl.mean().item():.6f}, "
+                    f"max={per_token_kl.max().item():.4f}, min={per_token_kl.min().item():.6f}, "
+                    f"any_negative={(per_token_kl < 0).any().item()}, "
+                    f"sdft_loss={sdft_loss.item():.6f}"
+                )
+                del teacher_logits
 
             metrics = {
                 "policy_loss": policy_loss.detach().item(),
