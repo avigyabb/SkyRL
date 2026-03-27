@@ -1,85 +1,94 @@
+#!/bin/bash
 set -x
 
-DATA_DIR="/mnt/shared_storage/datasets/r2e-all"
+# Increase file descriptor limit for many concurrent runtime connections
+ulimit -n 65536
+
+# =============================================================================
+# Tinker RL Training for SWE-Bench Task
+# =============================================================================
+# Converted from SkyRL-Train backend to Tinker backend.
+# Uses Tinker's LoRA training with PPO loss and GRPO advantages.
+# =============================================================================
+
+# Data paths
+DATA_DIR="/mnt/local/shared_storage/datasets/r2e-all"
 TRAIN_DATA="${DATA_DIR}/train.parquet"
 VAL_DATA="${DATA_DIR}/validation.parquet"
 
-CKPT_DIR=$HOME/ckpts
-EXPORT_DIR=$HOME/exports
+# Tinker API key
+export TINKER_API_KEY="tml-8WIYS48Cbwk4f9p2IZodpi3p3DCtjF17wjh0Yr55jNnseVvomSxrmk1aLerMRYQAEAAAA"
 
+# Wandb API key (get yours from https://wandb.ai/authorize - must be 40 chars)
+export WANDB_API_KEY="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"  # Set this to your 40-char wandb key
 
-MODEL=Qwen/Qwen3-32B
-NNODES=2
-SP_SIZE=4
-TP_SIZE=4
-NUM_GPUS=8
-NUM_INFERENCE_ENGINES=4
-BATCH_SIZE=64
-LOGGER=wandb
-INFERENCE_BACKEND=vllm
+# OpenHands Remote Runtime (for SWE-bench sandboxes)
+export ALLHANDS_API_KEY="sandbox-remote"
+export SANDBOX_REMOTE_RUNTIME_API_URL="${SANDBOX_REMOTE_RUNTIME_API_URL:-http://10.138.0.4:3000}"
+
+# Model configuration
+MODEL="Qwen/Qwen3-32B"
+LORA_RANK="${LORA_RANK:-16}"
+
+# Training hyperparameters
+BATCH_SIZE=32
+LEARNING_RATE="${LEARNING_RATE:-1e-6}"
+MAX_STEPS="${MAX_STEPS:-200}"
+SAVE_EVERY="${SAVE_EVERY:-2}"
+EVAL_EVERY="${EVAL_EVERY:-10}"
+
+# RL configuration
+LOSS_FN="${LOSS_FN:-ppo}"
+GROUP_SIZE="${GROUP_SIZE:-4}"  # Should match num_trajectories in YAML
+NORMALIZE_ADVANTAGES="${NORMALIZE_ADVANTAGES:-false}"
+
+# Logging
+WANDB_PROJECT="${WANDB_PROJECT:-skyagent-32b-r2e-tinker}"
+WANDB_NAME="${WANDB_NAME:-skyagent-tinker-32b-r2e-4500-loop-tool}"
 seed=1
 
-# export LD_LIBRARY_PATH="/opt/amazon/efa/lib:$LD_LIBRARY_PATH"
+# Output directory
+OUTPUT_DIR="${OUTPUT_DIR:-$HOME/ckpts}"
+mkdir -p "$OUTPUT_DIR"
 
-uv run --isolated --env-file .env --extra skyrl-train \
-    --with vllm==0.9.2 \
-    --with transformers==4.53.0 \
-    --with torch==2.7.0 \
-    --with "flash-attn@https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.7cxx11abiTRUE-cp312-cp312-linux_x86_64.whl" \
-    -m skyrl_agent.integrations.skyrl_train.skyrl_train_main  \
-  data.train_data="['$TRAIN_DATA']" \
-  data.val_data="['$VAL_DATA']" \
-  trainer.algorithm.advantage_estimator="loop" \
-  trainer.policy.model.path=$MODEL \
-  trainer.placement.colocate_all=true \
-  trainer.strategy=fsdp2 \
-  trainer.placement.policy_num_gpus_per_node=$NUM_GPUS \
-  trainer.placement.ref_num_gpus_per_node=$NUM_GPUS \
-  generator.inference_engine.num_engines=$NUM_INFERENCE_ENGINES \
-  trainer.placement.policy_num_nodes=$NNODES \
-  trainer.placement.ref_num_nodes=$NNODES \
-  generator.inference_engine.tensor_parallel_size=$TP_SIZE \
-  generator.task="./examples/run_skyrl/skyrl_swe.yaml" \
-  trainer.epochs=10 \
-  trainer.seed=$seed \
-  trainer.eval_batch_size=128 \
-  trainer.eval_before_train=false \
-  trainer.eval_interval=10 \
-  trainer.update_epochs_per_batch=1 \
-  trainer.train_batch_size=$BATCH_SIZE \
-  trainer.policy_mini_batch_size=$BATCH_SIZE \
-  trainer.micro_forward_batch_size_per_gpu=1 \
-  trainer.micro_train_batch_size_per_gpu=1 \
-  trainer.ckpt_interval=2 \
-  trainer.max_ckpts_to_keep=20 \
-  trainer.max_prompt_length=8000 \
-  generator.sampling_params.max_generate_length=32768 \
-  generator.inference_engine.enforce_eager=false \
-  generator.inference_engine.enable_prefix_caching=true \
-  trainer.algorithm.policy_loss_type="dual_clip" \
-  trainer.policy.optimizer_config.lr=1e-6 \
-  trainer.policy.sequence_parallel_size=$SP_SIZE \
-  trainer.ref.sequence_parallel_size=$SP_SIZE \
-  trainer.algorithm.use_kl_loss=false \
-  trainer.algorithm.kl_loss_coef=0.001 \
-  trainer.algorithm.eps_clip_low=0.2 \
-  trainer.algorithm.eps_clip_high=0.28 \
-  trainer.algorithm.loss_reduction="seq_mean_token_sum_norm" \
-  trainer.algorithm.grpo_norm_by_std=false \
-  generator.inference_engine.backend=$INFERENCE_BACKEND \
-  generator.inference_engine.run_engines_locally=true \
-  generator.inference_engine.weight_sync_backend=nccl \
-  generator.inference_engine.async_engine=true \
-  generator.batched=true \
-  environment.env_class=null \
-  generator.n_samples_per_prompt=8 \
-  generator.eval_n_samples_per_prompt=1 \
-  generator.inference_engine.gpu_memory_utilization=0.8 \
-  trainer.logger="$LOGGER" \
-  trainer.project_name="skyagent-32b-r2e-skyrl" \
-  trainer.run_name="skyagent-skyrl-32b-r2e-4500-loop-tool" \
-  trainer.ckpt_path="$CKPT_DIR" \
-  trainer.export_path="$EXPORT_DIR" \
-  trainer.dump_data_batch=true \
-  generator.inference_engine.max_num_batched_tokens=16384 \
-  $@
+# Task configuration
+TASK_YAML="./examples/run_tinker/tinker_swe.yaml"
+
+echo "================================================"
+echo "Tinker RL Training Configuration - SWE-Bench"
+echo "================================================"
+echo "Model: $MODEL"
+echo "Train Dataset: $TRAIN_DATA"
+echo "Val Dataset: $VAL_DATA"
+echo "Task YAML: $TASK_YAML"
+echo "Batch Size: $BATCH_SIZE"
+echo "Group Size (GRPO): $GROUP_SIZE"
+echo "Max Steps: $MAX_STEPS"
+echo "Output: $OUTPUT_DIR"
+echo "================================================"
+
+# Run training
+uv run --isolated --extra tinker -m skyrl_agent.integrations.tinker.tinker_train \
+    model_name="$MODEL" \
+    skyrl_agent_task_yaml="$TASK_YAML" \
+    dataset_file="$TRAIN_DATA" \
+    eval_dataset_file="$VAL_DATA" \
+    batch_size="$BATCH_SIZE" \
+    learning_rate="$LEARNING_RATE" \
+    lora_rank="$LORA_RANK" \
+    seed="$seed" \
+    max_steps="$MAX_STEPS" \
+    save_every="$SAVE_EVERY" \
+    eval_every="$EVAL_EVERY" \
+    loss_fn="$LOSS_FN" \
+    group_size="$GROUP_SIZE" \
+    normalize_advantages="$NORMALIZE_ADVANTAGES" \
+    wandb_project="$WANDB_PROJECT" \
+    wandb_name="$WANDB_NAME" \
+    log_dir="$OUTPUT_DIR" \
+    "$@"
+
+echo "================================================"
+echo "Training completed!"
+echo "Checkpoints saved to: ${OUTPUT_DIR}"
+echo "================================================"

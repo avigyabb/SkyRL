@@ -366,6 +366,12 @@ class AgentRunner:
                 logger.info(
                     f"No transitions found for instance_id {instance_id}, trajectory_id {trajectory_id}. Using messages instead."
                 )
+                # Skip completely empty trajectories (e.g. runtime failed to initialize)
+                if not messages:
+                    print(
+                        f'WARNING: Skipping empty trajectory for instance_id {instance_id}, trajectory_id {trajectory_id} (runtime likely failed).'
+                    )
+                    continue
                 all_messages.append(messages)
                 starting_index = 0
                 for i, msg in enumerate(messages):
@@ -420,6 +426,24 @@ class AgentRunner:
         # backward compatibility for old format
         # TODO(csy): remove this after oh_agent is updated
         if all_messages:
+            # Filter out any empty prompts/responses that would crash the chat template
+            valid_indices = [i for i in range(len(all_prompts)) if all_prompts[i]]
+            if not valid_indices:
+                logger.warning("All trajectories produced empty prompts — skipping chat template encoding.")
+                all_messages = []
+            else:
+                if len(valid_indices) < len(all_prompts):
+                    logger.warning(
+                        f"Filtering out {len(all_prompts) - len(valid_indices)} empty prompts from {len(all_prompts)} total."
+                    )
+                    all_prompts = [all_prompts[i] for i in valid_indices]
+                    all_responses = [all_responses[i] for i in valid_indices]
+                    all_messages = [all_messages[i] for i in valid_indices]
+                    # Also filter trajectory-level lists to keep them aligned
+                    resolved_list = [resolved_list[i] for i in valid_indices]
+                    finish_reason_list = [finish_reason_list[i] for i in valid_indices]
+
+        if all_messages:
             # Encode messages, get assitant mask and position ids
             prompt_encodings = self.tokenizer.apply_chat_template(
                 all_prompts,
@@ -440,10 +464,13 @@ class AgentRunner:
 
             response_ids = response_encodings["input_ids"]
             response_assistant_mask = response_encodings["assistant_masks"]
-            # to be compatible with new format
+            # to be compatible with new format — one step per trajectory
             logprobs = [None] * len(response_ids)
             step_finish_reason_list = finish_reason_list
             reward_list = resolved_list
+            steps_per_trajectory = [1] * len(response_ids)
+            is_last_episode_list = [True] * len(response_ids)
+            traj_idx_list = [f"traj-{i}" for i in range(len(response_ids))]
 
         max_response_length = self.cfg.generator.max_prompt_length
         truncated_ids = []

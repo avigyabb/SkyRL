@@ -188,7 +188,9 @@ class OHCodeActAgent(CodeActAgent):
                 return AgentFinishAction(thought="CONTEXT_WINDOW_EXCEEDED")
 
             sampling_params = copy.deepcopy(self.sampling_params)
-            sampling_params["max_tokens"] = self.max_prompt_length - self.response_token_len
+            total_tokens_so_far = self.prompt_token_len + self.response_token_len
+            remaining_budget = self.max_prompt_length - self.response_token_len
+            sampling_params["max_tokens"] = min(remaining_budget, max(self.max_prompt_length - total_tokens_so_far, 256))
 
             response_str, meta_info = call_async_from_sync(
                 self.infer_engine.async_generate_ids,

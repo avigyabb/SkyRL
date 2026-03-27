@@ -20,32 +20,27 @@ data:
   data_source_key: data_source
 
 generator:
-  infer_backend: skyrl-train
+  infer_backend: tinker
   backend_config: null
-  num_trajectories: 8
-  max_iterations: 50
+  num_trajectories: 2
+  max_iterations: 3
   max_prompt_length: 32768
   sampling_params:
     temperature: 1
     top_p: 1
-    top_k: -1
-    max_tokens: 32768
+    max_tokens: 16384
   val_config:
     num_trajectories: 1
     sampling_params:
       temperature: 0
       top_p: 0.95
-      max_tokens: 32768
+      max_tokens: 16384
   remove_think_tokens: false
   vision_is_active: false
   qwen3_enable_thinking: true
   qwen3_acc_thinking: true
 
 dispatcher:
-  type: async_pipeline
-  scheduler: naive
-  max_parallel_agents: 16
-  max_eval_parallel_agents: 16
-  val_config:
-    max_parallel_agents: 16
-    max_eval_parallel_agents: 16
+  type: async_batch
+  max_parallel_agents: 2
+  max_eval_parallel_agents: 2

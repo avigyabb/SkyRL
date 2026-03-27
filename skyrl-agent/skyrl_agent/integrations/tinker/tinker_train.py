@@ -4,6 +4,7 @@ import logging
 import os
 import pprint
 import random
+import subprocess
 import time
 from datetime import datetime
 from typing import Any, Literal, List, Dict, cast
@@ -24,6 +25,30 @@ from skyrl_agent import AutoAgentRunner
 
 logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARN)
+
+
+def prune_docker_images():
+    """Prune unused Docker images and build cache to prevent disk from filling up.
+    
+    Each SWE-bench instance builds a unique Docker runtime image (~8-9 GB).
+    Without cleanup, these accumulate and can fill a 12 TB drive in a few training steps.
+    """
+    try:
+        # Remove all images not used by currently running containers
+        result = subprocess.run(
+            ["sudo", "docker", "image", "prune", "-a", "-f"],
+            capture_output=True, text=True, timeout=120,
+        )
+        logger.info(f"Docker image prune: {result.stdout.strip().splitlines()[-1] if result.stdout.strip() else 'done'}")
+        
+        # Also prune build cache (can grow to hundreds of GB)
+        result = subprocess.run(
+            ["sudo", "docker", "builder", "prune", "-f"],
+            capture_output=True, text=True, timeout=120,
+        )
+        logger.info(f"Docker builder prune: {result.stdout.strip().splitlines()[-1] if result.stdout.strip() else 'done'}")
+    except Exception as e:
+        logger.warning(f"Docker prune failed (non-fatal): {e}")
 
 
 def set_seed(seed: int):
@@ -339,6 +364,8 @@ async def main(config: Config):
             for data_source, rewards in data_source_rewards.items():
                 metrics[f"eval/reward/mean/{data_source}"] = np.mean(rewards)
 
+            # Docker image pruning disabled — enough disk space to keep cached images
+
         # Collect rollouts using AgentRunner
         print(f"🎲 Start collecting episodes at step {policy_iteration_step}")
         st = time.time()
@@ -358,6 +385,8 @@ async def main(config: Config):
         metrics["time/sample"] = time.time() - st
         # rollout time
         print(f"Rollout time: {metrics['time/sample']}")
+
+        # Docker image pruning disabled — enough disk space to keep cached images
 
         # Write rollout_metrics to wandb
         rollout_metrics = rollouts.get("rollout_metrics", {})
@@ -407,24 +436,31 @@ async def main(config: Config):
         # For each trajectory, we need to provide:
         # - model_input: the full sequence (prompt + response)
         # - loss_fn_inputs: target_tokens, advantages, logprobs (if available), mask
+        max_seq_len = config.max_seq_len if hasattr(config, 'max_seq_len') else 32768
         training_datums = []
         for idx in range(actual_batch_size):
             # Concatenate prompt and response to get full sequence
             full_sequence = prompt_token_ids[idx] + response_ids[idx]
             prompt_len = len(prompt_token_ids[idx])
 
+            # Truncate to model's max sequence length
+            if len(full_sequence) > max_seq_len:
+                logger.warning(f"Truncating sequence {idx} from {len(full_sequence)} to {max_seq_len}")
+                full_sequence = full_sequence[:max_seq_len]
+
             # Target tokens are same as input (autoregressive training)
             target_tokens = full_sequence[1:]
-            logprobs = ([0] * prompt_len + sampled_logprobs[idx])[1:]
+            response_logprobs = sampled_logprobs[idx] if sampled_logprobs[idx] is not None else [0.0] * len(response_ids[idx])
+            logprobs = ([0] * prompt_len + response_logprobs)[:len(full_sequence)]
+            logprobs = logprobs[1:]
 
             # Base mask: 0 for prompt, loss_mask value for response
-            mask = [0] * prompt_len + loss_masks[idx]
+            mask = ([0] * prompt_len + loss_masks[idx])[:len(full_sequence)]
 
             # Advantages: broadcast the single advantage value across all response tokens
             advantage_value = step_advantages[idx]
             advantages = torch.zeros(len(full_sequence))
             # Only apply advantage to response tokens that are not masked
-            assert len(mask) == len(full_sequence), f"Mask length mismatch: {len(mask)} vs {len(full_sequence)}"
             for i in range(prompt_len, len(full_sequence)):
                 if mask[i] > 0:
                     advantages[i] = advantage_value
@@ -440,6 +476,9 @@ async def main(config: Config):
                 },
             )
             training_datums.append(datum)
+
+        # Log reward metrics before training step (so they appear even if training fails)
+        wandb.log({k: v for k, v in metrics.items() if k.startswith("reward/") or k.startswith("advantage/") or k.startswith("time/")}, step=policy_iteration_step)
 
         # Training step
         print(f"🎈 Start training at step {policy_iteration_step}")
