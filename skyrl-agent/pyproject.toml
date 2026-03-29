@@ -12,10 +12,10 @@ build-backend = "setuptools.build_meta"
 # project (PEP 621 metadata)
 # -------------------------------
 [project]
-name = "skyagent"
+name = "skyrl_agent"
 version = "0.0.1"
 
-description = "SkyAgent: Training and evaluating AI agents in complex environments."
+description = "SkyRL-Agent: Training and evaluating AI agents in complex environments."
 license = {file = "LICENSE"}  # or "Apache-2.0", if you prefer an SPDX identifier
 readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = "==3.12.*"
@@ -24,6 +24,7 @@ dependencies=[
   'codetiming',
   'datasets',
   'dill',
+  'faiss-cpu>=1.11.0.post1',
   'hydra-core',
   'numpy',
   'pandas',
@@ -32,10 +33,11 @@ dependencies=[
   'pybind11',
   'pylatexenc',
   'ray[default]>=2.10',
-  'torchdata',
+  'tevatron',
   'transformers',
   "hf_transfer",
   "torchdata",
+  "openhands-ai",
   "streamlit",
   "whatthepatch",
   "retry",
@@ -64,33 +66,39 @@ dependencies=[
   "together",
   "langchain-core",
   "langchain-anthropic",
+  "litellm",
 ]
 
 [project.optional-dependencies]
 skyrl-train = ["skyrl-train[mcore]"]
-# verl = ["verl[vllm,gpu]","vllm==0.8.5"]
+verl = ["verl[vllm,gpu]","vllm==0.8.5"]
+tinker = ["tinker", "chz"]
 
 [tool.uv.extra-build-dependencies]
 flash-attn = [{ requirement = "torch", match-runtime = true }]
 
 [tool.uv]
-override-dependencies = ["ray==2.48.0", "xgrammar==0.1.17",  "opentelemetry-api==1.26.0", "opentelemetry-sdk==1.26.0", "opentelemetry-exporter-otlp==1.26.0", "opentelemetry-exporter-otlp-proto-grpc==1.26.0"]
+override-dependencies = ["ray==2.51.1", "xgrammar==0.1.17",  "opentelemetry-api==1.26.0", "opentelemetry-sdk==1.26.0", "opentelemetry-exporter-otlp==1.26.0", "opentelemetry-exporter-otlp-proto-grpc==1.26.0"]
 conflicts = [
   [
     { extra = "skyrl-train" },
     { extra = "verl" },
+    { extra = "tinker" },
   ],
 ]
 
 [tool.uv.sources]
-verl = { path = "./verl", editable = true }
-skyrl-train = { path = "./skyrl-train", editable = true }
+# verl = { path = "../verl", editable = true }
+# skyrl-train = { path = "../skyrl-train", editable = true }
+openhands-ai = { git = "https://github.com/NovaSky-AI/SkyRL-OpenHands.git", rev = "main" }
+tevatron = { git = "https://github.com/texttron/tevatron.git", rev = "main" }
+skyrl = { git = "https://github.com/NovaSky-AI/SkyRL", rev = "main" }
 
 # -------------------------------
 # tool.setuptools - Additional config
 # -------------------------------
-[tool.setuptools]
-packages = ["skyrl_agent"]
+[tool.setuptools.packages.find]
+include = ["skyrl_agent*"]
 
 # We read the version from a file in 'skyagent/version/version'
 [tool.setuptools.dynamic]

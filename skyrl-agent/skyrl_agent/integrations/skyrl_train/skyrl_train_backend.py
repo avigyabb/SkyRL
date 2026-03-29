@@ -3,7 +3,7 @@ from ..base import AsyncInferBackend, GeneratorOutput, GeneratorInput
 
 
 class SkyRLBackend(AsyncInferBackend):
-    def __init__(self, infer_engine, cfg: Any = None):
+    def __init__(self, infer_engine, tokenizer: Any = None, cfg: Any = None):
         self.client = infer_engine
 
     async def async_generate_prompts(self, prompts: Any, sampling_params: Any, **kwargs) -> List[str]:
@@ -24,13 +24,11 @@ class SkyRLBackend(AsyncInferBackend):
         output = await self.client.generate(input_obj)
         # todo(@csy) probably need to be finish_reason
         # https://github.com/vllm-project/vllm/blob/a0f8a7964694a6077689b242b5eca95de392d4bb/vllm/v1/engine/__init__.py#L22
-        
-        # Extract logprobs from vLLM output if available
         response_logprobs = output.get("response_logprobs")
         logprobs = None
         if response_logprobs is not None and len(response_logprobs) > 0:
-            logprobs = response_logprobs[0]  # Get logprobs for the first (and only) request
-        
+            logprobs = response_logprobs[0]
+
         meta_info = {
             "output_tokens": output["response_ids"][0],
             "finish_reason": output["stop_reasons"][0],
@@ -41,7 +39,10 @@ class SkyRLBackend(AsyncInferBackend):
 
 class SkyRLGeneratorOutput(GeneratorOutput):
     def __init__(self, result: Any):
-        from skyrl_train.generators.utils import get_rollout_metrics  # type: ignore[import]
+        try:
+            from skyrl_train.generators.utils import get_rollout_metrics
+        except ImportError:
+            from skyrl.train.generators.utils import get_rollout_metrics
 
         # Add more skyrl-specific rollout metrics.
         assert "rollout_metrics" in result, "rollout_metrics should be in the result"
