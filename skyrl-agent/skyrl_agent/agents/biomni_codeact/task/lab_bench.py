@@ -100,34 +100,80 @@ Justify your answer."""
             )
         return MultipleChoiceOutput
 
+    def _criterion2_dbqa(self):
+        return """This criterion rewards scientifically grounded methodology for answering database/knowledge-lookup biology questions (e.g., gene set membership, gene function, pathway annotation). Award points ONLY if the behavior is clearly demonstrated in the trajectory. If unclear, do not award.
+
+Item 2.1: Question Comprehension & Evidence Planning (2.0 points)
+
++2.0 if the agent correctly identifies what needs to be looked up (e.g., the contents of a specific named gene set, a gene's functional annotation, pathway membership) AND identifies what type of authoritative resource would contain the answer (e.g., MSigDB for gene sets, NCBI Gene/UniProt for gene annotations, Reactome/KEGG for pathways).
++1.0 if the agent has a partial understanding (e.g., knows it needs to check gene set membership but doesn't plan to query the actual database, or targets the wrong type of resource).
++0.0 if the agent misreads the question, skips evidence planning, or jumps directly to an answer.
+
+Item 2.2: Database Querying & Evidence Retrieval (4.0 points)
+
++4.0 if the agent queries at least one curated, authoritative database that directly contains the answer (e.g., MSigDB/GSEA for named gene sets, NCBI Gene/UniProt for gene facts, Reactome/KEGG for pathways, GEO for expression data, ClinVar for variant interpretation, Ensembl for genomic annotation) AND clearly connects the retrieved evidence to the option selection.
++2.0 if the agent uses weaker or indirect evidence (e.g., generic web summaries, Wikipedia, or LLM knowledge about gene function) but still ties it logically to the answer.
++0.0 if the agent guesses without evidence, fabricates database results, or relies on non-credible sources.
+
+Item 2.3: Verification & Cross-Checking (2.0 points)
+
++2.0 if the agent performs at least one meaningful cross-check, such as: corroborating gene set membership via a second source, verifying that the gene's known biology is consistent with the gene set description, checking whether rejected options can be ruled out based on their annotations, or validating a retrieved gene list for completeness/accuracy.
++0.0 otherwise.
+
+Item 2.4: Proper Use of "Insufficient Information" (2.0 points)
+
++2.0 if the agent handles this option appropriately:
+
+Selects "Insufficient information" ONLY after (i) attempting reasonable database queries, (ii) clearly stating what specific information is missing or unresolvable, and (iii) not fabricating evidence. OR correctly selects a substantive answer when decisive evidence was obtainable and was obtained (i.e., does not default to "Insufficient information" as an escape hatch).
+
++1.0 if the agent declines with a reasonable rationale but made only limited effort to query relevant databases first.
++0.0 if the agent selects "Insufficient information" prematurely when the evidence was available or already obtained, or uses it as a default.
+
+Max total: 2.0 + 4.0 + 2.0 + 2.0 = 10.0"""
+
+    def _criterion2_seqqa(self):
+        return """This criterion rewards scientifically grounded methodology for answering sequence-level biology questions (e.g., primer design, cloning strategy, Gibson assembly compatibility). Award points ONLY if the behavior is clearly demonstrated in the trajectory. If unclear, do not award.
+Item 2.1: Question Comprehension & Evidence Planning (2.0 points)
+
++2.0 if the agent correctly identifies the molecular biology constraints of the question (e.g., for Gibson assembly: primers need overlapping homology arms to the linearized vector at the cut site, must amplify the correct gene in the correct orientation and reading frame) AND formulates a plan to retrieve the necessary sequences (vector, gene, restriction site) to evaluate each option.
++1.0 if the agent partially understands the task (e.g., recognizes it's a cloning question but misses a key constraint like overlap directionality or reading frame).
++0.0 if the agent misreads the question, skips evidence planning, or jumps directly to an answer.
+
+Item 2.2: Sequence Retrieval & Analysis (4.0 points)
+
++4.0 if the agent retrieves actual sequences from authoritative sources (e.g., GenBank/NCBI for the gene of interest, the known vector sequence, the restriction enzyme recognition site) AND performs concrete sequence-level checks (e.g., aligning primer sequences to the gene, verifying homology arms match the vector around the cut site, confirming correct orientation and frame), clearly connecting the analysis to option evaluation.
++2.0 if the agent reasons about primer structure or cloning logic using LLM knowledge or generic web sources without retrieving the actual sequences, but still ties the reasoning to the answer.
++0.0 if the agent guesses without evidence, fabricates sequences, or performs no sequence-level analysis.
+
+Item 2.3: Verification & Cross-Checking (2.0 points)
+
++2.0 if the agent performs at least one meaningful verification step, such as: confirming the gene sequence from a second source, independently checking both forward and reverse primers, verifying the restriction site position in the vector map, sanity-checking expected amplicon size, or confirming that rejected options fail specific checks.
++0.0 otherwise.
+
+Item 2.4: Proper Use of "Insufficient Information" (2.0 points)
+
++2.0 if the agent handles this option appropriately:
+
+Selects "Insufficient information" ONLY after (i) attempting reasonable sequence retrieval and analysis, (ii) clearly stating what specific information is missing or unresolvable, and (iii) not fabricating evidence.
+OR correctly selects a substantive answer when decisive evidence was obtainable and was obtained (i.e., does not default to "Insufficient information" as an escape hatch).
+
++1.0 if the agent declines with a reasonable rationale but made only limited effort to retrieve sequences or perform analysis first.
++0.0 if the agent selects "Insufficient information" prematurely when the evidence was available or already obtained, or uses it as a default.
+
+Max total: 2.0 + 4.0 + 2.0 + 2.0 = 10.0"""
+
     def get_rubric(self, input, parsed_output, raw_output):
-        """
-        Rubric for lab_bench (DbQA / SeqQA) multiple-choice biology questions.
-
-        - input: same as in reward(self, index, answer) (index into the dataset)
-        - parsed_output: same as answer in reward(...); expected to be a single option letter (e.g., "A"),
-        but may arrive list-like via a system parser.
-        - raw_output: the model's raw text output (may include code blocks + observations if present)
-
-        Returns: formatted rubric string (grader is tool-less).
-        """
-
         import re
         import numpy as np
         
         if isinstance(parsed_output, dict):
             parsed_output = parsed_output['choice']
 
-        # -------------------------
-        # Pull instance prompt + key
-        # -------------------------
         ex = self.get_example(input)
         prompt = ex["prompt"]
 
-        # Ground-truth answer letter for this instance
         gt_letter = str(self.answer[input]).strip() if hasattr(self, "answer") else str(ex.get("answer", "")).strip()
 
-        # Refrain ("Insufficient information...") option letter for this instance (if available)
         refrain_letter = ""
         if hasattr(self, "refrain_label") and self.refrain_label is not None:
             try:
@@ -135,14 +181,10 @@ Justify your answer."""
             except Exception:
                 refrain_letter = ""
 
-        # -------------------------
-        # Normalize parsed output
-        # -------------------------
         def _norm_letter(x):
             if x is None:
                 return ""
             s = str(x).strip()
-            # Common patterns: "A", "A.", "choice: A", "{A}", etc.
             m = re.search(r"\b([A-Z])\b", s.upper())
             return m.group(1) if m else ""
 
@@ -154,10 +196,6 @@ Justify your answer."""
             pred_list = [_norm_letter(parsed_output)] if _norm_letter(parsed_output) else []
             pred = pred_list[0] if pred_list else ""
 
-        # -------------------------
-        # Lightweight option parsing from prompt (for grader convenience)
-        # -------------------------
-        # Expected option lines: "A.<text>", "B.<text>", ...
         options_map = {}
         for line in prompt.splitlines():
             line_s = line.strip()
@@ -170,44 +208,23 @@ Justify your answer."""
         gt_text = options_map.get(gt_letter, "")
         refrain_text = options_map.get(refrain_letter, "") if refrain_letter else ""
 
-        # # -------------------------
-        # # Detect a "final answer letter" in raw_output (helps handle parser mismatches)
-        # # -------------------------
-        # detected_final = ""
-        # # Prefer patterns that look like explicit final selections
-        # patterns = [
-        #     r"(final\s*answer|final\s*choice|answer|choice)\s*[:\-]\s*([A-Z])\b",
-        #     r"^\s*([A-Z])\s*[\.\)]\s*$",
-        #     r"^\s*final\s*[:\-]\s*([A-Z])\b",
-        # ]
-        # for pat in patterns:
-        #     m = re.search(pat, raw_output, flags=re.IGNORECASE | re.MULTILINE)
-        #     if m:
-        #         detected_final = m.group(m.lastindex).upper()
-        #         break
-
-        # -------------------------
-        # Convenience booleans
-        # -------------------------
         exact_match = (pred == gt_letter) if (pred and gt_letter) else False
         chose_refrain = (pred == refrain_letter) if (pred and refrain_letter) else False
         valid_letter = pred in options_map if (pred and options_map) else bool(pred)
 
-        # -------------------------
-        # Render rubric
-        # -------------------------
         fence = "```"
         dataset_name = getattr(self, "dataset", "Unknown")
 
-        # Pretty-print options
         if options_map:
             options_block = "\n".join([f"- {k}. {v}" for k, v in sorted(options_map.items())])
         else:
             options_block = "Could not parse options from the prompt."
 
+        criterion2_text = self._criterion2_seqqa() if dataset_name == "SeqQA" else self._criterion2_dbqa()
+
         rubric = f"""
-You are grading a biomedical agent’s answer for a multiple-choice biology question (lab_bench; dataset={dataset_name}).
-The agent must choose exactly ONE option letter (A, B, C, …) and justify it.
+You are grading a biomedical agent's answer for a multiple-choice biology question (lab_bench; dataset={dataset_name}).
+The agent must choose exactly ONE option letter (A, B, C, \u2026) and justify it.
 Unless the prompt explicitly demands a strict machine format, the expected response is a concise, well-structured Markdown report.
 
 The agent may write code and use tools in a remote environment. Any tool outputs or errors would appear in the raw trajectory as Observations.
@@ -258,19 +275,19 @@ Award points using ONLY the reference key and what is actually stated as the fin
 - +15 if the normalized parsed prediction equals the ground-truth letter.
 - +10 ONLY if BOTH are true:
     (i) the parsed prediction does NOT equal the ground truth, AND
-    (ii) the raw_output clearly and explicitly marks the ground-truth letter as the final answer (e.g., “Final answer: {gt_letter}”),
+    (ii) the raw_output clearly and explicitly marks the ground-truth letter as the final answer (e.g., "Final answer: {gt_letter}"),
         indicating a formatting/parser mismatch rather than a substantive error.
 - +0 otherwise.
 Important notes:
-- If the agent’s “final answer” is missing, contradictory, or lists multiple letters, award +0.
-- If the agent chose the “Insufficient information” letter ({refrain_letter}) but the ground-truth letter is different, award +0.
+- If the agent's "final answer" is missing, contradictory, or lists multiple letters, award +0.
+- If the agent chose the "Insufficient information" letter ({refrain_letter}) but the ground-truth letter is different, award +0.
 
 1B. Markdown report quality & compliance (0-5 points; +1 each item if satisfied)
 Unless the prompt demands a strict non-markdown format, evaluate whether the response is a clean Markdown report:
-- +1 Final selection is unambiguous and near the top (e.g., “Final answer: X”), with exactly one letter.
+- +1 Final selection is unambiguous and near the top (e.g., "Final answer: X"), with exactly one letter.
 - +1 The justification is logically structured (headings/bullets) and focused on decision-critical evidence (no rambling).
-- +1 Claims are traceable to the agent’s own observations / cited sources in the trajectory (not bare assertions).
-- +1 Proper handling of uncertainty: avoids overconfident language when evidence is thin; uses “insufficient information” only with clear rationale.
+- +1 Claims are traceable to the agent's own observations / cited sources in the trajectory (not bare assertions).
+- +1 Proper handling of uncertainty: avoids overconfident language when evidence is thin; uses "insufficient information" only with clear rationale.
 - +1 Presentation quality: readable, correct markdown, minimal noise (e.g., does not paste huge irrelevant logs).
 
 Max Criterion 1 score = 15 + 5 = 20.
@@ -278,39 +295,7 @@ Max Criterion 1 score = 15 + 5 = 20.
 ============================================================
 CRITERION 2 (0-10): Methodology / biomedical know-how
 ============================================================
-This criterion rewards task-appropriate, scientifically grounded methodology for answering multiple-choice biology questions.
-Award points ONLY if the behavior is clearly demonstrated in the trajectory. If unclear, do not award.
-
-Item 2.1: Correctly identifies the question type and what evidence is needed (2 points)
-+2 if the agent correctly recognizes what is being asked (e.g., gene set membership vs gene function vs pathway vs sequence property),
-and translates it into an evidence plan (what to look up / compute to distinguish options).
-Do NOT award if it misreads the question or answers a different question.
-
-Item 2.2: Uses authoritative biomedical sources or standard analyses appropriate to the question type (4 points)
-Award points based on demonstrated use of strong methodology:
-- +4 if the agent uses at least ONE authoritative resource/analysis that directly answers the question type, such as:
-    • Curated biological databases (examples: MSigDB/GSEA for named gene sets; NCBI Gene/UniProt for gene facts; Ensembl;
-      GEO for expression studies; ClinVar for variant clinical interpretation; Reactome/KEGG for pathways), OR
-    • Standard bioinformatics analyses for sequence questions (examples: sanity-check sequence alphabet/length, alignment/BLAST-style search,
-      domain/motif inference, or similar accepted methods),
-  AND clearly connects returned evidence to the choice.
-- +2 if the agent uses weaker/indirect evidence (generic web summaries) but still ties it to the decision.
-- +0 if the agent guesses without evidence or relies on non-credible sources.
-
-Item 2.3: Triangulation / cross-check (2 points)
-+2 if the agent cross-checks the key claim using a second independent source or an internal consistency check
-(e.g., validates a gene set member list after retrieval; corroborates a gene’s function across two trusted databases; sanity-checks sequence inference).
-+0 otherwise.
-
-Item 2.4: Proper use of the “Insufficient information” option (2 points)
-+2 if the agent selects “Insufficient information” ONLY when it has:
-  (i) attempted reasonable retrieval/analysis steps, AND
-  (ii) clearly states what missing information prevents resolution, AND
-  (iii) avoids inventing facts.
-+1 if it declines with a reasonable rationale but with limited attempt to retrieve evidence.
-+0 if it uses “Insufficient information” prematurely (when decisive evidence is available/obtained in-trace) or as a default escape hatch.
-
-Max Criterion 2 score = 2 + 4 + 2 + 2 = 10.
+{criterion2_text}
 
 ============================================================
 CRITERION 3 (0-10): Code quality / data handling integrity
@@ -333,7 +318,7 @@ Item 3.2: Data handling integrity (inspect before indexing) (4 points)
 it performs basic integrity checks BEFORE relying on them, such as:
   - confirming the target entity is found (non-empty results),
   - inspecting schema/fields (keys/columns) prior to access,
-  - validating counts/dimensions when relevant (e.g., “N genes found”),
+  - validating counts/dimensions when relevant (e.g., "N genes found"),
   - ensuring it is using the correct comparison direction / label mapping,
   - avoids hard-coding unverified column names.
 +1 if partial checks are present but incomplete.
@@ -348,7 +333,7 @@ Item 3.3: Failure recovery and robust fallback behavior (2 points)
 
 Item 3.4: No fabricated tool executions, citations, or data access (2 points)
 +2 if the agent never claims it queried a database, executed code, or retrieved a specific result unless that evidence is present in the trajectory.
-+0 if any fabricated execution/result/citation occurs (e.g., cites “I found gene X in dataset” without showing retrieval).
++0 if any fabricated execution/result/citation occurs (e.g., cites "I found gene X in dataset" without showing retrieval).
 
 Max Criterion 3 score = 2 + 4 + 2 + 2 = 10.
 
@@ -375,7 +360,7 @@ Item 4.4: Scientific rigor and calibrated claims (2 points)
 +0 if it leaps to conclusions or expresses unwarranted confidence given thin evidence.
 
 Item 4.5: No hallucinated facts/experiments/results (2 points)
-+2 if the reasoning does not introduce fabricated data, fabricated experiments, or invented “findings.”
++2 if the reasoning does not introduce fabricated data, fabricated experiments, or invented "findings."
 +0 if any hallucinations are present.
 
 Max Criterion 4 score = 2 + 2 + 2 + 2 + 2 = 10.

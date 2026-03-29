@@ -433,6 +433,7 @@ Important: Do NOT penalize clear env errors or platform/tool instability that is
 Item 3.2: **Data/schema sanity checks before use** (4 points)
 - +4 if the agent loads screen tables/results and explicitly checks schema before accessing:
   shape/dimensions, column names, identifier columns, and confirms candidate gene presence/matching.
+- +2 if the agent does some checks but still relies on brittle assumptions (e.g., partial schema checks, validates some fields but hard-codes others).
 - +1 if the agent uses tabular data but does so with weak/partial schema checks (e.g., accesses columns without inspection).
 - +0 if the agent relies on hallucinated columns/fields or misreads key columns (e.g., treats p-values backwards) and that affects conclusions.
 
@@ -463,9 +464,11 @@ p-values/FDR if present, “higher vs lower” semantics) without misstatements.
 Item 4.3: **Evidence → conclusion linkage** (2 points)
 +2 if the final selection clearly follows from cited evidence (screen rank/score or well-argued comparisons) with no major logical leaps.
 
-Item 4.4: **Avoids premature guessing; handles uncertainty appropriately** (2 points)
-+2 if the agent does not jump to a final answer before attempting retrieval/comparison,
-and if evidence is insufficient, it clearly states uncertainty and explains the fallback choice conservatively.
+Item 4.4: **Considers alternatives; avoids premature guessing** (2 points)
++2 if the agent compares the chosen gene against at least one alternative candidate using
+evidence (e.g., screen rank, score, or biological rationale), does not jump to a final answer
+before attempting retrieval, and clearly states uncertainty when evidence is thin.
++0 if it asserts the chosen gene without engaging alternatives, or guesses before retrieval.
 
 Item 4.5: **No hallucinations; calibrated claims** (2 points)
 +2 if the agent avoids inventing data, avoids overconfident claims unsupported by the trace,
