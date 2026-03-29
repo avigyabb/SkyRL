@@ -33,6 +33,18 @@ class BiomniCodeActTrajectory(BaseTrajectory):
     async def initialize_trajectory(self):
         pass
 
+    def _get_demonstration_for_instance(self, task_name, instance_id):
+        """Look up demonstration from BiomniRubricRewardAdapter task mapping."""
+        try:
+            from skyrl_agent.tasks.biomni_rubric_reward_adapter import BiomniRubricRewardAdapter
+            BiomniRubricRewardAdapter._ensure_initialized()
+            task_obj = BiomniRubricRewardAdapter._task_mapping.get(task_name)
+            if task_obj and hasattr(task_obj, "get_demonstration"):
+                return task_obj.get_demonstration(int(instance_id))
+        except Exception as e:
+            logger.warning(f"[DEMO INJECT] Failed to get demonstration for {task_name}/{instance_id}: {e}")
+        return None
+
     def _messages_to_prompt(self, messages):
         """
         Flatten a list of OpenAI-style messages (or a plain string) into a single prompt string.
@@ -62,6 +74,19 @@ class BiomniCodeActTrajectory(BaseTrajectory):
         # Build prompt string from task instruction messages
         instruction_msgs = self.task.get_instruction(instance)
         prompt_str = self._messages_to_prompt(instruction_msgs)
+
+        # Optional: inject demonstration into rollout prompt (mirrors SDFT teacher prompt)
+        if getattr(self.cfg, "inject_demonstration", False):
+            task_name = instance.get("task_name") if hasattr(instance, "get") else None
+            real_instance_id = instance.get("instance_id") if hasattr(instance, "get") else instance_id
+            demo = self._get_demonstration_for_instance(task_name, real_instance_id)
+            if demo:
+                prompt_str = (
+                    f"{prompt_str}\n\n{demo}\n\n"
+                    "Now answer with a response of your own, including the thinking process."
+                )
+                first_line = demo.split("\n")[0][:80]
+                logger.info(f"[DEMO INJECT] task={task_name} real_id={real_instance_id} batch_id={instance_id} len={len(demo)} first_line={first_line}")
 
         # Bridge AsyncInferBackend to the Biomni agent engine API
         class _BackendAsEngine:

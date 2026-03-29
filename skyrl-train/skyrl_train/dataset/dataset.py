@@ -11,6 +11,7 @@ TASK_NAME_KEY = "task_name"
 
 # Include ONLY these tasks (None = include all). Overrides EXCLUDE_TASKS.
 TARGET_TASKS: Optional[Set[str]] = {"gwas_variant_prioritization"}
+# TARGET_TASKS: Optional[Set[str]] = {"gwas_variant_prioritization", "rare_disease_diagnosis", "crispr_delivery", "patient_gene_detection", "screen_gene_retrieval","gwas_causal_gene_opentargets", "gwas_causal_gene_pharmaprojects", "gwas_causal_gene_gwas_catalog"}
 # Example: TARGET_TASKS = {"rare_disease_diagnosis", "crispr_delivery"}
 
 # Exclude these tasks (None = exclude none). Ignored if TARGET_TASKS is set.

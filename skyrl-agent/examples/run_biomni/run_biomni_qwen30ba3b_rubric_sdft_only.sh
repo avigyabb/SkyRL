@@ -55,8 +55,8 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
 fi
 
 # ── Paths ──
-PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-rubric-gspo-dualclip-sdft"
-EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-8gpus-rubric-gspo-dualclip-sdft-reinforce-4.5e4"
+PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-sdft-only"
+EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-8gpus-sdft-only-full-vocab"
 
 DATA_PATH="/mnt/local/biomni/skyrl-data"
 TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
@@ -81,8 +81,8 @@ INFER_DP=1
 NUM_INFERENCE_ENGINES=$((NUM_GPUS_PER_NODE / (INFER_TP * INFER_DP)))
 
 # ── RL / optimization (GSPO + dual_clip) ──
-TRAIN_BATCH_SIZE=16
-MINI_BATCH_SIZE=16
+TRAIN_BATCH_SIZE=32
+MINI_BATCH_SIZE=32
 LR=1e-6
 
 # Relaxed ~1.5x from GSPO paper's 3e-4/4e-4 to absorb Megatron CP numerical noise
@@ -99,7 +99,7 @@ MAX_RESPONSE_LENGTH=4096
 VLLM_MAX_MODEL_LEN=35000
 
 # ── Agent config ──
-AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rubric_rl_qwen30ba3b_sdft.yaml"
+AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rubric_rl_qwen30ba3b_sdft_only.yaml"
 
 SKYRL_AGENT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 pushd "$SKYRL_AGENT_DIR" >/dev/null
@@ -150,7 +150,7 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   trainer.policy.megatron_config.optimizer_config_kwargs.overlap_cpu_optimizer_d2h_h2d=true \
   trainer.policy.megatron_config.optimizer_config_kwargs.use_precision_aware_optimizer=true \
   trainer.gradient_checkpointing=true \
-  trainer.epochs=8 \
+  trainer.epochs=16 \
   trainer.train_batch_size=$TRAIN_BATCH_SIZE \
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
   trainer.micro_train_batch_size_per_gpu=1 \
@@ -181,10 +181,11 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   trainer.flash_attn=true \
   trainer.use_sample_packing=true \
   +generator.task="$AGENT_TASK_YAML" \
+  trainer.algorithm.policy_loss_coef=0.0 \
   +trainer.sdft_enabled=true \
   +trainer.sdft_ema_decay=0.99 \
   +trainer.sdft_loss_coef=0.8 \
-  +trainer.sdft_kl_estimator="reinforce" \
+  +trainer.sdft_kl_estimator="full_vocab" \
   "$@"
 
 popd >/dev/null

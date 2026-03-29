@@ -503,14 +503,18 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                                         f"mask_sum={sum(sdft_data[micro_sample_indices[i]]['loss_mask'])}"
                                     )
                                 else:
-                                    mb["sdft_teacher_logits"] = teacher_outputs[i].detach()
+                                    teacher_logits = teacher_outputs[i].detach()
+                                    teacher_na = teacher_logits.shape[1]
+                                    student_response_tokens = mb["sequences"][0, -teacher_na:]
+                                    teacher_response_tokens = teacher_micro_batches[i]["sequences"][0, -teacher_na:]
+                                    tokens_match = (student_response_tokens == teacher_response_tokens).all().item()
+                                    mb["sdft_teacher_logits"] = teacher_logits
                                     print(
                                         f"[SDFT DIAG] micro {i}: "
-                                        f"teacher_seq_len={teacher_micro_batches[i]['sequences'].shape[1]}, "
-                                        f"student_seq_len={mb['sequences'].shape[1]}, "
-                                        f"teacher_num_actions={teacher_micro_batches[i]['num_actions']}, "
-                                        f"student_num_actions={mb['num_actions']}, "
-                                        f"teacher_logits_shape={teacher_outputs[i].shape}"
+                                        f"teacher_num_actions={teacher_na}, "
+                                        f"student_batch_num_actions={mb['num_actions']}, "
+                                        f"response_tokens_match={tokens_match}, "
+                                        f"teacher_logits_shape={teacher_logits.shape}"
                                     )
 
                     metrics_list = self.model.forward_backward_mini_batch(

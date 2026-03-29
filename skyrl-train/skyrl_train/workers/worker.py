@@ -772,6 +772,16 @@ class PolicyWorkerBase(Worker):
                 return_output=True,
                 compute_entropy=True,
             )
+        # entropy
+        with torch.no_grad():
+            # batch_size, seqlen
+            entropy_BS = output["entropy"]
+            entropy_BS = entropy_BS[:, -num_actions - 1 : -1]
+
+            entropy = masked_mean(entropy_BS, loss_mask)
+
+        policy_loss_coef = getattr(self.cfg.trainer.algorithm, 'policy_loss_coef', 1.0)
+        if policy_loss_coef > 0:
             # loss function
             # TODO: recompute advantages
             policy_loss, clip_ratio = self.policy_loss_fn(
@@ -782,27 +792,25 @@ class PolicyWorkerBase(Worker):
                 loss_mask=loss_mask,
                 rollout_logprobs=rollout_action_logprobs,
             )
-        # entropy
-        with torch.no_grad():
-            # batch_size, seqlen
-            entropy_BS = output["entropy"]
-            entropy_BS = entropy_BS[:, -num_actions - 1 : -1]
 
-            entropy = masked_mean(entropy_BS, loss_mask)
+            # kl loss
+            if self.cfg.trainer.algorithm.use_kl_loss:
+                kl_loss = compute_approx_kl(
+                    action_log_probs,
+                    base_action_log_probs,
+                    loss_mask=loss_mask,
+                    kl_estimator_type=self.cfg.trainer.algorithm.kl_estimator_type,
+                )
+                kl_loss = masked_mean(kl_loss, loss_mask, dim=-1).mean()
+            else:
+                kl_loss = torch.tensor(0.0)
 
-        # kl loss
-        if self.cfg.trainer.algorithm.use_kl_loss:
-            kl_loss = compute_approx_kl(
-                action_log_probs,
-                base_action_log_probs,
-                loss_mask=loss_mask,
-                kl_estimator_type=self.cfg.trainer.algorithm.kl_estimator_type,
-            )
-            kl_loss = masked_mean(kl_loss, loss_mask, dim=-1).mean()
+            loss = policy_loss * policy_loss_coef + kl_loss * self.cfg.trainer.algorithm.kl_loss_coef
         else:
+            policy_loss = torch.tensor(0.0)
+            clip_ratio = 0.0
             kl_loss = torch.tensor(0.0)
-
-        loss = policy_loss + kl_loss * self.cfg.trainer.algorithm.kl_loss_coef
+            loss = torch.tensor(0.0)
         loss = loss / accumulation_steps
         self.strategy.backward(loss, self.model, self.optimizer)
 

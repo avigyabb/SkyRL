@@ -91,6 +91,7 @@ trainer:
     use_kl_in_reward: false # apply kl loss to rewards
     use_kl_loss: true # used in policy model
     kl_loss_coef: 0.001
+    policy_loss_coef: 1.0 # scale factor for policy gradient loss; 0.0 skips RL entirely (for SDFT-only training)
     # this adds training batch level normalization to advantages
     advantage_batch_normalize: false
     value_head_prefix: "value_head"

@@ -74,6 +74,127 @@ Return 'task completed' if the answer is correct, and 'task not completed' other
             
         return {"prompt": prompt, "answer": a, "instance_id": index}
 
+    def get_demonstration(self, index):
+        """Return a per-instance demonstration for SDFT teacher conditioning."""
+        ex = self.get_example(index)
+        gt = ex["answer"]
+        gt_disease = gt["disease_name"]
+        gt_omim = gt["OMIM_ID"]
+        q = self.query[index]
+        phenotypes = q["phenotypes"]
+        candidate_genes = q["candidate_genes"]
+        hpo_str = ", ".join(phenotypes[:10])
+        gene_str = str(candidate_genes)[:200]
+
+        return f"""The diagnosis is {gt_disease} (OMIM: {gt_omim}).
+
+Below is a concrete execution plan. Follow these steps in order.
+
+Step 1 — Resolve HPO codes to human-readable phenotype names:
+
+<execute>
+import requests as req
+
+hpo_codes = {repr(phenotypes[:10])}
+print("Resolving HPO codes...")
+for code in hpo_codes:
+    try:
+        r = req.get(f"https://ontology.jax.org/api/hp/terms/{{code}}", timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            print(f"  {{code}}: {{data.get('name', 'Unknown')}}")
+        else:
+            print(f"  {{code}}: HTTP {{r.status_code}}")
+    except Exception as e:
+        print(f"  {{code}}: Error {{e}}")
+</execute>
+
+Step 2a — Load gene_info and inspect its schema:
+
+<execute>
+import pandas as pd
+gi = pd.read_parquet("/mnt/biomni_filestore/biomni/biomni_data/data_lake/gene_info.parquet")
+print(f"Shape: {{gi.shape}}")
+print(f"Columns: {{list(gi.columns)}}")
+print(gi.head(2).to_string())
+</execute>
+
+Step 2b — Map candidate Ensembl gene IDs to gene symbols:
+
+<execute>
+candidate_ensembl = {repr(candidate_genes[:20] if isinstance(candidate_genes, list) else [str(candidate_genes)])}
+gene_symbols = []
+for eid in candidate_ensembl:
+    match = gi[gi['gene_id'] == eid]
+    if len(match) > 0:
+        sym = match['gene_name'].values[0]
+        if sym:
+            gene_symbols.append(sym)
+            print(f"  {{eid}} -> {{sym}}")
+print(f"Gene symbols: {{gene_symbols}}")
+</execute>
+
+Step 3 — Search for the disease using resolved phenotype names AND gene symbols:
+
+<execute>
+from biomni.tool.literature import advanced_web_search
+result = advanced_web_search(
+    query="Rare disease diagnosis. Patient has these phenotypes: {hpo_str}. "
+          "Candidate gene(s): {gene_str}. "
+          "List ALL known diseases caused by mutations in these genes that match "
+          "the patient's specific phenotype combination. "
+          "For each disease, report: disease name, OMIM ID, key phenotypes. "
+          "Distinguish between different diseases caused by the same gene. "
+          "Do not ask clarifying questions.",
+    max_searches=3)
+print(type(result))
+print(result)
+</execute>
+
+Step 4a — Load DisGeNET and inspect:
+
+<execute>
+disgenet = pd.read_parquet("/mnt/biomni_filestore/biomni/biomni_data/data_lake/DisGeNET.parquet")
+print(f"Shape: {{disgenet.shape}}, Columns: {{list(disgenet.columns)}}")
+</execute>
+
+DisGeNET maps disorders to gene lists. Use gene_symbols from Step 2:
+
+Step 4b — List ALL disorders associated with the candidate gene(s):
+
+<execute>
+for _, row in disgenet.iterrows():
+    genes_in_disorder = row['Genes'] if isinstance(row['Genes'], list) else eval(row['Genes'])
+    overlap = [g for g in gene_symbols if g in genes_in_disorder]
+    if overlap:
+        print(f"  {{row['Disorder']}}: genes={{overlap}}")
+</execute>
+
+Step 5 — If multiple diseases are associated with the same gene, do a targeted search for the specific OMIM subtype:
+
+<execute>
+from biomni.tool.literature import advanced_web_search
+result2 = advanced_web_search(
+    query="What are all the OMIM disease entries for gene " + (gene_symbols[0] if gene_symbols else "unknown") +
+          "? List each disease subtype with its OMIM ID. "
+          "Do not ask clarifying questions.",
+    max_searches=2)
+print(result2[:2000])
+</execute>
+
+Important notes:
+- gget does NOT have a `gwas` function. Available: info, search, opentargets, archs4, enrichr.
+- Never fabricate data not returned by actual tool calls.
+- Make meaningful progress each turn. Once the diagnosis is identified, verify and conclude.
+
+Provide the final answer:
+
+<solution>
+**Final answer: {gt_disease} (OMIM: {gt_omim})**
+
+[Concise Markdown report: phenotype-disease match, gene evidence, numbered references]
+</solution>"""
+
     def split(self, ratio=0.8, seed=42):
         np.random.seed(seed)
         indices = np.arange(len(self.query))

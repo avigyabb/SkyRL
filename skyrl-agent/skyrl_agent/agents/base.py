@@ -224,6 +224,7 @@ class AgentRunner:
             log_heavy_freq = self.cfg.get("log_heavy_freq", 8)
             generate_corrections = self.cfg.get("generate_corrections", False)
             max_corrections_per_trajectory = self.cfg.get("max_corrections_per_trajectory", 5)
+            inject_demonstration = self.cfg.get("inject_demonstration", False)
 
             for traj_id in range(num_trajectories):
                 traj_cfg = TrajectoryConfig(
@@ -243,6 +244,7 @@ class AgentRunner:
                     log_heavy_freq=log_heavy_freq,
                     generate_corrections=generate_corrections,
                     max_corrections_per_trajectory=max_corrections_per_trajectory,
+                    inject_demonstration=inject_demonstration,
                 )
                 traj: BaseTrajectory = self.traj_cls(
                     cfg=traj_cfg,

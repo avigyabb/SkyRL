@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# Biomni CodeAct 30B-A3B with GSPO + dual_clip + Self-Distillation (SDFT)
-# Combines:
-#   - GSPO sequence-level importance sampling (handles MoE routing discrepancy)
-#   - DAPO dual_clip lower bound (maintains gradient for negative-advantage trajectories)
-#   - Relaxed eps_clip 2e-3/3e-3 (~7x original, absorbs Megatron CP numerical noise)
-#   - seq_mean_token_sum_norm reduction (fixes length bias for variable-length trajectories)
-#   - Cosine LR scheduler (prevents late-training entropy collapse)
-#   - SDFT: EMA teacher + full-vocab reverse KL(student||teacher) auxiliary loss
+# DEBUG: Biomni CodeAct 30B-A3B SDFT-only (no RL policy loss)
+# Tests policy_loss_coef=0.0 with full_vocab KL estimator.
+# num_trajectories=1 since no RL advantage estimation is needed.
 
 set -euo pipefail
 set -x
@@ -55,8 +50,8 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
 fi
 
 # ── Paths ──
-PROJECT_NAME="biomni-training-qwen3-30b-a3b-skyrlagent-rubric-gspo-dualclip-sdft"
-EXPERIMENT_NAME="biomni-training-qwen3-30b-a3b-8gpus-rubric-gspo-dualclip-sdft-reinforce-4.5e4"
+PROJECT_NAME="debug-sdft-only"
+EXPERIMENT_NAME="debug-sdft-only-full-vocab"
 
 DATA_PATH="/mnt/local/biomni/skyrl-data"
 TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
@@ -80,15 +75,15 @@ INFER_EP=1
 INFER_DP=1
 NUM_INFERENCE_ENGINES=$((NUM_GPUS_PER_NODE / (INFER_TP * INFER_DP)))
 
-# ── RL / optimization (GSPO + dual_clip) ──
-TRAIN_BATCH_SIZE=16
-MINI_BATCH_SIZE=16
+# ── RL / optimization (GSPO + dual_clip) — DEBUG: small batch ──
+TRAIN_BATCH_SIZE=2
+MINI_BATCH_SIZE=2
 LR=1e-6
 
-# Relaxed ~1.5x from GSPO paper's 3e-4/4e-4 to absorb Megatron CP numerical noise
-# (measured sequence-level noise σ ≈ 2.9e-4, so 4.5e-4 ≈ 1.5σ → ~15% clipping to match the reported statistics from paper)
-EPS_LOW="4.5e-4"
-EPS_HIGH="6e-4"
+# Relaxed ~7x from GSPO paper's 3e-4/4e-4 to absorb Megatron CP numerical noise
+# (measured sequence-level noise σ ≈ 2.9e-4, so 2e-3 ≈ 7σ → ~0% spurious clipping)
+EPS_LOW="2e-3"
+EPS_HIGH="3e-3"
 
 USE_KL_LOSS=false
 KL_LOSS_COEF=0.0
@@ -99,7 +94,7 @@ MAX_RESPONSE_LENGTH=4096
 VLLM_MAX_MODEL_LEN=35000
 
 # ── Agent config ──
-AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rubric_rl_qwen30ba3b_sdft.yaml"
+AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rubric_rl_qwen30ba3b_sdft_only_debug.yaml"
 
 SKYRL_AGENT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 pushd "$SKYRL_AGENT_DIR" >/dev/null
@@ -150,7 +145,7 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   trainer.policy.megatron_config.optimizer_config_kwargs.overlap_cpu_optimizer_d2h_h2d=true \
   trainer.policy.megatron_config.optimizer_config_kwargs.use_precision_aware_optimizer=true \
   trainer.gradient_checkpointing=true \
-  trainer.epochs=8 \
+  trainer.epochs=1 \
   trainer.train_batch_size=$TRAIN_BATCH_SIZE \
   trainer.policy_mini_batch_size=$MINI_BATCH_SIZE \
   trainer.micro_train_batch_size_per_gpu=1 \
@@ -172,19 +167,20 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   generator.enforce_eager=true \
   trainer.eval_before_train=false \
   trainer.eval_interval=-1 \
-  trainer.ckpt_interval=4 \
-  trainer.ckpt_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME" \
+  trainer.ckpt_interval=999 \
+  trainer.ckpt_path="/tmp/debug_sdft_only_ckpt" \
   trainer.project_name="$PROJECT_NAME" \
   trainer.run_name="$EXPERIMENT_NAME" \
-  trainer.logger="$LOGGER" \
-  trainer.resume_mode=latest \
+  trainer.logger="['console']" \
+  trainer.resume_mode=none \
   trainer.flash_attn=true \
   trainer.use_sample_packing=true \
   +generator.task="$AGENT_TASK_YAML" \
+  trainer.algorithm.policy_loss_coef=0.0 \
   +trainer.sdft_enabled=true \
   +trainer.sdft_ema_decay=0.99 \
   +trainer.sdft_loss_coef=0.8 \
-  +trainer.sdft_kl_estimator="reinforce" \
+  +trainer.sdft_kl_estimator="full_vocab" \
   "$@"
 
 popd >/dev/null

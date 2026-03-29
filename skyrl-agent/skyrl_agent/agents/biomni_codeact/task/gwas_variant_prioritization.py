@@ -46,54 +46,191 @@ class gwas_variant_prioritization(base_task):
                 cand_str = line.split(":", 1)[1]
                 candidates = [c.strip() for c in cand_str.split(",") if c.strip()]
         n_candidates = len(candidates)
+        cand_str = ", ".join(candidates)
 
         return f"""The top associated variant is {gt_variant}.
 
-Here is the recommended workflow:
+Below is a concrete execution plan. Follow these steps in order.
 
-Step 1 — Direct GWAS association evidence for "{trait}":
-Use authoritative GWAS resources (GWAS Catalog, Open Targets Genetics, or large
-biobank portals) to query associations for EACH of the {n_candidates} candidate
-variants with "{trait}". For each variant, retrieve at minimum p-value AND effect
-size (OR or beta), noting study context (cohort, ancestry, sample size) and
-replication where available.
+Step 1 — Search GWAS literature for "{trait}" and all {n_candidates} candidates:
 
-Step 2 — PheWAS / cross-phenotype expansion:
-Expand to related traits or run a PheWAS-style scan with biological justification.
-Check whether {gt_variant}'s signal is consistent across related endpoints. Flag
-pleiotropy if present.
+<execute>
+from biomni.tool.literature import advanced_web_search
+result = advanced_web_search(
+    query="GWAS variant prioritization for the phenotype '{trait}' "
+          "(include related sub-phenotypes and biomarkers). "
+          "Check ALL of these variants against GWAS Catalog and major meta-analyses: "
+          "{cand_str}. "
+          "For each variant report: genome-wide significant association (yes/no), "
+          "p-value, effect size (beta or OR), mapped gene, study, sample size. "
+          "Report 'No evidence' for variants with no association. "
+          "Do not ask clarifying questions.",
+    max_searches=3)
+print(type(result))
+print(result)
+</execute>
 
-Step 3 — Variant-to-gene mapping:
-Map {gt_variant} to effector gene(s) using eQTL/colocalization, chromatin
-interaction data, or fine-mapping evidence. Tie the gene's function specifically
-to "{trait}".
+Step 2a — Query GWAS Catalog and inspect the result:
 
-Step 4 — Functional annotation independent of p-values:
-Evaluate at least 2 distinct functional evidence types (coding consequence,
-CADD/SpliceAI, regulatory overlap, conservation, tissue-relevant eQTL) and
-explain how they influence the ranking.
+<execute>
+from biomni.tool.database import query_gwas_catalog
+gwas_result = query_gwas_catalog(prompt="Find GWAS associations for variant {gt_variant}")
+print(f"Type: {{type(gwas_result)}}")
+if isinstance(gwas_result, str):
+    print(gwas_result[:3000])
+elif isinstance(gwas_result, dict):
+    print(f"Keys: {{list(gwas_result.keys())}}")
+    print(f"Success: {{gwas_result.get('success')}}")
+    print(str(gwas_result)[:3000])
+else:
+    print(gwas_result)
+</execute>
 
-Step 5 — Systematic ranking of ALL {n_candidates} candidates:
-Build a comparison table across all evidence types for every candidate. Do not
-stop after finding strong evidence for one variant — compare the strength of
-evidence against other candidates. Apply a consistent weighting scheme and handle
-missing data explicitly.
+If query_gwas_catalog failed or returned unusable data, fall back to the GWAS Catalog REST API directly:
 
-Guidelines:
-- Never fabricate observation blocks or claim results that were not returned
-  by actual code execution. All evidence must come from real tool outputs.
-- Before accessing tabular data, inspect the schema: print columns, confirm
-  variant identifier format, verify decision-critical fields (p-value, effect
-  size, allele) exist.
-- Make meaningful progress each turn — no repeated reasoning or equivalent
-  code across turns.
+<execute>
+import requests as req
+url = "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/{gt_variant}/associations?projection=associationBySnp"
+r = req.get(url, timeout=30)
+print(f"Direct GWAS Catalog API status: {{r.status_code}}")
+if r.status_code == 200:
+    gwas_data = r.json()
+    assocs = gwas_data.get('_embedded', {{}}).get('associations', [])
+    print(f"Total associations: {{len(assocs)}}")
+    for a in assocs[:5]:
+        pval = f"{{a.get('pvalueMantissa')}}e{{a.get('pvalueExponent')}}"
+        print(f"  p={{pval}}, beta={{a.get('betaNum')}}, desc={{a.get('pvalueDescription')}}")
+</execute>
 
-Final answer format:
+Step 2b — Extract key fields from the GWAS Catalog result based on the structure observed above.
+
+Step 3a — Map variant to gene via Ensembl VEP — inspect the result first:
+
+<execute>
+from biomni.tool.database import query_ensembl
+ensembl_result = query_ensembl(prompt="Look up {gt_variant} in Ensembl VEP")
+print(f"Type: {{type(ensembl_result)}}")
+if isinstance(ensembl_result, dict):
+    print(f"Keys: {{list(ensembl_result.keys())}}")
+    if ensembl_result.get('success') and isinstance(ensembl_result.get('result'), list) and ensembl_result['result']:
+        v = ensembl_result['result'][0]
+        print(f"First item keys: {{list(v.keys())}}")
+        print(f"allele_string: {{v.get('allele_string')}}")
+        tcs = v.get('transcript_consequences', [])
+        print(f"Num transcript_consequences: {{len(tcs)}}")
+        if tcs:
+            print(f"First consequence keys: {{list(tcs[0].keys())}}")
+</execute>
+
+If query_ensembl failed, fall back to the Ensembl REST API directly:
+
+<execute>
+import requests as req
+r = req.get("https://rest.ensembl.org/vep/human/id/{gt_variant}",
+            headers={{"Content-Type": "application/json"}}, timeout=30)
+print(f"Direct Ensembl VEP API status: {{r.status_code}}")
+if r.status_code == 200:
+    ensembl_data = r.json()
+    print(f"Type: {{type(ensembl_data)}}, length: {{len(ensembl_data) if isinstance(ensembl_data, list) else 'N/A'}}")
+    if isinstance(ensembl_data, list) and ensembl_data:
+        v = ensembl_data[0]
+        print(f"allele_string: {{v.get('allele_string')}}")
+        tcs = v.get('transcript_consequences', [])
+        print(f"Num transcript_consequences: {{len(tcs)}}")
+</execute>
+
+Step 3b — Extract gene_symbol from the Ensembl result observed above:
+
+<execute>
+gene_symbol = None
+vep_data = []
+try:
+    if isinstance(ensembl_result, dict) and ensembl_result.get('success'):
+        vep_data = ensembl_result.get('result', [])
+except NameError:
+    pass
+if not vep_data:
+    try:
+        if isinstance(ensembl_data, list):
+            vep_data = ensembl_data
+    except NameError:
+        pass
+for v in vep_data:
+    for tc in v.get('transcript_consequences', []):
+        if tc.get('biotype') == 'protein_coding' and tc.get('gene_symbol'):
+            gene_symbol = tc['gene_symbol']
+            print(f"Gene: {{gene_symbol}}, Consequence: {{tc.get('consequence_terms')}}, "
+                  f"Impact: {{tc.get('impact')}}, AA change: {{tc.get('amino_acids')}}")
+            break
+    if gene_symbol:
+        break
+print(f"Mapped gene for downstream queries: {{gene_symbol}}")
+</execute>
+
+Step 4a — Load GeneBass and inspect its schema:
+
+<execute>
+import pandas as pd
+df = pd.read_pickle("/mnt/biomni_filestore/biomni/biomni_data/data_lake/genebass_missense_LC_filtered.pkl")
+print(f"Shape: {{df.shape}}")
+print(f"Columns: {{list(df.columns)}}")
+print(df.head(2).to_string())
+</execute>
+
+GeneBass is a gene-level burden test dataset. It has NO variant/rsID column. Do NOT search for rsIDs here. Use the gene_symbol from Step 3b to filter.
+
+Step 4b — Query GeneBass for the mapped gene. Show top associations regardless of phenotype name, since GeneBass uses UK Biobank names which may differ from the GWAS trait name:
+
+<execute>
+hits = df[df['gene'] == gene_symbol]
+if len(hits) > 0:
+    top = hits.nsmallest(5, 'Pvalue')
+    print(f"GeneBass for {{gene_symbol}}: {{len(hits)}} total entries, top 5:")
+    print(top[['gene', 'Pvalue', 'BETA_Burden', 'pheno_description']].to_string())
+else:
+    print(f"{{gene_symbol}}: no GeneBass entries")
+</execute>
+
+Step 5a — Load DisGeNET and inspect its schema:
+
+<execute>
+disgenet = pd.read_parquet("/mnt/biomni_filestore/biomni/biomni_data/data_lake/DisGeNET.parquet")
+print(f"Shape: {{disgenet.shape}}")
+print(f"Columns: {{list(disgenet.columns)}}")
+print(disgenet.head(2).to_string())
+</execute>
+
+DisGeNET maps disorders to gene lists. It has NO variant/rsID column. Count how many disorders the mapped gene appears in:
+
+Step 5b — Check how many disorders the mapped gene appears in:
+
+<execute>
+count = 0
+sample_disorders = []
+for _, row in disgenet.iterrows():
+    genes = row['Genes'] if isinstance(row['Genes'], list) else eval(row['Genes'])
+    if gene_symbol in genes:
+        count += 1
+        if len(sample_disorders) < 5:
+            sample_disorders.append(row['Disorder'])
+print(f"{{gene_symbol}} appears in {{count}} disorders in DisGeNET")
+for d in sample_disorders:
+    print(f"  {{d}}")
+</execute>
+
+Important notes:
+- gget does NOT have a `gwas` function. Available: info, search, opentargets, archs4, enrichr.
+- Never fabricate DataFrames or p-values not returned by actual tool calls.
+- Always inspect tool outputs before indexing into them.
+- Make meaningful progress each turn. Once the answer is identified, verify and conclude.
+- If the search agent asks clarifying questions instead of returning results, respond with another <execute> block containing a more specific query (add "Do not ask clarifying questions" if you forgot). Never use <solution> for intermediate replies.
+
+Compare ALL {n_candidates} candidates, then provide the final answer:
+
 <solution>
 **Final answer: {gt_variant}**
 
-[Concise Markdown report: evidence summary with numbered references,
-candidate comparison, justification for ranking]
+[Concise Markdown report: evidence summary citing actual tool outputs, comparison table of all candidates, numbered references]
 </solution>"""
 
     def split(self, ratio = 0.8, seed = 42):

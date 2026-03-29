@@ -641,13 +641,34 @@ class _VocabParallelKLDiv(torch.autograd.Function):
         return grad_input.to(ctx.orig_dtype), None
 
 
-def vocab_parallel_kl_div(student_logits: torch.Tensor, teacher_logits: torch.Tensor) -> torch.Tensor:
+def vocab_parallel_kl_div(
+    student_logits: torch.Tensor,
+    teacher_logits: torch.Tensor,
+    chunk_size: int = 2048,
+) -> torch.Tensor:
     """Compute KL(student || teacher) when logits are TP-sharded.
 
-    Args:
-        student_logits: (..., vocab_size // tp_size) -- requires grad
-        teacher_logits: (..., vocab_size // tp_size) -- detached
+    Processes tokens in chunks along the sequence dimension to bound peak GPU
+    memory.  Each chunk independently runs the all-reduce-based distributed
+    softmax, so the result is numerically identical to the non-chunked version.
 
-    Returns: (...,) per-token KL values
+    Args:
+        student_logits: (batch, seq_len, vocab_size // tp_size) -- requires grad
+        teacher_logits: (batch, seq_len, vocab_size // tp_size) -- detached
+        chunk_size: max tokens per chunk (default 2048, ~1.2 GiB per intermediate at 75K vocab)
+
+    Returns: (batch, seq_len) per-token KL values
     """
-    return _VocabParallelKLDiv.apply(student_logits, teacher_logits)
+    seq_len = student_logits.shape[1]
+    if seq_len <= chunk_size:
+        return _VocabParallelKLDiv.apply(student_logits, teacher_logits)
+
+    kl_chunks = []
+    for start in range(0, seq_len, chunk_size):
+        end = min(start + chunk_size, seq_len)
+        kl_chunk = _VocabParallelKLDiv.apply(
+            student_logits[:, start:end, :],
+            teacher_logits[:, start:end, :],
+        )
+        kl_chunks.append(kl_chunk)
+    return torch.cat(kl_chunks, dim=1)

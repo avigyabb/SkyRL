@@ -312,33 +312,39 @@ class MegatronModelWrapper:
                             f"frac>{_thresh:.0e}={_frac:.4f} n_tokens={_valid_diff.numel()}"
                         )
 
-            # policy loss should be calculated based on the selected token logprobs
-            policy_loss, clip_ratio = self.policy_loss_fn(
-                action_log_probs,
-                old_action_log_probs,
-                advantages,
-                config=self.cfg.trainer.algorithm,
-                loss_mask=loss_mask,
-                rollout_logprobs=rollout_action_logprobs,
-            )
-
             with torch.no_grad():
                 action_logits = logits[:, -num_actions - 1 : -1, :]
                 entropy_BS = vocab_parallel_entropy(action_logits)
                 entropy = entropy_BS.sum().item() / entropy_BS.numel()
 
-            if self.cfg.trainer.algorithm.use_kl_loss:
-                kl_loss = compute_approx_kl(
+            policy_loss_coef = getattr(self.cfg.trainer.algorithm, 'policy_loss_coef', 1.0)
+            if policy_loss_coef > 0:
+                policy_loss, clip_ratio = self.policy_loss_fn(
                     action_log_probs,
-                    base_action_log_probs,
+                    old_action_log_probs,
+                    advantages,
+                    config=self.cfg.trainer.algorithm,
                     loss_mask=loss_mask,
-                    kl_estimator_type=self.cfg.trainer.algorithm.kl_estimator_type,
+                    rollout_logprobs=rollout_action_logprobs,
                 )
-                kl_loss = masked_mean(kl_loss, loss_mask, dim=-1).mean()
-            else:
-                kl_loss = torch.tensor(0.0)
 
-            loss = policy_loss + kl_loss * self.cfg.trainer.algorithm.kl_loss_coef
+                if self.cfg.trainer.algorithm.use_kl_loss:
+                    kl_loss = compute_approx_kl(
+                        action_log_probs,
+                        base_action_log_probs,
+                        loss_mask=loss_mask,
+                        kl_estimator_type=self.cfg.trainer.algorithm.kl_estimator_type,
+                    )
+                    kl_loss = masked_mean(kl_loss, loss_mask, dim=-1).mean()
+                else:
+                    kl_loss = torch.tensor(0.0)
+
+                loss = policy_loss * policy_loss_coef + kl_loss * self.cfg.trainer.algorithm.kl_loss_coef
+            else:
+                policy_loss = torch.tensor(0.0)
+                clip_ratio = 0.0
+                kl_loss = torch.tensor(0.0)
+                loss = torch.tensor(0.0)
 
             sdft_kl_value = 0.0
             if "sdft_teacher_logps" in data:
@@ -369,11 +375,15 @@ class MegatronModelWrapper:
                 sdft_loss_mask = data["sdft_loss_mask"]
                 sdft_coeff = data["sdft_coeff"]
 
-                student_action_logits = logits[:, -num_actions - 1 : -1, :]
+                # Use the teacher's token count (true per-sample num_actions) to slice
+                # the student logits. `num_actions` from the training batch may be the
+                # padded batch-max, which is larger than the actual response length.
+                teacher_na = teacher_logits.shape[1]
+                student_action_logits = logits[:, -teacher_na - 1 : -1, :]
                 print(
                     f"[SDFT KL DIAG] student_logits={student_action_logits.shape}, "
                     f"teacher_logits={teacher_logits.shape}, "
-                    f"num_actions={num_actions}, "
+                    f"teacher_na={teacher_na}, batch_num_actions={num_actions}, "
                     f"mask_sum={sdft_loss_mask.sum().item():.0f}, "
                     f"student_logits_norm={student_action_logits.float().norm().item():.4f}, "
                     f"teacher_logits_norm={teacher_logits.float().norm().item():.4f}"
