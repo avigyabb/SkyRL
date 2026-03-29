@@ -351,38 +351,42 @@ Important: If the agent fails 1A’s “exactly {top_k} genes” requirement, ca
 ============================================================
 CRITERION 2 (0-10): Methodology / biomedical know-how
 ============================================================
-This criterion rewards scientifically grounded, context-aware gene prioritization methodology.
-Award points only if the item is satisfied based on explicit evidence in the agent trajectory.
-If unclear, do not award.
+This criterion rewards scientifically grounded, context-aware gene prioritization for CRISPR screen library design. Award points only based on explicit evidence in the agent trajectory. If unclear, do not award.
 
-Item 2.1: Contextual Anchoring & Primary MOA Identification (3.0 points)
-+3.0 if the agent explicitly identifies BOTH:
-  1. The primary molecular target/mechanism of the drug (e.g., identifying CRBN/E3 ligase complex for Lenalidomide), AND
-  2. The specific biological dependencies of the cell model (e.g., recognizing BC-3 is a Primary Effusion Lymphoma/PEL line dependent on viral latency or NF-kB/IRF4).
-+1.5 if the agent identifies the drug target correctly but treats the cell line as generic "cancer" without accounting for its specific viral/tissue lineage constraints.
-+0.0 if the agent hallucinates a target (e.g., p53) or focuses on generic stress responses without identifying the drug's primary binding partner.
+Item 2.1: Contextual Understanding (3.0 points)
+Evaluates whether the agent correctly interprets the full biological context before selecting genes.
 
-Item 2.2: Information Retrieval & Analogical Reasoning (2.0 points)
-+2.0 if the agent executes high-quality searches (PubMed, DepMap, COSMIC) AND, where direct data is sparse, applies valid analogical reasoning (e.g., inferring PEL resistance mechanisms from Multiple Myeloma studies due to shared IMiD sensitivity).
-+1.0 if the agent relies solely on general LLM knowledge or performs searches using only broad terms (e.g., "drug resistance genes") without leveraging specific disease/drug keywords.
-+0.0 if the agent invents data or searches for irrelevant domains.
++3.0 if the agent explicitly identifies ALL key contextual factors:
 
-Item 2.3: Coverage of Distinct Resistance Mechanisms (3.0 points)
-+3.0 if the selected genes cover at least THREE distinct biological categories of resistance relevant to the context, such as:
-  - Direct Target Modulation (e.g., CRBN, DDB1 loss),
-  - Downstream Effector Stability (e.g., IKZF1, IKZF3, CK1a),
-  - Pathway Bypass/Compensatory Signaling (e.g., IL6, STAT3, MYC),
-  - Drug Efflux/Metabolism (e.g., ABCB1),
-  - Apoptosis Blockade (e.g., MCL1, BCL2).
-+1.5 if the list is heavily skewed toward only one mechanism (e.g., listing 20 variants of ubiquitin ligases) or misses obvious direct targets.
-+0.0 if the selection is random or monotonic.
+The perturbation and its primary molecular mechanism (e.g., for a drug: its direct target and MOA; for a viral infection: the relevant host-pathogen interactions),
+The specific biology of the cell model (e.g., tissue lineage, disease subtype, known dependencies such as viral latency programs or lineage-specific signaling), AND
+The screen design implications (e.g., what a hit would mean — loss-of-function sensitizer, resistance conferring, synthetic lethal partner — and how that shapes gene selection).
 
-Item 2.4: Candidate Specificity & Justification (2.0 points)
-+2.0 if the agent provides a specific, mechanistically sound rationale for each gene AND filters out biologically implausible targets (e.g., excluding Estrogen Receptor for a B-cell lymphoma; excluding solid tumor drivers like EGFR).
-+1.0 if the gene list is generally plausible but justifications are generic (e.g., "important for cell growth") rather than specific to the drug/disease interaction.
-+0.0 if the list contains significant hallucinations or targets irrelevant to the tissue type.
++1.5 if the agent correctly identifies the perturbation mechanism but treats the cell model as generic (e.g., "cancer cell line") without accounting for lineage, subtype, or model-specific dependencies.
++0.0 if the agent misidentifies the perturbation target, ignores the cell model context, or proceeds to gene selection without establishing the biological framing.
 
-Max total score = 3.0 + 2.0 + 3.0 + 2.0 = 10.
+Item 2.2: Information Retrieval & Evidence Gathering (2.0 points)
+Evaluates the quality and specificity of the agent's resource querying.
+
++2.0 if the agent queries multiple relevant sources (e.g., PubMed/literature, DepMap/functional genomics, pathway databases, clinical/pharmacogenomic data) using context-specific terms (drug name + cell type, disease-specific keywords), AND applies valid analogical reasoning where direct evidence is sparse (e.g., leveraging data from a related disease model that shares the same perturbation sensitivity).
++1.0 if the agent queries resources but uses only broad/generic terms (e.g., "CRISPR screen genes," "drug resistance"), or relies primarily on general LLM knowledge without actively retrieving context-specific evidence.
++0.0 if the agent fabricates data, cites non-existent studies, or searches irrelevant domains.
+
+Item 2.3: Mechanistic Diversity of Selected Genes (3.0 points)
+Evaluates whether the final gene list covers the biological breadth needed for an informative screen.
+
++3.0 if the selected genes span at least three distinct, context-relevant mechanistic categories (e.g., direct target/pathway components, downstream effectors, compensatory/bypass signaling, drug metabolism/efflux, cell death regulation, epigenetic modifiers, or host factors for infection contexts — categories should be appropriate to the specific screen).
++1.5 if the list is heavily concentrated in one or two mechanistic categories (e.g., all ubiquitin-proteasome genes), or omits an obvious major category (e.g., leaving out direct target pathway components).
++0.0 if gene selection shows no mechanistic logic or is essentially random.
+
+Item 2.4: Gene-Level Specificity & Justification (2.0 points)
+Evaluates whether each gene is individually justified and biologically plausible for the context.
+
++2.0 if the agent provides a specific, mechanistically grounded rationale tying each gene to the perturbation–cell model interaction, AND actively excludes biologically implausible candidates (e.g., filtering out tissue-irrelevant drivers or genes with no connection to the perturbation).
++1.0 if the gene list is generally plausible but justifications are generic (e.g., "involved in cell survival") rather than specific to the perturbation and cell context.
++0.0 if the list contains hallucinated genes, significant tissue-irrelevant targets, or lacks any justification.
+
+Max total: 3.0 + 2.0 + 3.0 + 2.0 = 10.0
 
 ============================================================
 CRITERION 3 (0-10): Code quality / data handling integrity

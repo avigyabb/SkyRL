@@ -378,6 +378,7 @@ Item 3.2 (4 pts): Data/API response sanity checks before use
 - Inspects keys/columns/shape before indexing,
 - Verifies required fields exist (e.g., disease name, OMIM, gene symbol),
 - Handles missing/empty results without pretending success.
++2 if the agent does some checks but still relies on brittle assumptions (e.g., partial schema checks, validates some fields but hard-codes others).
 +0 if it directly indexes assumed keys/columns (often hallucinated) without inspection and this affects reasoning.
 
 Item 3.3 (2 pts): Identifier hygiene (genes + OMIM)

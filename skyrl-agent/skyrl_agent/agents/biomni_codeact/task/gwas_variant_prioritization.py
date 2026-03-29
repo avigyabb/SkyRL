@@ -203,8 +203,8 @@ Item 2.1: Direct GWAS association evidence for the target phenotype (3.0 points)
 +3.0 if the agent uses authoritative GWAS resources (e.g., GWAS Catalog, Open Targets Genetics, large biobank portals)
      AND provides concrete association outputs (at least p-value plus effect size/OR/beta),
      ideally noting study context (cohort/ancestry/sample size) or replication.
-+1.5 if the agent provides association evidence from less authoritative sources (e.g., general web search, 
-     secondary reports, or non-direct publications) without primary GWAS database verification.
++1.5 if the agent provides association evidence solely from less authoritative sources (e.g., general web search, 
+     secondary reports, or non-direct publications) without **any** primary GWAS database verification.
 +0.0 if there is no direct association evidence or the choice is driven by unsupported claims.
 
 Item 2.2: Related phenotype / PheWAS expansion (2.5 points)
