@@ -138,8 +138,8 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   trainer.policy_mini_batch_size=$BATCH_SIZE \
   trainer.micro_train_batch_size_per_gpu=1 \
   trainer.micro_forward_batch_size_per_gpu=1 \
-  trainer.max_prompt_length=45056 \
-  trainer.eval_before_train=true \
+  trainer.max_prompt_length=32768 \
+  trainer.eval_before_train=false \
   trainer.eval_interval=-1 \
   trainer.ckpt_interval=$SAVE_FREQ \
   trainer.ckpt_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME" \
@@ -151,7 +151,7 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   trainer.flash_attn=$FLASH_ATTN \
   trainer.use_sample_packing=true \
   +trainer.use_correction_loss=true \
-  +trainer.correction_loss_mu=1.0 \
+  +trainer.correction_loss_mu=0.8 \
   +trainer.policy.model.override_config.max_position_embeddings=49152 \
   +trainer.policy.model.override_config.rope_scaling.rope_type=yarn \
   +trainer.policy.model.override_config.rope_scaling.factor=1.5 \
@@ -165,7 +165,7 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   generator.sampling_params.temperature=$TEMPERATURE \
   generator.sampling_params.top_p=$TOP_P \
   generator.sampling_params.max_generate_length=4096 \
-  generator.max_input_length=45056 \
+  generator.max_input_length=32768 \
   generator.max_num_seqs=256 \
   generator.enforce_eager=true \
   trainer.policy.fsdp_config.cpu_offload=true \
@@ -174,7 +174,7 @@ PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-
   +generator.engine_init_kwargs.rope_scaling.rope_type=yarn \
   +generator.engine_init_kwargs.rope_scaling.factor=1.5 \
   +generator.engine_init_kwargs.rope_scaling.original_max_position_embeddings=32768 \
-  +generator.engine_init_kwargs.max_model_len=49152 \
+  +generator.engine_init_kwargs.max_model_len=35000 \
   $@
 
 popd >/dev/null

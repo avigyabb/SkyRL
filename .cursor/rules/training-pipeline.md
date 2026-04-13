@@ -87,3 +87,7 @@ Configured in the YAML (`overlong_filter_enabled: true, overlong_filter_threshol
 ## TIS (Truncated Importance Sampling)
 
 Currently **disabled** (`use_tis=false`). Planned for future use to correct rollout-vs-trainer logprob mismatch. Supports `token` and `sequence` modes; `sequence` mode is recommended for GSPO.
+
+## Megatron Gradient Synchronization Hazard
+
+**`finalize_model_grads` double-reduction**: With PP=1, `forward_backward_no_pipelining` calls `finalize_model_grads` after each `forward_only=False` invocation, which all-reduces gradients across the DP+CP group. Multiple `forward_only=False` calls before `optimizer_step` cause over-counting (CP-times, e.g. 4x for CP=4). Always combine RL + auxiliary losses into a single `forward_backward_mini_batch` call. Pre-compute auxiliary inputs via forward-only passes and attach to micro-batches. (Discovered 2026-02-24)

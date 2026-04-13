@@ -1,59 +1,74 @@
 #!/usr/bin/env bash
+# Biomni CodeAct training with RLOO + dual_clip + FULL CHORD correction auxiliary SFT loss.
+# Generates corrections for BOTH format failures AND rubric/reasoning weaknesses.
+# Based on run_biomni_agent_qwen8b_rubric_rloo_ft_chord_rope.sh with:
+#   - correction_mode=all in YAML (format + rubric corrections)
+#   - correction_loss_mu=0.8 (lower than ft-chord's 1.0 since more corrections are generated)
+#   - Fresh experiment name for training from SFT checkpoint
 
 set -euo pipefail
 set -x
 
-# Basic environment setup
+ulimit -c 0
+
 export PYTHONUNBUFFERED=1
 export RUST_BACKTRACE=1
 export HYDRA_FULL_ERROR=1
 : "${OPENAI_API_KEY:=sc}"
 export OPENAI_API_KEY
 
-# NCCL timeouts/debug (optional)
 export NCCL_TIMEOUT=28800
 export NCCL_DEBUG=INFO
 export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_SOCKET_IFNAME=enp0s19
+export NCCL_IB_DISABLE=1
+export NCCL_NET_GDR_LEVEL=LOC
+
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+export WANDB_API_KEY="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"
 
 export FLASHINFER_DISABLE_VERSION_CHECK=1
-
-# export VLLM_USE_V1=0
 export VLLM_DISABLE_COMPILE_CACHE=1
 export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
 export RAY_EXPERIMENTAL_NOSET_ROCR_VISIBLE_DEVICES=1
 export RAY_EXPERIMENTAL_NOSET_HIP_VISIBLE_DEVICES=1
-# export VLLM_ALLREDUCE_USE_SYMM_MEM=0
 
-export UV_CACHE_DIR=/dfs/scratch1/lansong/uv_cache
+export UV_CACHE_DIR=/mnt/biomni_filestore/uv_cache
 export XDG_CACHE_HOME=$UV_CACHE_DIR
-export UV_PROJECT_ENVIRONMENT=/dfs/scratch1/lansong/venvs/skyrl-agent
-export HOME=/dfs/scratch1/lansong
+export UV_PROJECT_ENVIRONMENT=/mnt/biomni_filestore/venvs/skyrl-agent
+export HOME=/workspace
+
 export RAY_RUNTIME_ENV_HOOK=ray._private.runtime_env.uv_runtime_env_hook.hook
 export UV_HTTP_TIMEOUT=1800
-export BIOMNI_RUNTIME_URL="http://172.24.75.90:8000"
+export BIOMNI_RUNTIME_URL="http://10.138.0.4:8000"
 
-# -----------------------------
-# User-configurable paths
-# -----------------------------
-PROJECT_NAME="biomni-training-qwen3-8b-skyrlagent-drgrpo"
-EXPERIMENT_NAME="biomni-training-qwen3-8b-32bsz-temp1.0-clip-0.28-48turn-skyrlagent-drgrpo-rope"
+export RAY_grpc_keepalive_time_ms=60000
+export RAY_grpc_keepalive_timeout_ms=600000
 
-DATA_PATH="/dfs/scratch1/lansong/BioAgentOS/biomni_env_screen/data/rl_data/skyrl_agent"
-TRAIN_FILE="$DATA_PATH/train.parquet"
-VAL_FILE="$DATA_PATH/val.parquet"
-SFT_MODEL_PATH="/dfs/scratch1/lansong/models/qwen/qwen3-8b-sft-full-v1/global_step_208"
-CKPT_PATH="/dfs/scratch1/lansong/models/skyrlagent"
+export BIOMNI_CRITIC_MODEL="${BIOMNI_CRITIC_MODEL:-claude-sonnet-4-5}"
 
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  ANTHROPIC_API_KEY=$(grep '^ANTHROPIC_API_KEY=' "$(dirname "$0")/.env.biomni" 2>/dev/null | head -1 | cut -d= -f2-)
+  if [ -n "$ANTHROPIC_API_KEY" ]; then
+    export ANTHROPIC_API_KEY
+    echo "Loaded ANTHROPIC_API_KEY from .env.biomni"
+  else
+    echo "WARNING: ANTHROPIC_API_KEY is not set. Rubric evaluation and corrections will fail."
+  fi
+fi
 
-# RUNTIME_HOSTPORT="172.24.75.90:8000"
+PROJECT_NAME="biomni-training-qwen3-8b-skyrlagent-rubric-drgrpo"
+EXPERIMENT_NAME="biomni-training-qwen3-8b-16bsz-temp1.0-clip-0.28-rloo-full-chord-rope"
 
-# -----------------------------
-# Training hyperparameters
-# -----------------------------
-BATCH_SIZE=32
-# MAX_NUM_ITERS=48
-NUM_TRAJ=8
-# MAX_PARALLEL_AGENTS=128
+DATA_PATH="/mnt/local/biomni/skyrl-data"
+TRAIN_FILE="$DATA_PATH/train_freeform.parquet"
+VAL_FILE="$DATA_PATH/val_freeform.parquet"
+SFT_MODEL_PATH="/mnt/biomni_filestore/model_weights/qwen3-8b-sft-full-v1/global_step_104"
+CKPT_PATH="/mnt/biomni_filestore/models/skyrlagent"
+
+BATCH_SIZE=16
+NUM_TRAJ=5
 SAVE_FREQ=8
 
 USE_KL_LOSS=False
@@ -64,36 +79,21 @@ CLIP_RATIO_HIGH=0.28
 
 FLASH_ATTN=true
 
-# Parallelism
 TP_SIZE=1
-SP_SIZE=8
+SP_SIZE=4
 NUM_GPUS_PER_NODE=8
 NNODES=1
 
 TEMPERATURE=1.0
 TOP_P=1.0
 
-# -----------------------------
-# Agent task config
-# -----------------------------
-AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rl_qwen8b.yaml"
+AGENT_TASK_YAML="$(cd "$(dirname "$0")" && pwd)/../run_biomni/biomni_codeact_rubric_rl_qwen8b_chord.yaml"
 
-# -----------------------------
-# Run
-# -----------------------------
-# Ensure uv runs in the skyrl-agent project directory so --extra skyrl-train is resolvable
 SKYRL_AGENT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 pushd "$SKYRL_AGENT_DIR" >/dev/null
 
 LOGGER="['console','wandb']"
 
-# Set logger: enable wandb only if WANDB_API_KEY is available
-# LOGGER="['console']"
-# if [ -n "${WANDB_API_KEY:-}" ]; then
-#   LOGGER="['console','wandb']"
-# fi
-
-# If local SFT checkpoint isn't available on Ray workers, fall back to HF repo id.
 : "${HF_MODEL_ID:=Qwen/Qwen3-8B}"
 if [ -d "$SFT_MODEL_PATH" ]; then
   MODEL_PATH="$SFT_MODEL_PATH"
@@ -101,19 +101,29 @@ else
   MODEL_PATH="$HF_MODEL_ID"
 fi
 
+VENV_PYTHON="$UV_PROJECT_ENVIRONMENT/bin/python"
+CUDNN_PATH="$($VENV_PYTHON -c 'import inspect, nvidia.cudnn as c, os; print(os.path.dirname(inspect.getfile(c)))' 2>/dev/null || echo '')"
+if [ -n "$CUDNN_PATH" ]; then
+  export CPATH="$CUDNN_PATH/include:${CPATH:-}"
+  export LD_LIBRARY_PATH="$CUDNN_PATH/lib:${LD_LIBRARY_PATH:-}"
+fi
 
-PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/SkyRLV1/skyrl-agent/examples/run_biomni/.env.biomni -m skyrl_agent.integrations.skyrl_train.skyrl_train_main \
+PYTHONUNBUFFERED=1 uv run --frozen --extra skyrl-train --env-file ~/SkyRL/skyrl-agent/examples/run_biomni/.env.biomni -m skyrl_agent.integrations.skyrl_train.skyrl_train_main \
   data.train_data="['$TRAIN_FILE']" \
   data.val_data="['$VAL_FILE']" \
-  trainer.algorithm.advantage_estimator="grpo" \
+  trainer.algorithm.advantage_estimator="rloo" \
   trainer.algorithm.use_kl_loss=$USE_KL_LOSS \
   trainer.algorithm.kl_loss_coef=$KL_LOSS_COEF \
   trainer.algorithm.use_kl_in_reward=false \
   trainer.algorithm.loss_reduction="seq_mean_token_sum_norm" \
   trainer.algorithm.eps_clip_low=$CLIP_RATIO_LOW \
   trainer.algorithm.eps_clip_high=$CLIP_RATIO_HIGH \
+  trainer.algorithm.policy_loss_type="dual_clip" \
+  trainer.algorithm.grpo_norm_by_std=false \
   trainer.policy.model.path="$MODEL_PATH" \
   trainer.policy.optimizer_config.lr=1e-6 \
+  trainer.policy.optimizer_config.scheduler=cosine_with_min_lr \
+  'trainer.policy.optimizer_config.scheduler_specific_kwargs={min_lr: 1e-7}' \
   trainer.policy.sequence_parallel_size=$SP_SIZE \
   trainer.policy.megatron_config.tensor_model_parallel_size=1 \
   trainer.gradient_checkpointing=true \
@@ -122,12 +132,12 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   trainer.placement.policy_num_gpus_per_node=8 \
   trainer.placement.ref_num_gpus_per_node=0 \
   trainer.placement.critic_num_gpus_per_node=0 \
-  trainer.epochs=1 \
+  trainer.epochs=8 \
   trainer.train_batch_size=$BATCH_SIZE \
   trainer.policy_mini_batch_size=$BATCH_SIZE \
   trainer.micro_train_batch_size_per_gpu=1 \
   trainer.micro_forward_batch_size_per_gpu=1 \
-  trainer.max_prompt_length=45056 \
+  trainer.max_prompt_length=32768 \
   trainer.eval_before_train=false \
   trainer.eval_interval=-1 \
   trainer.ckpt_interval=$SAVE_FREQ \
@@ -135,10 +145,12 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   trainer.project_name="$PROJECT_NAME" \
   trainer.run_name="$EXPERIMENT_NAME" \
   trainer.logger="$LOGGER" \
-  trainer.resume_mode=none \
+  trainer.resume_mode=latest \
   trainer.gradient_checkpointing_use_reentrant=true \
   trainer.flash_attn=$FLASH_ATTN \
   trainer.use_sample_packing=true \
+  +trainer.use_correction_loss=true \
+  +trainer.correction_loss_mu=0.8 \
   +trainer.policy.model.override_config.max_position_embeddings=49152 \
   +trainer.policy.model.override_config.rope_scaling.rope_type=yarn \
   +trainer.policy.model.override_config.rope_scaling.factor=1.5 \
@@ -148,11 +160,12 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   generator.n_samples_per_prompt=$NUM_TRAJ \
   generator.inference_engine_tensor_parallel_size=$TP_SIZE \
   generator.num_inference_engines=$((NUM_GPUS_PER_NODE * NNODES / TP_SIZE)) \
-  generator.gpu_memory_utilization=0.7 \
+  generator.gpu_memory_utilization=0.35 \
   generator.sampling_params.temperature=$TEMPERATURE \
   generator.sampling_params.top_p=$TOP_P \
   generator.sampling_params.max_generate_length=4096 \
-  generator.max_input_length=45056 \
+  generator.max_input_length=32768 \
+  generator.max_num_seqs=256 \
   generator.enforce_eager=true \
   trainer.policy.fsdp_config.cpu_offload=true \
   trainer.policy.fsdp_config.reshard_after_forward=true \
@@ -160,23 +173,7 @@ PYTHONUNBUFFERED=1 uv run --extra skyrl-train --env-file /dfs/scratch1/lansong/S
   +generator.engine_init_kwargs.rope_scaling.rope_type=yarn \
   +generator.engine_init_kwargs.rope_scaling.factor=1.5 \
   +generator.engine_init_kwargs.rope_scaling.original_max_position_embeddings=32768 \
-  +generator.engine_init_kwargs.max_model_len=49152 \
-  # NOTE: use_log_heavy and log_heavy_freq are configured in the YAML file \
-  # (command-line +generator.* options do not reach agent config) \
+  +generator.engine_init_kwargs.max_model_len=35000 \
   $@
-
-
-#   generator.num_inference_engines=$((NUM_GPUS_PER_NODE * NNODES / TP_SIZE)) \
-#   trainer.export_path="$CKPT_PATH/$PROJECT_NAME/$EXPERIMENT_NAME/exports"
-#   trainer.resume_mode=from_path
-#   trainer.resume_path="/dfs/scratch0/lansong/models/qwen/biomni-training-qwen3-8b-grpo/biomni-training-qwen3-8b-32bsz-temp0.6-clip-0.28-32turn-grpo-reward2/global_step_4"
-
-
-# for yarn, needs sglang
-  # '+generator.engine_init_kwargs.json_model_override_args="{\"rope_scaling\":{\"rope_type\":\"yarn\",\"factor\":1.5,\"original_max_position_embeddings\":32768},\"max_position_embeddings\":49152}"' \
-  # +trainer.policy.model.override_config.max_position_embeddings=49152 \
-  # +trainer.policy.model.override_config.rope_scaling.rope_type=yarn \
-  # +trainer.policy.model.override_config.rope_scaling.factor=1.5 \
-  # +trainer.policy.model.override_config.rope_scaling.original_max_position_embeddings=32768 \
 
 popd >/dev/null
