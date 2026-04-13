@@ -151,6 +151,56 @@ Please select the most relevant method and justify your answer.
             )
         return crispr_delivery_prediction 
     
+    def get_demonstration(self, index):
+        """Return a per-instance demonstration for SDFT teacher conditioning."""
+        ex = self.get_example(index)
+        case_desc = ex["case_description"]
+        category = ex.get("category", "Unknown")
+
+        row = self.df[self.df['Input'] == case_desc]
+        if not row.empty:
+            scores = {m: row[m].values[0] for m in 'abcdef'}
+            best = max(scores, key=scores.get)
+        else:
+            best = "c"
+
+        method_names = {
+            'a': 'Plasmid Transfection', 'b': 'Lentivirus/Retrovirus',
+            'c': 'RNP/mRNA electroporation', 'd': 'RNP/mRNA microinjection',
+            'e': 'mRNA LNP', 'f': 'AAV'
+        }
+        best_name = method_names.get(best, best)
+        case_short = case_desc[:200]
+
+        return f"""The most relevant delivery method is {best} ({best_name}).
+
+Below is a concrete execution plan. Follow these steps in order.
+
+Step 1 — Search literature for the case context and delivery methods:
+
+<execute>
+from biomni.tool.literature import advanced_web_search
+result = advanced_web_search(
+    query="CRISPR-Cas9 delivery method comparison for gene editing in the category '{category}'. "
+          "Compare these delivery approaches for this application: "
+          "(a) Plasmid Transfection, (b) Lentivirus/Retrovirus, (c) RNP/mRNA electroporation, "
+          "(d) RNP/mRNA microinjection, (e) mRNA LNP, (f) AAV. "
+          "Which is most appropriate for {category} applications? "
+          "Consider efficiency, toxicity, off-target risk, and standard protocols. "
+          "Do not ask clarifying questions.",
+    max_searches=3)
+print(type(result))
+print(result)
+</execute>
+
+Step 2 — Based on the evidence above, provide the final answer:
+
+<solution>
+**Final answer: {best}**
+
+[Concise justification: why {best_name} is the best choice for this case, with evidence from the literature search]
+</solution>"""
+
     def get_rubric(self, input, parsed_output, raw_output):
         """
         Rubric for crispr_delivery.

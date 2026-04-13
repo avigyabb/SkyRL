@@ -98,11 +98,121 @@ Justify your answer."""
         class GeneDetectionOutput(BaseModel):
             """List of predicted causal genes for a patient."""
 
-            causal_genes: list = Field(
+            causal_genes: list[str] = Field(
                 description="The list of causal gene(s) identified, e.g., ['ENSG00000138449']. Please Use ENSG ID."
             )
         
         return GeneDetectionOutput
+
+    def get_demonstration(self, index):
+        """Return a per-instance demonstration for SDFT teacher conditioning."""
+        ex = self.get_example(index)
+        gt_genes = ex["answer"]
+        gt_gene_str = ", ".join(gt_genes) if isinstance(gt_genes, list) else str(gt_genes)
+        q = self.query[index]
+        phenotypes_raw = q["phenotypes"]
+        phenotypes = list(phenotypes_raw.keys()) if isinstance(phenotypes_raw, dict) else list(phenotypes_raw)
+        candidate_genes = q["candidate_genes"]
+        hpo_str = ", ".join(phenotypes[:10])
+        gene_str = ", ".join(candidate_genes[:15])
+
+        return f"""The causal gene(s): {gt_gene_str}.
+
+Below is a concrete execution plan. Follow these steps in order.
+
+Step 1 — Resolve HPO codes to human-readable phenotype names:
+
+<execute>
+import requests as req
+
+hpo_codes = {repr(phenotypes[:10])}
+print("Resolving HPO codes...")
+for code in hpo_codes:
+    try:
+        r = req.get(f"https://ontology.jax.org/api/hp/terms/{{code}}", timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            print(f"  {{code}}: {{data.get('name', 'Unknown')}}")
+        else:
+            print(f"  {{code}}: HTTP {{r.status_code}}")
+    except Exception as e:
+        print(f"  {{code}}: Error {{e}}")
+</execute>
+
+Step 2 — Search for the causal gene based on phenotypes and candidates:
+
+<execute>
+from biomni.tool.literature import advanced_web_search
+result = advanced_web_search(
+    query="Patient gene detection. Patient phenotypes (HPO): {hpo_str}. "
+          "Candidate genes: {gene_str}. "
+          "Which gene is most likely causal for this patient's phenotype combination? "
+          "For each candidate, report known disease associations and phenotype overlap. "
+          "Do not ask clarifying questions.",
+    max_searches=3)
+print(type(result))
+print(result)
+</execute>
+
+Step 3a — Load DisGeNET and inspect:
+
+<execute>
+import pandas as pd
+disgenet = pd.read_parquet("/mnt/biomni_filestore/biomni/biomni_data/data_lake/DisGeNET.parquet")
+print(f"Shape: {{disgenet.shape}}, Columns: {{list(disgenet.columns)}}")
+</execute>
+
+DisGeNET maps disorders to gene lists. Check which candidate genes appear in relevant disorders.
+
+Step 3b — Load gene_info and inspect its schema:
+
+<execute>
+gi = pd.read_parquet("/mnt/biomni_filestore/biomni/biomni_data/data_lake/gene_info.parquet")
+print(f"Shape: {{gi.shape}}")
+print(f"Columns: {{list(gi.columns)}}")
+print(gi.head(2).to_string())
+</execute>
+
+Step 3c — Map candidate Ensembl IDs to gene symbols:
+
+<execute>
+candidate_ensembl = {repr(candidate_genes[:15])}
+gene_map = {{}}
+for eid in candidate_ensembl:
+    match = gi[gi['gene_id'] == eid]
+    if len(match) > 0 and match['gene_name'].values[0]:
+        gene_map[eid] = match['gene_name'].values[0]
+print(f"Gene mapping: {{gene_map}}")
+</execute>
+
+Step 3d — Count DisGeNET disorder associations for each mapped gene:
+
+<execute>
+gene_symbols = list(gene_map.values())
+gene_disorder_count = {{}}
+for _, row in disgenet.iterrows():
+    genes = row['Genes'] if isinstance(row['Genes'], list) else eval(row['Genes'])
+    for sym in gene_symbols:
+        if sym in genes:
+            gene_disorder_count[sym] = gene_disorder_count.get(sym, 0) + 1
+for g, count in sorted(gene_disorder_count.items(), key=lambda x: -x[1])[:10]:
+    print(f"  {{g}}: appears in {{count}} disorders")
+if not gene_disorder_count:
+    print("  No candidate genes found in DisGeNET")
+</execute>
+
+Important notes:
+- Candidate genes may be Ensembl IDs (ENSG...). Check gene_info.parquet to map to symbols if needed.
+- Never fabricate data not returned by actual tool calls.
+- Make meaningful progress each turn.
+
+Provide the final answer:
+
+<solution>
+**Final answer: {gt_gene_str}**
+
+[Concise Markdown report: phenotype analysis, gene-disease evidence, justification]
+</solution>"""
 
     def get_rubric(self, input, parsed_output, raw_output):
         """

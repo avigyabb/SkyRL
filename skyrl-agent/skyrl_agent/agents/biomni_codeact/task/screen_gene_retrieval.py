@@ -250,6 +250,70 @@ class screen_gene_retrieval(base_task):
         result = output_parser.invoke(output)
         return result.selected_gene 
 
+    def get_demonstration(self, index):
+        """Return a per-instance demonstration for SDFT teacher conditioning."""
+        ex = self.get_example(index)
+        gt_gene = ex["target_gene"]
+        context = ex["context"][:300]
+        candidates = ex["candidate_genes"]
+        gene_list = ", ".join(candidates[:10])
+
+        return f"""The gene with the strongest perturbation effect is {gt_gene}.
+
+Below is a concrete execution plan. Follow these steps in order.
+
+Step 1 — Search literature for the research context and candidate genes:
+
+<execute>
+from biomni.tool.literature import advanced_web_search
+result = advanced_web_search(
+    query="Gene perturbation screen. Research context: {context[:200]}... "
+          "Which of these genes has the strongest perturbation effect: {gene_list}? "
+          "For each gene, report: known function, relevance to the experimental context, "
+          "published perturbation/knockout phenotypes. "
+          "Do not ask clarifying questions.",
+    max_searches=3)
+print(type(result))
+print(result)
+</execute>
+
+Step 2a — Load GeneBass and inspect:
+
+<execute>
+import pandas as pd
+df = pd.read_pickle("/mnt/biomni_filestore/biomni/biomni_data/data_lake/genebass_missense_LC_filtered.pkl")
+print(f"Shape: {{df.shape}}, Columns: {{list(df.columns)}}")
+</execute>
+
+GeneBass has gene-level burden test results. Query by gene name to check functional impact.
+
+Step 2b — Check burden test evidence for top candidates:
+
+<execute>
+for gene in {repr(candidates[:5])}:
+    hits = df[df['gene'] == gene]
+    if len(hits) > 0:
+        top = hits.nsmallest(3, 'Pvalue')
+        print(f"{{gene}}: {{len(hits)}} total, top hits:")
+        print(top[['gene', 'Pvalue', 'BETA_Burden', 'pheno_description']].to_string())
+        print()
+    else:
+        print(f"{{gene}}: no GeneBass entries")
+</execute>
+
+Important notes:
+- gget does NOT have a `gwas` function. Available: info, search, opentargets, archs4, enrichr.
+- Never fabricate data not returned by actual tool calls.
+- Make meaningful progress each turn.
+
+Compare ALL candidates and provide the final answer:
+
+<solution>
+**Final answer: {gt_gene}**
+
+[Concise Markdown report: evidence summary, gene function analysis, justification]
+</solution>"""
+
     def get_rubric(self, input, parsed_output, raw_output):
         """
         Rubric for screen_gene_retrieval.

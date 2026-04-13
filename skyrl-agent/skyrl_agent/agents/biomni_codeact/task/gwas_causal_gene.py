@@ -86,6 +86,111 @@ class gwas_causal_gene(base_task):
         output = output_parser.invoke(output)
         return output.causal_gene
 
+    def get_demonstration(self, index):
+        """Return a per-instance demonstration for SDFT teacher conditioning."""
+        ex = self.get_example(index)
+        gt_gene = ex["answer"]
+        prompt = ex["prompt"]
+
+        trait = ""
+        gene_str = ""
+        for line in prompt.splitlines():
+            if "GWAS phenotype:" in line:
+                trait = line.split(":", 1)[1].strip()
+            if "Genes in locus:" in line:
+                gene_str = line.split(":", 1)[1].strip().rstrip(".")
+        genes = [g.strip().strip("{}") for g in gene_str.split(",") if g.strip()]
+        n_genes = len(genes)
+        gene_list_clean = ", ".join(genes)
+
+        return f"""The most likely causal gene is {gt_gene}.
+
+Below is a concrete execution plan. Follow these steps in order.
+
+Step 1 — Search GWAS literature for "{trait}" and all {n_genes} candidate genes:
+
+<execute>
+from biomni.tool.literature import advanced_web_search
+result = advanced_web_search(
+    query="GWAS causal gene identification for the phenotype '{trait}'. "
+          "Which of these genes in the GWAS locus is most likely causal: "
+          "{gene_list_clean}? "
+          "For each gene report: (1) known biological role related to '{trait}', "
+          "(2) GWAS evidence (p-value, effect size, fine-mapping), "
+          "(3) functional evidence (eQTL, coding variants, mouse knockout). "
+          "Do not ask clarifying questions.",
+    max_searches=3)
+print(type(result))
+print(result)
+</execute>
+
+Step 2a — Load GeneBass and inspect its schema:
+
+<execute>
+import pandas as pd
+df = pd.read_pickle("/mnt/biomni_filestore/biomni/biomni_data/data_lake/genebass_missense_LC_filtered.pkl")
+print(f"Shape: {{df.shape}}")
+print(f"Columns: {{list(df.columns)}}")
+print(df.head(2).to_string())
+</execute>
+
+GeneBass is a gene-level burden test dataset. It has NO variant/rsID column. Query directly by gene name.
+
+Step 2b — Query GeneBass for top candidate genes. Show their most significant phenotype associations regardless of trait name, since GeneBass uses UK Biobank phenotype names which may differ from the GWAS trait name:
+
+<execute>
+for gene in {repr(genes[:5])}:
+    hits = df[df['gene'] == gene]
+    if len(hits) > 0:
+        top = hits.nsmallest(5, 'Pvalue')
+        print(f"{{gene}}: {{len(hits)}} total entries, top 5 most significant:")
+        print(top[['gene', 'Pvalue', 'BETA_Burden', 'pheno_description']].to_string())
+        print()
+    else:
+        print(f"{{gene}}: no GeneBass entries")
+</execute>
+
+Step 3a — Load DisGeNET and inspect its schema:
+
+<execute>
+disgenet = pd.read_parquet("/mnt/biomni_filestore/biomni/biomni_data/data_lake/DisGeNET.parquet")
+print(f"Shape: {{disgenet.shape}}")
+print(f"Columns: {{list(disgenet.columns)}}")
+print(disgenet.head(2).to_string())
+</execute>
+
+DisGeNET maps disorders to gene lists. It has NO variant/rsID column. Check how many disorders each candidate gene appears in:
+
+Step 3b — Count disorder associations for each candidate gene:
+
+<execute>
+gene_counts = {{}}
+candidate_set = set({repr(genes)})
+for _, row in disgenet.iterrows():
+    genes_in_disorder = row['Genes'] if isinstance(row['Genes'], list) else eval(row['Genes'])
+    for g in candidate_set:
+        if g in genes_in_disorder:
+            gene_counts[g] = gene_counts.get(g, 0) + 1
+for g, count in sorted(gene_counts.items(), key=lambda x: -x[1]):
+    print(f"  {{g}}: appears in {{count}} disorders")
+if not gene_counts:
+    print("  No candidate genes found in DisGeNET")
+</execute>
+
+Important notes:
+- gget does NOT have a `gwas` function. Available: info, search, opentargets, archs4, enrichr.
+- Never fabricate DataFrames or p-values not returned by actual tool calls.
+- Always inspect tool outputs before indexing into them.
+- Make meaningful progress each turn. Once the answer is identified, verify and conclude.
+
+Compare ALL {n_genes} candidates, then provide the final answer:
+
+<solution>
+**Final answer: {gt_gene}**
+
+[Concise Markdown report: evidence summary citing actual tool outputs, comparison of all candidate genes, numbered references]
+</solution>"""
+
     def get_rubric(self, input, parsed_output, raw_output):
         """
         Rubric for gwas_causal_gene.
