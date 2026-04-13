@@ -33,6 +33,7 @@ class TrajectoryConfig:
     log_heavy_freq: int = 100
     generate_corrections: bool = False
     max_corrections_per_trajectory: int = 5
+    correction_mode: str = "all"
 
 
 # DEPR

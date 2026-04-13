@@ -224,6 +224,7 @@ class AgentRunner:
             log_heavy_freq = self.cfg.get("log_heavy_freq", 8)
             generate_corrections = self.cfg.get("generate_corrections", False)
             max_corrections_per_trajectory = self.cfg.get("max_corrections_per_trajectory", 5)
+            correction_mode = self.cfg.get("correction_mode", "all")
 
             for traj_id in range(num_trajectories):
                 traj_cfg = TrajectoryConfig(
@@ -243,6 +244,7 @@ class AgentRunner:
                     log_heavy_freq=log_heavy_freq,
                     generate_corrections=generate_corrections,
                     max_corrections_per_trajectory=max_corrections_per_trajectory,
+                    correction_mode=correction_mode,
                 )
                 traj: BaseTrajectory = self.traj_cls(
                     cfg=traj_cfg,
@@ -772,7 +774,7 @@ class AgentRunner:
         # Must tokenize in a single apply_chat_template call (not separate context + correction)
         # because special tokens like <think> are only correctly encoded within a full conversation.
         correction_data = []
-        max_correction_seq_len = self.cfg.get("max_correction_seq_len", 16384) if hasattr(self.cfg, 'get') else 16384
+        max_correction_response_len = getattr(self.cfg.generator, 'sampling_params', {}).get('max_tokens', 4096) if hasattr(self.cfg, 'generator') else 4096
         for idx, result in enumerate(matched_results):
             traj_corrections = result.get("corrections", [])
             if not traj_corrections:
@@ -835,9 +837,9 @@ class AgentRunner:
                             last_block_start = i
                     corr_loss_mask = [0] * last_block_start + resp_assistant_mask[last_block_start:]
 
-                    total_len = len(prompt_ids) + len(resp_ids)
-                    if total_len > max_correction_seq_len:
-                        logger.info(f"Correction too long ({total_len} > {max_correction_seq_len}), skipping")
+                    correction_turn_len = sum(corr_loss_mask)
+                    if correction_turn_len > max_correction_response_len:
+                        logger.info(f"Correction turn too long ({correction_turn_len} > {max_correction_response_len}), skipping")
                         continue
 
                     correction_data.append({

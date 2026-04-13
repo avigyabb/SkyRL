@@ -866,7 +866,7 @@ class PolicyWorkerBase(Worker):
         keeping all computation graphs in memory simultaneously.
         """
         device = torch.cuda.current_device()
-        max_corrections_per_batch = getattr(self.cfg.trainer, "max_corrections_per_batch", 4)
+        max_corrections_per_batch = getattr(self.cfg.trainer, "max_corrections_per_batch", 1)
 
         # Pre-compute total supervised tokens for correct normalization across sub-batches
         total_supervised_tokens = sum(sum(c["loss_mask"]) for c in correction_data)

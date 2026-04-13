@@ -186,7 +186,7 @@ class BiomniRuntimeClient:
         payload = {"session_id": self.session_id,
                    "code": code,
                    "timeout_seconds": timeout}
-        max_retries = 1
+        max_retries = 3
         
         for attempt in range(max_retries):
             try:

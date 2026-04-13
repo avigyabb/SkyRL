@@ -14,6 +14,10 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
+# Flip to True when iterating on correction prompts; False for production training.
+_CHORD_DEBUG_CORRECTIONS = False
+_CHORD_DEBUG_DUMP_PATH = "/tmp/chord_corrections_dump.jsonl"
+
 # Import task classes
 from skyrl_agent.agents.biomni_codeact.task.screen_design import screen_design
 from skyrl_agent.agents.biomni_codeact.task.gwas_causal_gene import gwas_causal_gene
@@ -177,17 +181,36 @@ COMMON ERRORS TO FIX:
 - Using <execute> for final turns → change to <solution>
 """
 
-CORRECTION_SYSTEM_PROMPT_RUBRIC = """You are an expert AI trainer specializing in improving biomedical agent trajectories. \
-Your task is to generate improved versions of assistant turns based on rubric evaluation feedback.
+CORRECTION_SYSTEM_PROMPT_RUBRIC = """\
+You are an expert AI trainer reviewing a biomedical agent's trajectory to identify turns with causal problems.
 
-The agent's format is correct, so focus entirely on QUALITY improvements according to the rubric:
-- Better methodology (using authoritative databases, systematic approaches)
-- Better code and data handling (error handling, efficient queries, proper parsing)
-- Better reasoning coherence (clear chain-of-thought, justified decisions)
-- Better output quality (accurate answers, proper citations, clear presentation)
+CORRECT a turn if:
+- It produced confused or incorrect reasoning that derailed progress (even if the agent later self-corrected)
+- It was clearly redundant — made no meaningful progress and wasted context window
+- It introduced a factual error, misinterpreted data, or used flawed logic that affected downstream reasoning
+- It led directly to an incorrect final answer
 
-Each corrected turn must still follow the format: <think>REASONING</think><execute>CODE</execute> \
+Do NOT correct a turn if:
+- A different tool or API could have been used, but the chosen one produced useful, correct results
+- The methodology doesn't match textbook best practices but still worked in practice
+- The code could be more elegant or efficient but ran correctly and produced correct output
+- It is a stylistic preference that did not cause observable errors
+
+If no turns had causal problems, return ZERO corrections (all null slots).
+Being selective is more valuable than generating many corrections.
+
+Each corrected turn must follow the format: <think>REASONING</think><execute>CODE</execute> \
 (or <think>REASONING</think><solution>ANSWER</solution> for the final turn).
+
+STYLE: Write the <think> block as if you ARE the agent thinking at that moment — first-person, \
+forward-looking ("I need to...", "Let me...", "The search results show..."). Do NOT reference \
+turn numbers ("From Turn 2..."), do NOT write as an external reviewer ("Reviewing the results..."), \
+and do NOT summarize prior turns — the agent sees a continuous conversation, not labeled turns.
+
+GROUNDING: Each correction's reasoning must only use information the agent has observed up to that \
+point. Never reference information from later turns. If the agent reached the wrong final answer \
+because it lacked evidence, correct earlier turns to acquire the missing evidence rather than \
+rewriting the <solution> block. Do not discard evidence the agent already collected — build on it.
 """
 
 
@@ -665,13 +688,28 @@ class BiomniRubricRewardAdapter:
         trajectory_text: str,
         rubric_results: Dict[str, Any],
         ft_reward: float,
+        gt_reward: float,
         max_corrections: int = 5,
+        correction_mode: str = "all",
+        task=None,
+        instance_id=None,
+        task_name: str = "",
     ) -> List[Dict[str, Any]]:
         """Generate up to max_corrections corrections for problematic turns using the LLM."""
         import time as _time
 
+        demo_text = ""
+        if task is not None and hasattr(task, 'get_demonstration') and instance_id is not None:
+            try:
+                demo_text = task.get_demonstration(instance_id)
+            except Exception as e:
+                logger.warning(f"Failed to get demonstration for {task_name}: {e}")
+
         turn_mapping = cls._build_turn_mapping(messages)
         format_failed = ft_reward == 0.0
+
+        if not format_failed and correction_mode == "format_only":
+            return []
         weaknesses = rubric_results.get("rubric_weaknesses", [])
         rationale = rubric_results.get("rubric_rationale", "")
 
@@ -703,7 +741,10 @@ class BiomniRubricRewardAdapter:
                 f"1. Target a specific turn (e.g., 'Turn 1', 'Turn 2', 'FINAL ANSWER')\n"
                 f"2. Provide a corrected assistant message that follows ALL format rules\n"
                 f"3. Preserve the intent of the original message while fixing the format\n"
-                f"Return fewer corrections if there are fewer format errors. Return null for unused slots."
+                f"Return fewer corrections if there are fewer format errors. Return null for unused slots.\n\n"
+                f"STYLE REMINDER: Match the existing style and content as much as possible except for the format errors. "
+                f"HOWEVER: if the original trajectory contains fabricated data (e.g., hardcoded scores with no empirical basis), "
+                f"gibberish, or hallucinated execution results, do NOT preserve them — clean up the content while fixing the format."
             )
             system_prompt = CORRECTION_SYSTEM_PROMPT_FORMAT
             correction_mode = "format"
@@ -719,21 +760,119 @@ class BiomniRubricRewardAdapter:
             }
             scores_text = ", ".join(f"{k}={v}" for k, v in scores.items())
 
+            if gt_reward == 1.0:
+                correctness_text = (
+                    "ANSWER CORRECTNESS: The agent arrived at the CORRECT final answer.\n"
+                    "Since the trajectory succeeded, only correct turns that observably derailed reasoning "
+                    "(even if the agent later recovered), or turns that were clearly redundant with no meaningful "
+                    "progress. If all turns contributed to reaching the correct answer, return zero corrections."
+                )
+            else:
+                correctness_text = (
+                    "ANSWER CORRECTNESS: The agent arrived at the WRONG final answer.\n"
+                    "Identify which turn(s) caused the reasoning to diverge. Focus on the earliest turn where "
+                    "a critical mistake occurred (wrong data interpretation, flawed logic, missed key evidence) "
+                    "and provide a correction that would fix the causal error."
+                )
+
             human_content = (
                 f"Here is an agent's trajectory for a biomedical task:\n\n"
                 f"{trajectory_text}\n\n"
-                f"RUBRIC SCORES: {scores_text}\n\n"
-                f"{rubric_section}\n\n"
-                f"According to the rubric scorings and identified weaknesses, generate up to {max_corrections} "
-                f"corrections targeting turns that would most improve the trajectory's quality. "
+                f"{correctness_text}\n\n"
+                f"RUBRIC SCORES (for reference, not a correction checklist): {scores_text}\n\n"
+                f"RUBRIC EVALUATION (for context — some items are methodology preferences, not errors. "
+                f"Only act on items that describe a causal problem):\n{rubric_section}\n\n"
+                + (
+                    f"REFERENCE METHODOLOGY FOR THIS TASK:\n"
+                    f"The following shows a well-structured approach for this specific task instance, "
+                    f"demonstrating correct tool usage, data handling patterns, and API calls. Use it to "
+                    f"understand WHAT GOOD METHODOLOGY LOOKS LIKE — correct import paths, schema inspection "
+                    f"before access, batched API calls, and evidence-based reasoning.\n\n"
+                    f"DO NOT blindly copy this reference verbatim into your corrections. The agent's trajectory has "
+                    f"its own context and observations at each turn. Instead, ADAPT the relevant patterns: "
+                    f"if the agent used a wrong import, use the correct one from the reference; if the agent "
+                    f"looped API calls, show the batched pattern from the reference; if the agent got stuck by web "
+                    f"search subagent's clarification questions, add the corresponding anti-clarification line; "
+                    f"if the agent skipped schema inspection, add it and fix any hallucinated/hardcoded index or column names.\n\n"
+                    f"{demo_text}\n\n"
+                    if demo_text else ""
+                )
+                + f"Generate up to {max_corrections} corrections targeting turns with CAUSAL problems. "
                 f"Each correction MUST:\n"
                 f"1. Target a specific turn (e.g., 'Turn 1', 'Turn 2', 'FINAL ANSWER')\n"
-                f"2. Provide an improved assistant message addressing the rubric weaknesses\n"
-                f"3. Preserve the overall approach while improving methodology, code quality, or reasoning\n"
-                f"Return fewer corrections if there are fewer issues. Return null for unused slots."
+                f"2. Provide a corrected assistant message that fixes the causal issue\n"
+                f"3. Preserve the agent's working approach — do not rewrite the methodology\n"
+                f"Return fewer corrections if there are fewer causal issues. Return all nulls if none.\n\n"
+                f"CRITICAL GUIDELINES (you MUST follow all of these):\n\n"
+                f"1. TURN NUMBERS ARE FOR INDEXING ONLY.\n"
+                f"   The 'Turn N' labels in the trajectory above exist solely so you can specify which turn to correct "
+                f"in the 'target' field. The agent NEVER sees these labels. The agent sees a standard Qwen chat "
+                f"template — its responses are <|im_start|>assistant messages and observations are <|im_start|>user "
+                f"messages. For example, the agent's actual view looks like:\n"
+                f"     <|im_start|>assistant\n"
+                f"     <think>I need to search for...</think><execute>result = advanced_web_search(...)</execute><|im_end|>\n"
+                f"     <|im_start|>user\n"
+                f"     <observation>query_opentarget returned: ...</observation>\n"
+                f"     <|im_end|>\n"
+                f"   Turn numbers must NEVER appear anywhere in the 'correction' field — not in <think>, not in "
+                f"<execute>, not in <solution>, nowhere. The only place 'Turn N' should appear is the 'target' "
+                f"field to identify which turn you are correcting. Write as if you ARE the agent at that moment — "
+                f"first-person, forward-looking ('I need to...', 'Let me...', 'The search results show...').\n\n"
+                f"2. LIMIT EXTERNAL API CALLS — BATCH, DON'T LOOP.  *** ZERO TOLERANCE ***\n"
+                f"   Each corrected <execute> block must contain at most 2 external API calls "
+                f"(advanced_web_search, query_opentarget, query_kegg, get_rna_seq_archs4, etc.).\n"
+                f"   ABSOLUTELY NEVER generate a for-loop that calls an external API per iteration. External APIs are heavy and **looping will cause a timeout**.\n"
+                f"   BAD:  `for gene in genes: query_opentarget(gene)` or `for v in variants: advanced_web_search(v)`\n"
+                f"   GOOD: `advanced_web_search('Find associations for genes: GENE1, GENE2, GENE3 with disease X', max_searches=3)`\n"
+                f"   The advanced_web_search agent can handle multi-part queries — always batch into ONE call.\n"
+                f"   If you need data on N items, compose a single comprehensive prompt listing all N items.\n"
+                f"   For any external DB query tools, you MUST LIMIT TO AT MOST 2 targeted queries per turn.\n"
+                f"   NEVER query external DBs for general information collection. Limit your external DB queries to targeted validations.\n"
+                f"   Violation of this rule makes the correction WORSE than the original.\n\n"
+                f"3. REASONING MUST BE GROUNDED IN PRIOR OBSERVATIONS ONLY.\n"
+                f"   The <think> block in each correction must reason solely from observations the agent has "
+                f"received up to that point in the trajectory. If the agent has not yet seen a piece of "
+                f"information (even if it appears in later turns), you must NOT reference it. "
+                f"The agent cannot see the future.\n\n"
+                f"4. FIX THE ROOT CAUSE; ONLY CHANGE THE FINAL ANSWER IF THE EVIDENCE SUPPORTS IT.\n"
+                f"   You MAY correct the <solution> block if the trace already contains evidence for a better "
+                f"answer (e.g., the agent collected the right data but misinterpreted it, or the presentation "
+                f"needs improvement). However:\n"
+                f"   - If the agent arrived at the wrong answer because it never acquired the necessary evidence, "
+                f"do NOT simply rewrite the <solution> block. Instead, correct an EARLIER turn to search for "
+                f"and acquire the missing evidence, so the correct answer follows from the trace.\n"
+                f"   - NEVER fabricate evidence or use common-sense/external knowledge to justify a different "
+                f"answer (e.g., 'I know XXX is commonly associated with YYY').\n"
+                f"   - Do NOT discard evidence the agent already collected. If the existing evidence points toward "
+                f"an incorrect option but is flawed or insufficient, acknowledge this in the <think> block and "
+                f"then search for better evidence — do not just swap the answer.\n"
+                f"   - A correction does NOT have to be a 1-to-1 replacement of the same turn type. For example, "
+                f"if the problem is in the final answer, you can (and often should) instead correct an earlier "
+                f"action turn to gather missing evidence, rather than rewriting the <solution> block.\n"
+                f"   - Place each correction at the point in the trajectory where it makes the most logical sense. "
+                f"If the fix belongs earlier in the flow, target that earlier turn. Do NOT scatter corrections "
+                f"across multiple turns to address a single issue — find the one turn where a targeted fix would "
+                f"have the most impact.\n\n"
+                f"5. DO NOT PRESERVE FABRICATED DATA FROM DEGENERATED TRAJECTORIES.\n"
+                f"   If the original trajectory contains gibberish, hallucinated data, or fabricated scoring "
+                f"systems (e.g., hardcoded scores assigned to specific entities with no empirical basis from "
+                f"the observations), do NOT carry them into your correction. Start from the evidence actually "
+                f"available in the observations up to that point. If there is no usable evidence, write code "
+                f"that acquires it (e.g., via advanced_web_search) rather than inventing it."
+                + (
+                    f"\n\n6. USE THE REFERENCE METHODOLOGY AS A PATTERN GUIDE, NOT A TEMPLATE.\n"
+                    f"   The reference above shows correct tool imports, data access patterns, and API usage "
+                    f"for this task. When correcting a turn:\n"
+                    f"   - Use the correct import paths, function signatures, and API usage patterns from the reference\n"
+                    f"   - Follow the schema-inspection-before-access pattern from the reference\n"
+                    f"   - Adapt the batched query pattern, anti-clarification tricks, but not the exact query strings\n"
+                    f"   - DO NOT replace the agent's entire approach with the reference — only fix the "
+                    f"specific turn(s) that caused problems."
+                    if demo_text else ""
+                )
             )
             system_prompt = CORRECTION_SYSTEM_PROMPT_RUBRIC
-            correction_mode = "rubric"
+            correction_mode = "rubric-correct" if gt_reward == 1.0 else "rubric-incorrect"
 
         correction_messages = [
             SystemMessage(content=system_prompt),
@@ -782,7 +921,39 @@ class BiomniRubricRewardAdapter:
             })
 
         logger.info(f"Generated {len(corrections)} corrections targeting: {[c['target_label'] for c in corrections]}")
-        if corrections:
+
+        debug_corrections = _CHORD_DEBUG_CORRECTIONS
+        if corrections and debug_corrections:
+            for ci, corr in enumerate(corrections):
+                cidx = corr["assistant_msg_index"]
+                orig = messages[cidx].get("content", "") if 0 <= cidx < len(messages) else "<out of range>"
+                logger.info(
+                    f"[DEBUG-CORR {ci+1}/{len(corrections)}] target={corr['target_label']} msg_idx={cidx}\n"
+                    f"  ORIGINAL:\n{orig}\n"
+                    f"  CORRECTED:\n{corr['correction_text']}"
+                )
+            try:
+                dump_path = _CHORD_DEBUG_DUMP_PATH
+                with open(dump_path, "a") as f:
+                    record = {
+                        "messages": messages,
+                        "rubric_results": {k: v for k, v in rubric_results.items()
+                                           if k != "rubric_rationale" or len(str(v)) < 5000},
+                        "ft_reward": ft_reward,
+                        "gt_reward": gt_reward,
+                        "correction_mode": correction_mode,
+                        "corrections": [
+                            {"target_label": c["target_label"],
+                             "assistant_msg_index": c["assistant_msg_index"],
+                             "original": messages[c["assistant_msg_index"]].get("content", ""),
+                             "corrected": c["correction_text"]}
+                            for c in corrections
+                        ],
+                    }
+                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except Exception as e:
+                logger.warning(f"Failed to dump correction debug data: {e}")
+        elif corrections:
             sample = random.choice(corrections)
             sample_idx = sample["assistant_msg_index"]
             original_text = messages[sample_idx].get("content", "") if 0 <= sample_idx < len(messages) else "<out of range>"
@@ -805,6 +976,7 @@ class BiomniRubricRewardAdapter:
         model: str = "claude-sonnet-4-5",
         generate_corrections: bool = False,
         max_corrections: int = 5,
+        correction_mode: str = "all",
     ) -> Dict[str, Any]:
         """
         Compute rewards using:
@@ -924,7 +1096,12 @@ class BiomniRubricRewardAdapter:
                     trajectory_text=raw_output,
                     rubric_results=rubric_results,
                     ft_reward=ft_reward,
+                    gt_reward=gt_reward,
                     max_corrections=max_corrections,
+                    correction_mode=correction_mode,
+                    task=task,
+                    instance_id=instance_id,
+                    task_name=task_name,
                 )
                 logger.info("Corrections for task=%s instance=%s: %d generated", task_name, instance_id, len(corrections))
 

@@ -579,6 +579,10 @@ def prepare_runtime_environment(cfg: DictConfig) -> dict[str, str]:
         logger.info("Exporting BIOMNI_RUNTIME_URL to ray runtime env")
         env_vars["BIOMNI_RUNTIME_URL"] = os.environ["BIOMNI_RUNTIME_URL"]
 
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        logger.info("Exporting ANTHROPIC_API_KEY to ray runtime env")
+        env_vars["ANTHROPIC_API_KEY"] = os.environ["ANTHROPIC_API_KEY"]
+
     # Propagate NCCL networking config to Ray workers (critical for multi-node)
     for nccl_var in ["NCCL_SOCKET_IFNAME", "NCCL_IB_DISABLE", "NCCL_NET_GDR_LEVEL",
                      "NCCL_DEBUG", "NCCL_TIMEOUT", "NCCL_ASYNC_ERROR_HANDLING"]:

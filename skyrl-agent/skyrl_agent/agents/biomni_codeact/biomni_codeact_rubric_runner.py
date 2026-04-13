@@ -49,6 +49,7 @@ class BiomniCodeActRubricTrajectory(BiomniCodeActTrajectory):
             critic_model = os.getenv("BIOMNI_CRITIC_MODEL", "claude-sonnet-4-5")
             gen_corrections = getattr(self.cfg, "generate_corrections", False)
             max_corrections = getattr(self.cfg, "max_corrections_per_trajectory", 5)
+            correction_mode = getattr(self.cfg, "correction_mode", "all")
             
             # task_name is inside instance, not at top-level data
             task_name = instance.get("task_name") if isinstance(instance, dict) else None
@@ -62,6 +63,7 @@ class BiomniCodeActRubricTrajectory(BiomniCodeActTrajectory):
                 model=critic_model,
                 generate_corrections=gen_corrections,
                 max_corrections=max_corrections,
+                correction_mode=correction_mode,
             )
             
             self.result["reward"] = metrics["score"]
