@@ -1,6 +1,7 @@
 set -x
 
 # Colocated GRPO training+generation for Qwen2.5-1.5B-Instruct on GSM8K.
+# Quick smoke test: 5 training steps with torch.profiler recording every ~2 steps.
 
 # uv run examples/train/gsm8k/gsm8k_dataset.py --output_dir $HOME/data/gsm8k
 # export WANDB_API_KEY=<your_key_here>
@@ -15,6 +16,7 @@ set -x
 : "${LOGGER:=wandb}" # change to "console" to print to stdout
 
 : "${INFERENCE_BACKEND:=vllm}"
+: "${PROFILE_DIR:="/home/ray/default/skyrl-profiler/gsm8k"}" # torch.profiler trace output dir (local path)
 
 uv run --isolated --extra fsdp -m skyrl.train.entrypoints.main_base \
   data.train_data="['$DATA_DIR/train.parquet']" \
@@ -29,16 +31,25 @@ uv run --isolated --extra fsdp -m skyrl.train.entrypoints.main_base \
   generator.inference_engine.num_engines=$NUM_GPUS \
   generator.inference_engine.tensor_parallel_size=1 \
   trainer.epochs=20 \
+  trainer.max_training_steps=5 \
   trainer.eval_batch_size=1024 \
-  trainer.eval_before_train=true \
-  trainer.eval_interval=5 \
+  trainer.eval_before_train=false \
+  trainer.eval_interval=1000 \
   trainer.update_epochs_per_batch=1 \
   trainer.train_batch_size=1024 \
   trainer.policy_mini_batch_size=256 \
   trainer.micro_forward_batch_size_per_gpu=64 \
   trainer.micro_train_batch_size_per_gpu=64 \
-  trainer.ckpt_interval=10 \
+  trainer.ckpt_interval=1000 \
   trainer.max_prompt_length=512 \
+  trainer.policy.fsdp_config.cpu_offload=true \
+  trainer.policy.torch_profiler_config.enable=true \
+  trainer.policy.torch_profiler_config.save_path="$PROFILE_DIR" \
+  trainer.policy.torch_profiler_config.skip_first=0 \
+  trainer.policy.torch_profiler_config.wait=0 \
+  trainer.policy.torch_profiler_config.warmup=1 \
+  trainer.policy.torch_profiler_config.active=1 \
+  trainer.policy.torch_profiler_config.repeat=0 \
   generator.sampling_params.max_generate_length=1024 \
   trainer.policy.optimizer_config.lr=1.0e-6 \
   trainer.algorithm.use_kl_loss=true \
