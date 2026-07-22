@@ -197,6 +197,16 @@ Phase-1 measurements.
 | eval sets materialized | unchanged (eval is small) |
 | `data.pt` = dataloader `state_dict` | unchanged mechanism; state is now shard cursors |
 
+**Custom-sampler note.** The existing sampler API produces arbitrary integer indices into a
+map-style dataset and therefore cannot drive an `IterableDataset`. A future streaming planner
+would instead need to produce an ordered plan of shard IDs (optionally contiguous row ranges)
+from the manifest; dataloader workers would partition and stream that plan, with FFD packing
+remaining online. Arbitrary sparse sample-level plans are intentionally out of scope: they
+would require a per-row sidecar index and could cause substantial read amplification by
+opening many shards to consume only a few rows. With a shard/range plan, excess reads are
+bounded to Parquet row-group granularity plus batches already queued by dataloader prefetch
+when the `num_steps` limit is reached.
+
 ## Open questions
 
 1. Manifest format: adopt/parallel the pretokenized store schema from #1927, or a sidecar
