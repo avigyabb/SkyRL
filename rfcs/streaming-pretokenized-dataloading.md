@@ -160,17 +160,81 @@ The reason DIY is tractable *here* is the offline shuffle: without it, we would 
 shuffle buffers and their checkpoint semantics, which is where homegrown loaders historically
 go wrong.
 
+### Option E — Download to controller NVMe, keep map-style (the null option)
+
+Streaming must justify itself against this baseline, because "doesn't fit in memory" does not
+imply "must stream": HF's *non-streaming* `Dataset` is arrow memory-mapped from disk, not
+loaded into RAM. Today's ingestion path already loads every store as an arrow-backed
+`Dataset` and then discards the memory mapping by materializing `list[dict]` — the
+materialization, not the format, is what doesn't scale. Returning the mmap'd `Dataset` with
+lazy row normalization (`set_transform`) instead of a list, combined with the whole-store
+download from #1933, gives:
+
+- memory bounded by page cache instead of dataset size;
+- **zero trainer changes** — the dataset stays map-style, so samplers (`random`,
+  `DataMixingSampler`, custom/curriculum), `len()`/epoch derivation, tail-batch padding, and
+  the `data.pt` resume flow all keep working verbatim;
+- trivial, exact resume (sampler position, as today).
+
+In SkyRL only the **controller** needs the local copy (workers receive dispatched batches), so
+the disk requirement is one node's NVMe — single-digit TB on modern instances, which covers a
+large fraction of real workloads before true streaming is needed.
+
+Rejected as the *terminal* answer for the 1T target, on operational grounds rather than
+architectural ones:
+
+- a multi-hour one-time download on every fresh controller node (painful under preemption and
+  autoscaling; re-paid on every node replacement);
+- dataset size capped by a single node's disk (~4 TB of tokens ≈ the practical ceiling);
+- pins the controller to fat-disk node types.
+
+**But it is the right first rung**: the "stop materializing" change is small, benefits every
+scale immediately, and is prerequisite-shaped for Option B (same library, same loader entry
+point — streaming becomes a flag flip on top).
+
+### Option F — Megatron-LM indexed dataset (`.bin`/`.idx`) over an S3-backed filesystem
+
+The classic trillion-token pretraining format, and a fair "why not the format Megatron already
+uses?" question given SkyRL's Megatron backend: one flat memory-mapped token stream plus a
+document index. Sampling is index arithmetic, shuffling is a precomputed permutation, and
+resume is **a step counter** — the strongest resume story of any option, with zero loader code.
+
+Rejected for this proposal:
+
+- **It does not stream from S3 by itself.** It requires either a full local copy (Option E's
+  operational costs, with a less flexible format) or an infrastructure dependency that makes
+  S3 look like a filesystem — mountpoint-s3, or FSx for Lustre with S3 backing. That moves the
+  hard part out of the trainer and into cluster provisioning, which this RFC cannot assume.
+- **Schema mismatch.** Its native form is a raw token stream for pretraining-style packing;
+  the #1927 contract (per-sample `input_ids` + full-sequence `loss_mask`, VLM columns) needs a
+  parallel mask stream and format converters on both the write and read sides.
+- Its per-rank sampling design is moot under SkyRL's single-controller dispatch, so we would
+  be adopting the format without the machinery that motivates it.
+
+Worth revisiting if the infrastructure assumption changes (e.g. the fleet standardizes on
+FSx/mountpoint mounts), since it then dominates on resume and simplicity.
+
 ## Decision
 
-**Option B now, Option D as the escape hatch, Option C as design reference, Option A ruled
-out.** The interface seam (anything iterable implementing the `state_dict` protocol) keeps the
-Phase-2 swap from being a redesign, and Phase 1 produces the throughput numbers that decide
-whether Phase 2 ever gets built.
+**Option B now, Option D as the escape hatch, Option C as design reference, Options A and F
+ruled out, Option E adopted as the first rung rather than the destination.** Option E's
+"return the memory-mapped dataset instead of materializing" change is taken unconditionally
+(Phase 0.5 below) — it is the smallest possible diff, benefits current scales, and both
+Option E and Option B are the same library behind the same loader entry point, so streaming
+becomes an additive mode rather than a rewrite. The interface seam (anything iterable
+implementing the `state_dict` protocol) keeps the Phase-2 swap from being a redesign, and
+Phase 1 produces the throughput numbers that decide whether Phase 2 ever gets built.
 
 ## Plan
 
 **Phase 0 — layout contract**: document and enforce the shard/manifest/offline-shuffle
 requirements in the pretokenization pipeline docs; add a manifest writer/validator helper.
+
+**Phase 0.5 — stop materializing (Option E)**: `load_from_pretokenized` returns the
+arrow-backed, memory-mapped `Dataset` with lazy row normalization (`set_transform`) instead of
+`list[dict]`. No trainer changes; cuts controller memory by an order of magnitude at current
+scales and, with #1933's whole-store download, covers datasets up to controller-NVMe size with
+full sampler/resume semantics intact.
 
 **Phase 1 — HF streaming mode** behind `pretokenized_dataset_streaming=true`:
 
