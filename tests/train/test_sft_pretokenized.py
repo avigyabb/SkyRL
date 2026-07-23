@@ -594,9 +594,9 @@ def test_rowgroup_cache_avoids_refetch(tmp_path, monkeypatch):
         pf = original(shard)
 
         class _Wrap:
-            def read_row_group(self, rg, **kw):
+            def read_row_groups(self, rgs, **kw):
                 reads["n"] += 1
-                return pf.read_row_group(rg, **kw)
+                return pf.read_row_groups(rgs, **kw)
 
         return _Wrap()
 
@@ -605,6 +605,8 @@ def test_rowgroup_cache_avoids_refetch(tmp_path, monkeypatch):
     assert reads["n"] == 1
     rg_ds.__getitems__([0, 1, 2, 3])  # served from LRU cache
     assert reads["n"] == 1
+    rg_ds.__getitems__([0, 5, 9])  # two new groups -> one coalesced read
+    assert reads["n"] == 2
 
 
 def test_rowgroup_missing_loss_mask_raises_at_construction(tmp_path):

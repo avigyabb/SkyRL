@@ -442,6 +442,7 @@ class RowGroupPretokenizedDataset:
         # Per-process handles/caches, rebuilt lazily after pickling into
         # spawn-based dataloader workers.
         self._fs = None
+        self._pa_fs = None
         self._parquet_files: dict[int, pq.ParquetFile] = {}
         self._row_group_cache: OrderedDict = OrderedDict()
 
@@ -453,6 +454,7 @@ class RowGroupPretokenizedDataset:
     def __getstate__(self):
         state = self.__dict__.copy()
         state["_fs"] = None
+        state["_pa_fs"] = None
         state["_parquet_files"] = {}
         state["_row_group_cache"] = OrderedDict()
         return state
@@ -469,12 +471,38 @@ class RowGroupPretokenizedDataset:
         rg = int(np.searchsorted(self._rg_starts[shard], local, side="right")) - 1
         return shard, rg, local - int(self._rg_starts[shard][rg])
 
+    def _pyarrow_fs(self):
+        """pyarrow-native filesystem: unlike fsspec file objects, it lets
+        ``read_row_groups(pre_buffer=True)`` coalesce a batch's byte ranges and
+        fetch them concurrently in C++ (no per-row-group GET round-trips)."""
+        if self._pa_fs is None:
+            import pyarrow.fs as pafs
+
+            if "://" in self._path:
+                self._pa_fs, _ = pafs.FileSystem.from_uri(self._path)
+            else:
+                self._pa_fs = pafs.LocalFileSystem()
+        return self._pa_fs
+
     def _parquet_file(self, shard: int) -> pq.ParquetFile:
-        if self._fs is None:
-            self._fs, _ = fsspec.core.url_to_fs(self._path)
         if shard not in self._parquet_files:
-            self._parquet_files[shard] = pq.ParquetFile(self._fs.open(self._files[shard], "rb"))
+            self._parquet_files[shard] = pq.ParquetFile(
+                self._files[shard], filesystem=self._pyarrow_fs(), pre_buffer=True
+            )
         return self._parquet_files[shard]
+
+    def _fetch_row_groups(self, shard: int, row_groups: list[int]) -> None:
+        """Fetch missing row groups of one shard in a single coalesced,
+        concurrent read, and populate the LRU with zero-copy per-group slices."""
+        missing = [rg for rg in row_groups if (shard, rg) not in self._row_group_cache]
+        if not missing:
+            return
+        table = self._parquet_file(shard).read_row_groups(missing, use_threads=True)
+        offset = 0
+        for rg in missing:
+            rows = int(self._rg_starts[shard][rg + 1] - self._rg_starts[shard][rg])
+            self._row_group_cache[(shard, rg)] = table.slice(offset, rows)
+            offset += rows
 
     def _row_group_table(self, shard: int, rg: int):
         key = (shard, rg)
@@ -482,16 +510,31 @@ class RowGroupPretokenizedDataset:
         if cached is not None:
             self._row_group_cache.move_to_end(key)
             return cached
-        table = self._parquet_file(shard).read_row_group(rg)
-        self._row_group_cache[key] = table
-        while len(self._row_group_cache) > self._cache_size:
-            self._row_group_cache.popitem(last=False)
-        return table
+        self._fetch_row_groups(shard, [rg])
+        return self._row_group_cache[key]
 
     def __getitems__(self, indices: list) -> list[dict]:
         located = [self._locate(int(i)) for i in indices]
-        # One fetch per distinct row group, however many sampled rows share it.
+
+        # One coalesced fetch per shard for all missing row groups (ranges are
+        # read concurrently inside pyarrow); shards themselves fetch in
+        # parallel via a small thread pool.
+        by_shard: dict[int, list[int]] = {}
+        for shard, rg, _ in located:
+            by_shard.setdefault(shard, []).append(rg)
+        by_shard = {shard: sorted(set(rgs)) for shard, rgs in by_shard.items()}
+        if len(by_shard) == 1:
+            ((shard, rgs),) = by_shard.items()
+            self._fetch_row_groups(shard, rgs)
+        elif by_shard:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(8, len(by_shard))) as pool:
+                list(pool.map(lambda item: self._fetch_row_groups(item[0], item[1]), by_shard.items()))
+
         tables = {key: self._row_group_table(*key) for key in {(s, rg) for s, rg, _ in located}}
+        while len(self._row_group_cache) > self._cache_size:
+            self._row_group_cache.popitem(last=False)
 
         raw_rows = []
         for shard, rg, row in located:
