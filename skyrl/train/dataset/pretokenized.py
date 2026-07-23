@@ -37,12 +37,17 @@ lifetime of the run.
 """
 
 import os
+from collections import OrderedDict
 from typing import Optional
 
+import fsspec
 import numpy as np
 import pyarrow.compute as pc
+import pyarrow.parquet as pq
 from datasets import Dataset, concatenate_datasets, load_dataset
 from loguru import logger
+
+_CLOUD_SCHEMES = ("s3://", "gs://", "gcs://")
 
 # Keys consumed (and re-emitted in normalized form) by the lazy row transform.
 # ``num_actions`` and ``labels`` are consumed-but-dropped: ``num_actions`` is
@@ -352,6 +357,177 @@ class PretokenizedDataset:
 
 
 # ---------------------------------------------------------------------------
+# Cloud stores: row-group ranged fetch (no download, no materialization)
+# ---------------------------------------------------------------------------
+
+
+def _list_parquet_files(fs, root: str) -> list[str]:
+    """Parquet files under ``root`` (or ``root`` itself), hidden files skipped."""
+    if fs.isdir(root):
+        files = sorted(
+            f for f in fs.find(root) if f.lower().endswith(_PARQUET_EXTS) and not os.path.basename(f).startswith(".")
+        )
+    elif fs.exists(root):
+        files = [root]
+    else:
+        raise FileNotFoundError(f"Pretokenized dataset path does not exist: {root}")
+    if not files:
+        raise ValueError(f"No parquet files found under '{root}' (cloud stores must be parquet).")
+    return files
+
+
+class RowGroupPretokenizedDataset:
+    """Map-style view over cloud-hosted parquet stores via ranged row-group reads.
+
+    Rows are never downloaded ahead of use: a footer-only scan at construction
+    builds the global row index (per-shard and per-row-group row counts), and
+    ``__getitems__`` resolves sampled indices to (shard, row group), fetches
+    exactly those row groups over fsspec, and normalizes lazily. Because the
+    dataset is map-style, samplers, plan generation, ``StatefulDataLoader``
+    prefetching (which supplies the lookahead), and sampler-position resume are
+    all unchanged; fetches overlap the train step through the stock dataloader
+    workers.
+
+    Cloud stores are assumed **pre-filtered**: rows with an empty loss window
+    cannot be dropped here (that would change ``len()``), so they raise at
+    access time with the offending global row index. Store row groups small at
+    write time (e.g. ``row_group_size=128``) so a shuffled batch fetches a few
+    hundred KB per sampled row rather than whole column chunks.
+    """
+
+    def __init__(self, path: str, max_length: Optional[int] = None, row_group_cache_size: int = 32):
+        self._path = path
+        self._max_length = max_length
+        self._cache_size = row_group_cache_size
+        self._transform = _NormalizeTransform(max_length)
+
+        fs, root = fsspec.core.url_to_fs(path)
+        self._files = _list_parquet_files(fs, root)
+
+        shard_rows: list[int] = []
+        rg_starts: list[np.ndarray] = []
+        total_tokens = 0
+        for fpath in self._files:
+            with fs.open(fpath, "rb") as f:
+                md = pq.read_metadata(f)
+            names = {c.lower() for c in md.schema.to_arrow_schema().names}
+            rg_rows = np.zeros(md.num_row_groups + 1, dtype=np.int64)
+            for rg in range(md.num_row_groups):
+                group = md.row_group(rg)
+                rg_rows[rg + 1] = group.num_rows
+                for col in range(group.num_columns):
+                    chunk = group.column(col)
+                    if chunk.path_in_schema.split(".")[0] == "input_ids":
+                        total_tokens += chunk.num_values
+                        break
+            if md.num_rows == 0:
+                raise ValueError(f"Pretokenized shard '{fpath}' contains 0 rows.")
+            if "input_ids" not in names:
+                raise ValueError(f"Pretokenized shard '{fpath}': missing required 'input_ids' column.")
+            if "loss_mask" not in names:
+                raise ValueError(
+                    f"Pretokenized shard '{fpath}': missing required 'loss_mask' column "
+                    f"(full-sequence 0/1 mask, same length as input_ids)."
+                )
+            shard_rows.append(md.num_rows)
+            rg_starts.append(np.cumsum(rg_rows))
+
+        self._shard_starts = np.concatenate([[0], np.cumsum(shard_rows)])
+        self._rg_starts = rg_starts
+        self.total_tokens = int(total_tokens)
+        # Sequence-length percentiles would need a data scan; ``None`` tells
+        # the trainer's stats logging to skip instead of materializing.
+        self.sequence_lengths = None
+
+        # Per-process handles/caches, rebuilt lazily after pickling into
+        # spawn-based dataloader workers.
+        self._fs = None
+        self._parquet_files: dict[int, pq.ParquetFile] = {}
+        self._row_group_cache: OrderedDict = OrderedDict()
+
+        logger.info(
+            f"Indexed cloud pretokenized store '{path}': {len(self._files)} shard(s), "
+            f"{len(self)} rows, {self.total_tokens} tokens (footer-only scan)"
+        )
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_fs"] = None
+        state["_parquet_files"] = {}
+        state["_row_group_cache"] = OrderedDict()
+        return state
+
+    def __len__(self) -> int:
+        return int(self._shard_starts[-1])
+
+    def _locate(self, index: int) -> tuple[int, int, int]:
+        """Global row index -> (shard, row group, row offset within group)."""
+        if not 0 <= index < len(self):
+            raise IndexError(index)
+        shard = int(np.searchsorted(self._shard_starts, index, side="right")) - 1
+        local = index - int(self._shard_starts[shard])
+        rg = int(np.searchsorted(self._rg_starts[shard], local, side="right")) - 1
+        return shard, rg, local - int(self._rg_starts[shard][rg])
+
+    def _parquet_file(self, shard: int) -> pq.ParquetFile:
+        if self._fs is None:
+            self._fs, _ = fsspec.core.url_to_fs(self._path)
+        if shard not in self._parquet_files:
+            self._parquet_files[shard] = pq.ParquetFile(self._fs.open(self._files[shard], "rb"))
+        return self._parquet_files[shard]
+
+    def _row_group_table(self, shard: int, rg: int):
+        key = (shard, rg)
+        cached = self._row_group_cache.get(key)
+        if cached is not None:
+            self._row_group_cache.move_to_end(key)
+            return cached
+        table = self._parquet_file(shard).read_row_group(rg)
+        self._row_group_cache[key] = table
+        while len(self._row_group_cache) > self._cache_size:
+            self._row_group_cache.popitem(last=False)
+        return table
+
+    def __getitems__(self, indices: list) -> list[dict]:
+        located = [self._locate(int(i)) for i in indices]
+        # One fetch per distinct row group, however many sampled rows share it.
+        tables = {key: self._row_group_table(*key) for key in {(s, rg) for s, rg, _ in located}}
+
+        raw_rows = []
+        for shard, rg, row in located:
+            table = tables[(shard, rg)]
+            raw_rows.append({name: table.column(name)[row].as_py() for name in table.column_names})
+
+        batch = {name: [r[name] for r in raw_rows] for name in raw_rows[0]} if raw_rows else {}
+        self._validate_batch(batch, indices)
+        out = self._transform(batch)
+        keys = list(out.keys())
+        return [{k: out[k][j] for k in keys if out[k][j] is not None} for j in range(len(raw_rows))]
+
+    def _validate_batch(self, batch: dict, indices: list) -> None:
+        """Lazy structural checks (cloud mode cannot pre-scan or drop rows)."""
+        for ids, mask, index in zip(batch["input_ids"], batch["loss_mask"], indices):
+            if len(mask) != len(ids):
+                raise ValueError(
+                    f"Row {int(index)}: loss_mask length ({len(mask)}) must equal len(input_ids) "
+                    f"({len(ids)}). Window-form masks are not supported; store the full-sequence mask."
+                )
+            window = mask if self._max_length is None else mask[: self._max_length]
+            if 1 not in window:
+                raise ValueError(
+                    f"Row {int(index)}: empty loss window. Cloud pretokenized stores must be "
+                    f"pre-filtered (rows cannot be dropped at access time)."
+                )
+
+    def __getitem__(self, index) -> dict:
+        return self.__getitems__([index])[0]
+
+    def __iter__(self):
+        for index in range(len(self)):
+            yield self[index]
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -381,8 +557,13 @@ def load_from_pretokenized(
         A :class:`PretokenizedDataset` of normalized examples (``input_ids`` /
         ``attention_mask`` / ``num_actions`` / window ``loss_mask``, plus
         pass-through columns like ``pixel_values`` / ``image_grid_thw``) ready
-        for the SFT collators.
+        for the SFT collators. Cloud URIs (``s3://``, ``gs://``, ``gcs://``)
+        return a :class:`RowGroupPretokenizedDataset` instead: same row dicts,
+        but rows are fetched from the store per row group at access time (no
+        download), and stores must be pre-filtered (no droppable rows).
     """
+    if path.startswith(_CLOUD_SCHEMES):
+        return RowGroupPretokenizedDataset(path, max_length=max_length)
     if not os.path.exists(path):
         raise FileNotFoundError(f"Pretokenized dataset path does not exist: {path}")
 
