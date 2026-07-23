@@ -6,17 +6,26 @@
 
 ## Summary
 
-Add a streaming mode to `SFTTrainer` so pretokenized datasets in cloud storage (S3 required,
-GCS nice-to-have) can be trained on at trillion-token scale without materializing the dataset
-in memory. **Proposal: use HuggingFace `datasets` streaming (`IterableDataset`) as the loader,
-keep torchdata's `StatefulDataLoader` and everything downstream of it unchanged, and require
-an offline-shuffled, sharded, manifest-described data layout from the pretokenization
-pipeline.** A bespoke shard streamer is specified as a fallback behind the same interface, to
-be built only if the HF path fails measured throughput/resume targets.
+Add bounded-memory dataloading to `SFTTrainer` for pretokenized datasets in cloud storage
+(S3 required, GCS nice-to-have), up to trillion-token scale. Two approaches carry the
+proposal, deployed in sequence behind the same library and loader entry point:
+
+1. **Disk-based (map-style)** — download the store to controller NVMe once, then train from
+   a memory-mapped arrow `Dataset` instead of a materialized `list[dict]`. Zero trainer
+   changes; full sampler and resume semantics; covers datasets up to one node's disk.
+2. **HF `datasets` streaming (`IterableDataset`)** — stream shards from S3 through
+   `StatefulDataLoader` workers. Bounded by neither RAM nor disk; requires an
+   offline-shuffled, sharded layout and a small set of documented trainer-semantics
+   changes.
+
+Because both are HuggingFace `datasets` behind `StatefulDataLoader`, streaming is a flag
+flip on top of the disk-based change, not a second implementation. Other options (Ray Data,
+Mosaic, bespoke streamer, Megatron `.bin`/`.idx`) are dispatched concisely at the end; the
+bespoke streamer remains the measured-fallback escape hatch.
 
 ## Requirements
 
-1. Scale to trillion-token datasets with streaming (bounded-memory) dataloading.
+1. Scale to trillion-token datasets with bounded-memory dataloading.
 2. Load pretokenized datasets from cloud storage (S3 required, GCS good-to-have).
 3. Prefetch upcoming data (download, decode, collation) overlapped with the training step.
 4. Efficient resume from a checkpoint: restart at sample N in seconds, without replaying or
@@ -29,8 +38,8 @@ be built only if the HF path fails measured throughput/resume targets.
 - Bit-identical batch boundaries when resuming under a *different* topology
   (`num_workers`, DP size). The bar is: deterministic given a fixed config, and no sample is
   repeated or skipped across a same-config resume.
-- Multi-epoch semantics. At 1T tokens, runs are sub-epoch; epoch-derived step counts
-  (`num_epochs`) do not apply in streaming mode.
+- Multi-epoch semantics in streaming mode. At 1T tokens, runs are sub-epoch; epoch-derived
+  step counts (`num_epochs`) do not apply there. (The disk-based path keeps epochs.)
 
 ## Background: current architecture
 
@@ -53,71 +62,158 @@ token data before Python object overhead), full materialization is off the table
 
 Training, not I/O, is the bottleneck by ~2 orders of magnitude. A healthy multi-node SFT run
 consumes ~0.5–1M tokens/s; at 4 bytes/token that is **2–4 MB/s of sustained ingest**, versus
-&gt;200 MB/s from a single S3 prefetch stream. Consequences:
+&gt;200 MB/s from a single S3 prefetch stream and multi-GB/s from local NVMe. Consequences:
 
 - The existing single-controller load→collate→dispatch model needs no re-architecture.
 - Distributed reading frameworks solve a problem we do not have.
 - The hard problems are **bounded memory**, **shuffle quality without a global shuffle**, and
   **O(1) resume** — not bandwidth.
 
-## Data layout contract (engine-independent)
+## Data layout guidance
 
-Required of the offline pretokenization pipeline regardless of loader choice:
+The offline pretokenization pipeline should produce:
 
 1. **Fixed-size shards** (~128–512 MB parquet, ~100k–500k rows each) — never one giant file.
-2. **Offline shuffle at write time** (global, or at minimum shard-internal). This is the load-
-   bearing decision: with rows pre-shuffled, the online loader only shuffles *shard order*
-   (seeded, per pass) and reads sequentially within a shard. That eliminates online shuffle
-   buffers — the single largest source of complexity and checkpoint-state pain in streaming
-   loaders.
-3. **A manifest** alongside the shards (`shard → row_count`, schema, totals). Avoids
-   list-then-open-footers over tens of thousands of objects at startup, and gives O(1)
-   "global sample N → (shard i, offset j)" seeks.
+2. **Offline shuffle at write time** (global, or at minimum shard-internal). Load-bearing
+   for the **streaming** path only: with rows pre-shuffled, the online loader shuffles just
+   *shard order* (seeded, per pass) and reads sequentially within a shard, eliminating online
+   shuffle buffers — the single largest source of complexity and checkpoint-state pain in
+   streaming loaders. The disk-based path shuffles via its sampler and does not depend on it.
 
-This is the substance of what Mosaic's MDS format provides, expressed as parquet + one JSON
-file.
+## Approach 1 — Disk-based: NVMe download + memory-mapped map-style dataset
 
-## Options considered
+"Doesn't fit in memory" does not imply "must stream": HF's *non-streaming* `Dataset` is
+arrow data memory-mapped from disk, not loaded into RAM. Today's ingestion path already
+builds that arrow-backed `Dataset` — and then throws the memory mapping away by
+materializing `list[dict]`. The materialization, not the format, is what doesn't scale.
 
-### Option A — Ray Data
+### Architecture
 
-*Streaming execution over S3, distributed decode, shuffle windows; we are already a Ray shop.*
+```
+S3 store ──(one-time, shard-parallel download to controller NVMe)──▶ local parquet shards
+  → arrow conversion (per-shard, cached)      ← load_dataset(..., streaming=False)
+  → Dataset (memory-mapped, zero rows in RAM)
+  → set_transform(normalize_row)              ← lazy per-row decode, reusing #1927 validation
+  → sampler (random / DataMixingSampler / custom)   ← unchanged
+  → StatefulDataLoader(num_workers=N, prefetch_factor=k)
+  → collator (padding / FFD packing) → WorkerDispatch   ← unchanged
+```
 
-Rejected:
+Only the **controller** needs the local copy — workers receive dispatched batches — so the
+disk requirement is one node's NVMe. Single-digit TB covers a large fraction of real
+workloads before true streaming is needed.
 
-- **No sample-exact checkpoint/resume of a streaming iterator.** Requirement 4 would have to
-  be rebuilt on top — which is the hard part of rolling our own, while also inheriting Ray
-  Data's execution model.
-- Designed to parallelize per-row *compute* (tokenization, decode). We moved that offline; the
-  remaining work is I/O at 2–4 MB/s, which one process trivially sustains.
-- Competes for cluster resources with training actors; incompatible with the
-  `StatefulDataLoader`-based checkpoint format; iterator semantics don't compose with the
-  existing trainer loop.
+### Prefetching and the I/O path
 
-### Option B — HuggingFace `datasets` streaming (`IterableDataset`) ✅ proposed
+There is no application-level prefetcher to build; "prefetch" is three existing layers
+stacked:
 
-Correcting the scoping note ("don't think it supports cloud storage"): it does.
+1. **Bulk download (one-time, before training)** — shard-parallel ranged GETs from #1933's
+   whole-store path. With enough parallel streams S3 saturates the instance NIC, so a
+   single-digit-TB store lands in tens of minutes to low hours depending on NIC class. A
+   random sampler needs the whole dataset resident before step 1, so this phase is not
+   overlapped with training; it *is* amortizable — the local copy survives across runs on the
+   same node, so only fresh nodes pay it. It can also be taken **offline entirely**: run the
+   download (and optionally the arrow conversion) as a pre-step outside the training job —
+   e.g. at the end of the pretokenization pipeline, in node provisioning, or as a separate
+   job that warms the NVMe before the trainer launches — so training starts against an
+   already-populated local copy and pays zero download time.
+2. **Dataloader worker prefetch** — `StatefulDataLoader` keeps `num_workers ×
+   prefetch_factor` batches in flight. Workers index the mmap'd dataset, take the page-fault
+   and decode cost in their own processes, and hand ready batches to the main process. This
+   is the layer that overlaps I/O + decode + collation with the training step (Requirement 3),
+   exactly as it does today.
+3. **mmap + OS page cache** — a random access pulls in the pages holding that record batch;
+   the hot set stays cached. Random sampling defeats sequential readahead, but NVMe random
+   reads (~100 µs, multi-GB/s aggregate) leave 3+ orders of magnitude of headroom over the
+   2–4 MB/s the trainer consumes.
+
+**Disk sizing caveat**: `load_dataset` keeps the downloaded parquet *and* writes an
+uncompressed arrow cache, so peak footprint is roughly parquet + arrow (~1.5–2.5× token
+bytes). Mitigation if it matters: convert shard-at-a-time and delete parquet as arrow lands,
+or point the arrow cache and download dir at the same NVMe volume sized for both.
+
+### What it preserves
+
+- **Zero trainer changes.** Samplers (`random`, `DataMixingSampler`, custom/curriculum),
+  `len()`/epoch derivation, tail-batch padding, `_log_dataset_stats` — all keep working
+  verbatim, because the dataset is still map-style.
+- **Exact, trivial resume**: sampler position via the existing `data.pt` /
+  `StatefulDataLoader.state_dict()` flow, unchanged.
+- **True global shuffle** every epoch, not shard-order approximation.
+
+### Limits (why it is the first rung, not the destination)
+
+- Dataset size capped by a single node's disk — ~4 TB of tokens (≈1T) is the practical
+  ceiling, and the arrow-cache multiplier eats into it.
+- The download is re-paid on every fresh controller node — painful under preemption and
+  autoscaling.
+- Pins the controller to fat-disk node types.
+
+### Scaling past instance NVMe: network block storage (EBS)
+
+The disk ceiling and the re-download cost can both be pushed back by swapping instance NVMe
+for network-attached block storage (EBS on AWS; equivalents elsewhere):
+
+- **Capacity**: gp3 volumes go to 16 TiB each and can be striped (RAID-0) for more, so the
+  "one node's disk" ceiling becomes a provisioning knob rather than a hardware limit.
+- **Persistence fixes the operational weakness**: an EBS volume outlives the instance. On
+  preemption or node replacement, reattach the volume to the new controller instead of
+  re-downloading — the download becomes truly once per *dataset*, not per node, and composes
+  with the offline pre-warm above (populate a volume once, snapshot it, attach clones to any
+  future controller).
+- **Performance cost is real but survivable**: EBS random reads are ~0.5–1 ms versus
+  ~100 µs on NVMe, and throughput is capped per volume (gp3: 1,000 MB/s, 16k IOPS baseline;
+  io2 goes higher for more money). That is a ~10× latency and ~10× throughput haircut
+  against local NVMe — but the trainer consumes 2–4 MB/s, so even EBS leaves 2+ orders of
+  magnitude of headroom. The latency hit lands on dataloader workers during page faults,
+  which is exactly the cost `num_workers × prefetch_factor` of runway exists to hide; if
+  stalls appear, more workers is the first knob.
+- **One sharp edge**: volumes restored from a snapshot are lazily hydrated — cold blocks are
+  fetched from S3 on first touch, so the first pass over a fresh clone can crawl. Either
+  pre-warm (fast snapshot restore, or a sequential read of the dataset files) or accept a
+  slow first epoch.
+
+Net: EBS trades steady-state I/O margin we aren't using for capacity and persistence we
+want. It stretches Approach 1 meaningfully — but past ~10s of TiB, volume cost and
+management overhead grow while streaming's cost stays flat, which is where the decision rule
+below tips.
+
+## Approach 2 — HF `datasets` streaming (`IterableDataset`)
+
+Correcting an earlier scoping note ("don't think it supports cloud storage"): it does.
 `load_dataset("parquet", data_files=..., streaming=True, storage_options=...)` is
 fsspec-based, so `s3://` works via `s3fs` (already a repo dependency) and `gs://` via `gcsfs`.
 
-Why it fits:
+### Architecture
+
+```
+shard paths/globs → load_dataset(..., streaming=True, storage_options=...)   ← fsspec/s3fs
+  → .shuffle(seed, buffer_size)            ← shard-order shuffle (+ small buffer)
+  → .map(normalize_row)                    ← reusing #1927 row validation
+  → [interleave_datasets(probabilities=…)] ← multi-store mixing
+  → StatefulDataLoader(num_workers=N, prefetch_factor=k)
+  → collator → WorkerDispatch              ← unchanged
+```
+
+### Why it fits
 
 - **Composes with what we have.** An `IterableDataset` is a valid dataset for
   `StatefulDataLoader`; collators, FFD packing, dispatch, and the `data.pt` checkpoint flow
-  are unchanged. This is a dataset swap, not a dataloader replacement.
+  are unchanged. This is a dataset swap, not a dataloader replacement — and it is the *same*
+  swap as Approach 1 with `streaming=True`.
+- **Prefetch overlap for free.** Shards are split across dataloader workers; each worker
+  streams its shards sequentially (buffered fsspec reads, parquet row-group at a time), so
+  download + decode + collate run in worker processes while the GPU trains, with
+  `num_workers × prefetch_factor` batches of runway. Requirement 3 without new machinery.
 - **Resume is already wired.** `IterableDataset` implements `state_dict()`/`load_state_dict()`
   (datasets ≥ 2.18), and `StatefulDataLoader` checkpoints/restores per-worker dataset state
   through its existing protocol. Resume lands at (shard, offset) and skips forward within one
   shard — cheap when shards are modest.
-- **Prefetch overlap for free.** Shards split across dataloader workers
-  (`num_workers`, `prefetch_factor`); download + decode + collate run in worker processes
-  while the GPU trains. Requirement 3 without new machinery.
-- **Shuffling**: `.shuffle(seed, buffer_size)` shuffles shard order + a small buffer; with the
-  offline-shuffled layout the buffer is belt-and-suspenders rather than load-bearing.
 - **Multi-store mixing**: `interleave_datasets(streams, probabilities=weights)` replaces
   `DataMixingSampler` (which is map-style and cannot survive streaming).
 
-Known limitations, accepted:
+### Known limitations, accepted
 
 - Python-level decode throughput is unimpressive — irrelevant at 2–4 MB/s required ingest.
 - Resume-by-skip within a shard costs one partial shard read.
@@ -125,161 +221,125 @@ Known limitations, accepted:
 - Exact determinism across restarts requires the same `num_workers` (shard→worker assignment
   is implicit state) — consistent with the stated non-requirement.
 
-### Option C — Mosaic `StreamingDataset`
+### Trainer integration changes (streaming mode only)
 
-Correcting the scoping note: it *does* support S3/GCS natively and is actively maintained
-(Databricks). It is the best-engineered tool in this space: manifest-driven deterministic
-sample order, instant mid-epoch resume from a cursor, bounded local shard cache with
-eviction, tuned shuffle algorithms.
-
-Rejected as a dependency (per team preference), but **its design is the reference** for
-Option D: index/manifest, shard-order shuffle, resume as a cursor rather than a replay,
-bounded shard cache. Also note its model is per-rank dataloaders; under SkyRL's controller
-dispatch we would run it degenerate (world=1), forgoing its main distributed machinery — a
-sign it is more tool than we need.
-
-### Option D — Roll our own (fallback, specified but not built)
-
-With the data layout contract in place, a bespoke streamer is small (~400–600 lines):
-
-```
-manifest → seeded shard permutation per pass
-        → background prefetcher: next K shards into a bounded queue (K ≈ 2–4)
-        → sequential row iterator → existing collators
-resume state: (pass, shard_perm_seed, shard_index, row_offset)   # four integers, O(1) seek
-```
-
-It exists in this RFC as a *designed fallback behind the same interface* (iterable +
-`state_dict` protocol feeding `StatefulDataLoader`), to be built only if Option B misses
-measured targets — e.g. S3 tail-latency stalls HF's worker prefetch cannot hide, or
-resume-by-skip proving too slow. Framing the prefetch budget in **shards** (hundreds of MB in
-flight), not batches, is deliberate: a slow GET must be hidden behind a shard's worth of
-runway, not one batch's.
-
-The reason DIY is tractable *here* is the offline shuffle: without it, we would be rebuilding
-shuffle buffers and their checkpoint semantics, which is where homegrown loaders historically
-go wrong.
-
-### Option E — Download to controller NVMe, keep map-style (the null option)
-
-Streaming must justify itself against this baseline, because "doesn't fit in memory" does not
-imply "must stream": HF's *non-streaming* `Dataset` is arrow memory-mapped from disk, not
-loaded into RAM. Today's ingestion path already loads every store as an arrow-backed
-`Dataset` and then discards the memory mapping by materializing `list[dict]` — the
-materialization, not the format, is what doesn't scale. Returning the mmap'd `Dataset` with
-lazy row normalization (`set_transform`) instead of a list, combined with the whole-store
-download from #1933, gives:
-
-- memory bounded by page cache instead of dataset size;
-- **zero trainer changes** — the dataset stays map-style, so samplers (`random`,
-  `DataMixingSampler`, custom/curriculum), `len()`/epoch derivation, tail-batch padding, and
-  the `data.pt` resume flow all keep working verbatim;
-- trivial, exact resume (sampler position, as today).
-
-In SkyRL only the **controller** needs the local copy (workers receive dispatched batches), so
-the disk requirement is one node's NVMe — single-digit TB on modern instances, which covers a
-large fraction of real workloads before true streaming is needed.
-
-Rejected as the *terminal* answer for the 1T target, on operational grounds rather than
-architectural ones:
-
-- a multi-hour one-time download on every fresh controller node (painful under preemption and
-  autoscaling; re-paid on every node replacement);
-- dataset size capped by a single node's disk (~4 TB of tokens ≈ the practical ceiling);
-- pins the controller to fat-disk node types.
-
-**But it is the right first rung**: the "stop materializing" change is small, benefits every
-scale immediately, and is prerequisite-shaped for Option B (same library, same loader entry
-point — streaming becomes a flag flip on top).
-
-### Option F — Megatron-LM indexed dataset (`.bin`/`.idx`) over an S3-backed filesystem
-
-The classic trillion-token pretraining format, and a fair "why not the format Megatron already
-uses?" question given SkyRL's Megatron backend: one flat memory-mapped token stream plus a
-document index. Sampling is index arithmetic, shuffling is a precomputed permutation, and
-resume is **a step counter** — the strongest resume story of any option, with zero loader code.
-
-Rejected for this proposal:
-
-- **It does not stream from S3 by itself.** It requires either a full local copy (Option E's
-  operational costs, with a less flexible format) or an infrastructure dependency that makes
-  S3 look like a filesystem — mountpoint-s3, or FSx for Lustre with S3 backing. That moves the
-  hard part out of the trainer and into cluster provisioning, which this RFC cannot assume.
-- **Schema mismatch.** Its native form is a raw token stream for pretraining-style packing;
-  the #1927 contract (per-sample `input_ids` + full-sequence `loss_mask`, VLM columns) needs a
-  parallel mask stream and format converters on both the write and read sides.
-- Its per-rank sampling design is moot under SkyRL's single-controller dispatch, so we would
-  be adopting the format without the machinery that motivates it.
-
-Worth revisiting if the infrastructure assumption changes (e.g. the fleet standardizes on
-FSx/mountpoint mounts), since it then dominates on resume and simplicity.
-
-## Decision
-
-**Option B now, Option D as the escape hatch, Option C as design reference, Options A and F
-ruled out, Option E adopted as the first rung rather than the destination.** Option E's
-"return the memory-mapped dataset instead of materializing" change is taken unconditionally
-(Phase 0.5 below) — it is the smallest possible diff, benefits current scales, and both
-Option E and Option B are the same library behind the same loader entry point, so streaming
-becomes an additive mode rather than a rewrite. The interface seam (anything iterable
-implementing the `state_dict` protocol) keeps the Phase-2 swap from being a redesign, and
-Phase 1 produces the throughput numbers that decide whether Phase 2 ever gets built.
-
-## Plan
-
-**Phase 0 — layout contract**: document and enforce the shard/manifest/offline-shuffle
-requirements in the pretokenization pipeline docs; add a manifest writer/validator helper.
-
-**Phase 0.5 — stop materializing (Option E)**: `load_from_pretokenized` returns the
-arrow-backed, memory-mapped `Dataset` with lazy row normalization (`set_transform`) instead of
-`list[dict]`. No trainer changes; cuts controller memory by an order of magnitude at current
-scales and, with #1933's whole-store download, covers datasets up to controller-NVMe size with
-full sampler/resume semantics intact.
-
-**Phase 1 — HF streaming mode** behind `pretokenized_dataset_streaming=true`:
-
-- `load_dataset("parquet", data_files=<manifest globs>, streaming=True, storage_options=...)`
-  → `.map(normalize_row)` (reusing #1927's row validation) → `StatefulDataLoader` with
-  `num_workers=N`, `prefetch_factor=k`.
-- Benchmark on a real S3 store: sustained tokens/s vs training consumption, stall counts,
-  resume latency at various run depths.
-
-**Phase 2 (conditional) — bespoke shard streamer** per Option D, same interface, informed by
-Phase-1 measurements.
-
-## Trainer integration changes (same for Phase 1 and 2)
-
-| Today | Streaming mode |
+| Today (and Approach 1) | Streaming mode |
 |---|---|
-| `load_dataset()` returns a materialized list | returns an iterable; nothing materialized |
+| dataset is map-style, materialized or mmap'd | an iterable; nothing materialized |
 | `steps_per_epoch = len(dataloader)`; `num_epochs` supported | no `len()`; **`num_steps` required** |
-| `_log_dataset_stats` scans all rows | reads manifest totals / samples a prefix |
+| `_log_dataset_stats` scans all rows | samples a prefix |
 | `sampler="random"` shuffle over indices | `.shuffle(seed, buffer_size)` on the stream |
 | `DataMixingSampler` for multi-store weighting | `interleave_datasets(probabilities=...)` |
-| `sampler="custom"` (curriculum etc.) | unsupported in streaming mode (documented) |
+| `sampler="custom"` (curriculum etc.) | unsupported (documented; see note below) |
 | tail-batch padding (`drop_last=False`) | moot: `num_steps`-bounded, never hits a tail |
 | eval sets materialized | unchanged (eval is small) |
 | `data.pt` = dataloader `state_dict` | unchanged mechanism; state is now shard cursors |
 
 **Custom-sampler note.** The existing sampler API produces arbitrary integer indices into a
 map-style dataset and therefore cannot drive an `IterableDataset`. A future streaming planner
-would instead need to produce an ordered plan of shard IDs (optionally contiguous row ranges)
-from the manifest; dataloader workers would partition and stream that plan, with FFD packing
+would instead produce an ordered plan of shard IDs (optionally contiguous row ranges) from
+a discovered shard list, partitioned and streamed by dataloader workers, with FFD packing
 remaining online. Arbitrary sparse sample-level plans are intentionally out of scope: they
-would require a per-row sidecar index and could cause substantial read amplification by
-opening many shards to consume only a few rows. With a shard/range plan, excess reads are
-bounded to Parquet row-group granularity plus batches already queued by dataloader prefetch
-when the `num_steps` limit is reached.
+would need a per-row sidecar index and cause read amplification by opening many shards for a
+few rows.
+
+## Tradeoffs: disk-based vs streaming
+
+| | Approach 1 — disk-based | Approach 2 — HF streaming |
+|---|---|---|
+| Scale ceiling | one node's NVMe (~4 TB tokens); stretchable to 10s of TiB with EBS at a latency/cost premium | unbounded |
+| Time-to-first-batch | tens of minutes–hours (download + convert), amortized per node | seconds–minutes |
+| Trainer changes | none | `num_steps`, sampler/mixing/stats changes per table above |
+| Sampler support | full: random, `DataMixingSampler`, custom/curriculum | shard-order shuffle + `interleave_datasets`; custom unsupported |
+| Shuffle quality | true global shuffle per epoch | offline shuffle + shard-order shuffle (approximation) |
+| Resume | exact sampler position, O(1), unchanged mechanism | (shard, offset) cursors + partial-shard skip |
+| Epochs / `len()` | preserved | gone; `num_steps` only |
+| Steady-state I/O | NVMe random reads via mmap + page cache | sequential S3 reads in dataloader workers |
+| Sensitivity to layout guidance | needs shards; offline shuffle optional | offline shuffle is load-bearing |
+| Preemption / autoscaling cost | re-download on every fresh controller node | none beyond a partial shard |
+| Node requirements | fat-disk controller | any controller |
+
+### Decision checklist
+
+The table compresses to five operational questions. Answer them for a given workload and the
+choice usually falls out:
+
+1. **Is the controller node stable/long-lived, or preemptible/recycled? Is a shared
+   filesystem available?** Disk-based's one real weakness is the per-node download, so node
+   churn is what decides its fate. Stable controllers amortize the download away;
+   preemptible/recycled controllers re-pay it on every replacement, which compounds into
+   streaming territory. Two middle grounds neutralize churn: a persistent EBS volume that
+   reattaches to the replacement node (see the EBS section above), or a shared filesystem
+   (FSx/NFS) already holding the store — with either, disk-based keeps all its semantic
+   advantages with no re-download cost, and the case for streaming weakens considerably.
+2. **Is the dataset ~1T flat, or growing — and will controller storage be provisioned ahead
+   of that growth?** Budget concretely: 1T tokens ≈ 4 TB raw; with parquet + arrow double
+   residency and working cushion, plan **~5–8 TB** of controller disk. If the dataset is
+   flat, that is a one-time provisioning decision and disk-based is comfortable. If it grows,
+   disk-based means perpetually re-provisioning (bigger NVMe node types, or growing/striping
+   EBS) and re-downloading on each refresh of the copy — a treadmill. Streaming's footprint
+   is flat regardless of dataset size, so a growing dataset is the strongest single argument
+   for it.
+3. **Do you need to select individual rows on the fly** — exact per-batch source ratios,
+   dynamically picking specific examples, curriculum over samples — **or is steering at
+   ~100k-row shard granularity (with any fixed ordering baked in offline) enough?** Row-level
+   dynamic selection requires random access into a map-style dataset: that is disk-based
+   only. Streaming's `interleave_datasets` holds mixing ratios in expectation, not exactly
+   per batch, and custom samplers don't survive streaming at all (a shard/range planner is
+   the documented future direction, not row-level). If shard-granular steering with
+   offline-baked order suffices, both approaches qualify and this question drops out.
+4. **How often is the pretokenized store refreshed?** Every refresh invalidates disk-based's
+   local copies — each controller re-downloads and re-converts before the next run. A store
+   refreshed quarterly makes that negligible; one refreshed weekly (rolling data updates,
+   iterated tokenization) makes the download cost recurring rather than one-time, and
+   streaming — which always reads the current store directly with zero staging — starts to
+   dominate even below the disk ceiling.
+5. **How many concurrent runs consume the same store?** Streaming scales out for free: N
+   runs are N independent S3 readers, no copies anywhere. Disk-based needs the store local to
+   each run's controller — either one copy per controller node (cost and download time ×N),
+   controllers colocated on shared-disk nodes, a shared filesystem mount, or EBS snapshot
+   clones fanned out to each controller. One or two long-lived runs favor disk-based; a fleet
+   of short experimental runs over the same 1T store favors streaming.
+
+**Net rule of thumb**: disk-based wins when the answers are *stable nodes (or shared
+disk/EBS), flat dataset that fits ~5–8 TB, row-level control needed, infrequent refresh, few
+concurrent runs*. Streaming wins as answers flip — and the more of them flip, the clearer it
+gets. Since both are the same library behind the same entry point, the cutover is a config
+flag, not a migration, so the choice can be made per-workload rather than once.
+
+## Other options considered (rejected — kept brief)
+
+- **Ray Data** — no sample-exact checkpoint/resume of a streaming iterator (Requirement 4
+  would have to be rebuilt on top); built to parallelize per-row compute we moved offline;
+  competes with training actors for cluster resources.
+- **Mosaic `StreamingDataset`** — best-engineered tool in this space (S3/GCS native,
+  manifest-driven deterministic order, instant mid-epoch resume, bounded shard cache), but
+  rejected as a dependency per team preference. Its design is the reference for the bespoke
+  fallback. Its per-rank model would run degenerate (world=1) under SkyRL's controller
+  dispatch anyway.
+- **Bespoke shard streamer (fallback, specified not built)** — with the layout guidance in
+  place it is small (~400–600 lines): discovered shard list → seeded shard permutation per
+  pass → background prefetcher of the next K shards into a bounded queue → sequential row
+  iterator;
+  resume state is four integers `(pass, shard_perm_seed, shard_index, row_offset)`. Same
+  interface as Approach 2 (iterable + `state_dict` protocol feeding `StatefulDataLoader`).
+  Built only if HF streaming misses measured targets — e.g. S3 tail-latency stalls worker
+  prefetch cannot hide. Tractable precisely because the offline shuffle removes shuffle
+  buffers, where homegrown loaders historically go wrong.
+- **Megatron indexed dataset (`.bin`/`.idx`)** — strongest resume story (a step counter) and
+  zero loader code, but it does not stream from S3 by itself: it needs a full local copy
+  (Approach 1's costs with a less flexible format) or filesystem infrastructure
+  (mountpoint-s3, FSx for Lustre) this RFC cannot assume, plus format converters for the
+  #1927 per-sample `input_ids`/`loss_mask` schema. Revisit if the fleet standardizes on such
+  mounts.
 
 ## Open questions
 
-1. Manifest format: adopt/parallel the pretokenized store schema from #1927, or a sidecar
-   `index.json` per store? (Leaning sidecar `index.json`, written by the pretokenization job.)
-2. Should streaming mode *require* the manifest, or degrade to listing + estimating? (Leaning
-   require: at 30k+ shards, listing-based startup and stats are exactly what we want to ban.)
-3. `interleave_datasets` checkpointability for multi-store mixing needs verification at
+1. `interleave_datasets` checkpointability for multi-store mixing needs verification at
    current `datasets` pin (single-store resume is confirmed supported).
-4. Loss-mask storage: `uint8` vs bit-packed in shards — 8× size difference on one column;
-   decide in the layout contract.
-5. Interaction with `use_sequence_packing` (FFD packs per global batch): unchanged
+2. Loss-mask storage: `uint8` vs bit-packed in shards — 8× size difference on one column;
+   decide in the layout guidance.
+3. Interaction with `use_sequence_packing` (FFD packs per global batch): unchanged
    mechanically, but packing efficiency under streaming order should be spot-checked.
+4. Disk-based path: avoid parquet + arrow double residency on NVMe (per-shard convert-then-
+   delete vs sizing the volume for both)?
