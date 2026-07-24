@@ -404,13 +404,11 @@ class RowGroupPretokenizedDataset:
         fs, root = fsspec.core.url_to_fs(path)
         self._files = _list_parquet_files(fs, root)
 
-        shard_rows: list[int] = []
-        rg_starts: list[np.ndarray] = []
-        total_tokens = 0
-        for fpath in self._files:
+        def scan_footer(fpath: str) -> tuple[int, np.ndarray, int]:
             with fs.open(fpath, "rb") as f:
                 md = pq.read_metadata(f)
             names = {c.lower() for c in md.schema.to_arrow_schema().names}
+            tokens = 0
             rg_rows = np.zeros(md.num_row_groups + 1, dtype=np.int64)
             for rg in range(md.num_row_groups):
                 group = md.row_group(rg)
@@ -418,7 +416,7 @@ class RowGroupPretokenizedDataset:
                 for col in range(group.num_columns):
                     chunk = group.column(col)
                     if chunk.path_in_schema.split(".")[0] == "input_ids":
-                        total_tokens += chunk.num_values
+                        tokens += chunk.num_values
                         break
             if md.num_rows == 0:
                 raise ValueError(f"Pretokenized shard '{fpath}' contains 0 rows.")
@@ -429,8 +427,22 @@ class RowGroupPretokenizedDataset:
                     f"Pretokenized shard '{fpath}': missing required 'loss_mask' column "
                     f"(full-sequence 0/1 mask, same length as input_ids)."
                 )
-            shard_rows.append(md.num_rows)
-            rg_starts.append(np.cumsum(rg_rows))
+            return md.num_rows, np.cumsum(rg_rows), tokens
+
+        # Footer scans are latency-bound metadata reads; scan shards in
+        # parallel (order preserved by executor map) so startup stays in
+        # minutes at 10k+ shard stores.
+        if len(self._files) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(32, len(self._files))) as pool:
+                scanned = list(pool.map(scan_footer, self._files))
+        else:
+            scanned = [scan_footer(self._files[0])]
+
+        shard_rows = [rows for rows, _, _ in scanned]
+        rg_starts = [starts for _, starts, _ in scanned]
+        total_tokens = sum(tokens for _, _, tokens in scanned)
 
         self._shard_starts = np.concatenate([[0], np.cumsum(shard_rows)])
         self._rg_starts = rg_starts
@@ -440,10 +452,14 @@ class RowGroupPretokenizedDataset:
         self.sequence_lengths = None
 
         # Per-process handles/caches, rebuilt lazily after pickling into
-        # spawn-based dataloader workers.
+        # spawn-based dataloader workers. The handle cache is bounded: each
+        # ParquetFile holds its shard's parsed footer (~hundreds of KB at
+        # small row-group sizes), which is unbounded memory over a long run
+        # against a many-shard store.
         self._fs = None
         self._pa_fs = None
-        self._parquet_files: dict[int, pq.ParquetFile] = {}
+        self._handle_cache_size = 1024
+        self._parquet_files: OrderedDict = OrderedDict()
         self._row_group_cache: OrderedDict = OrderedDict()
 
         logger.info(
@@ -455,7 +471,7 @@ class RowGroupPretokenizedDataset:
         state = self.__dict__.copy()
         state["_fs"] = None
         state["_pa_fs"] = None
-        state["_parquet_files"] = {}
+        state["_parquet_files"] = OrderedDict()
         state["_row_group_cache"] = OrderedDict()
         return state
 
@@ -485,11 +501,15 @@ class RowGroupPretokenizedDataset:
         return self._pa_fs
 
     def _parquet_file(self, shard: int) -> pq.ParquetFile:
-        if shard not in self._parquet_files:
-            self._parquet_files[shard] = pq.ParquetFile(
-                self._files[shard], filesystem=self._pyarrow_fs(), pre_buffer=True
-            )
-        return self._parquet_files[shard]
+        cached = self._parquet_files.get(shard)
+        if cached is not None:
+            self._parquet_files.move_to_end(shard)
+            return cached
+        handle = pq.ParquetFile(self._files[shard], filesystem=self._pyarrow_fs(), pre_buffer=True)
+        self._parquet_files[shard] = handle
+        while len(self._parquet_files) > self._handle_cache_size:
+            self._parquet_files.popitem(last=False)
+        return handle
 
     def _fetch_row_groups(self, shard: int, row_groups: list[int]) -> None:
         """Fetch missing row groups of one shard in a single coalesced,
