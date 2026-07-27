@@ -132,19 +132,23 @@ default 2) provides tail-latency runway and should be exposed in `SFTConfig`.
 
 Real end-to-end training: FSDP, Qwen2.5-0.5B on 1×L4, batch 64×256 tokens (~3.6 s
 compute/step), `prefetch_factor=2` where workers are enabled. All rows use the same 100k-row
-store (local disk for the first two rows, S3 for the rest), except the final row, which runs
-the proposed design against a **1-billion-row store** (10,000 shards, 7.8M row groups,
-~1.2 TB on S3) fabricated by replicating the benchmark shard server-side — the access
-pattern, index size, shard scatter, and shuffle permutation of a ~1T-token dataset.
+store (local disk for the first two rows, S3 for the rest), except the 1B-row soak row,
+which runs the proposed design against a **1-billion-row store** (10,000 shards, 7.8M row
+groups, ~1.2 TB on S3) fabricated by replicating the benchmark shard server-side — the
+access pattern, index size, shard scatter, and shuffle permutation of a ~1T-token dataset.
+The fetch-breakdown columns come from instrumented byte/time counters on the loader, with
+decode isolated by replaying identical access patterns against a page-cache-hot local copy
+of the same shard.
 
-| Configuration | Startup (data prep) | Exposed `timing/data_loading` | Step mean | Controller data memory |
-|---|---|---|---|---|
-| Previous loader: fully materialized `list[dict]`, local, workers=0 | 19.6 s | 2.5 ms | 3.57 s | O(dataset): 2.2 GB here, ×(workers+1) with workers; ≈4 TB+ at 1T |
-| Local mmap dataset, workers=2 | 0.3 s | 0.8 ms | 3.63 s | O(page cache), reclaimable |
-| Naive per-group S3 fetches (fsspec), workers=0 | ~0 s | 17,113 ms | 20.7 s | O(LRU) ≈ tens of MB |
-| Naive per-group S3 fetches (fsspec), workers=2 | ~0 s | 5,107 ms | 8.8 s | O(LRU) |
-| **Proposed: coalesced concurrent S3 fetch, workers=2** | **~0 s** | **0.8 ms** | **3.60 s** | **O(LRU)** |
-| **Proposed, 1B-row / 10k-shard store, workers=2 (60-step soak)** | **223 s footer scan**[^3] | **0.8 ms mean, 1.2 ms max** | **3.65 s** | **O(LRU) + 65 MB index** |
+| Configuration | Startup (data prep) | Exposed `timing/data_loading` | Step mean | Controller data memory | Avg coalesced fetch (per shard touched) | Fetch breakdown | S3 downloaded / epoch[^4] |
+|---|---|---|---|---|---|---|---|
+| Previous loader: fully materialized `list[dict]`, local, workers=0 | 19.6 s | 2.5 ms | 3.57 s | O(dataset): 2.2 GB here, ×(workers+1) with workers; ≈4 TB+ at 1T | n/a (local) | n/a | one-time full copy (1×) |
+| Local mmap dataset, workers=2 | 0.3 s | 0.8 ms | 3.63 s | O(page cache), reclaimable | n/a (local) | n/a | one-time full copy (1×) |
+| Naive per-group S3 fetches (fsspec), workers=0 | ~0 s | 17,113 ms | 20.7 s | O(LRU) ≈ tens of MB | ~275 ms/group, serial | latency-bound serial GETs | 118× (measured): 14.6 GB here, ~570 TB at 1T |
+| Naive per-group S3 fetches (fsspec), workers=2 | ~0 s | 5,107 ms | 8.8 s | O(LRU) | ~275 ms/group, serial per worker | latency-bound serial GETs | 118×: 14.6 GB here, ~570 TB at 1T |
+| **Proposed: coalesced concurrent S3 fetch, workers=2** | **~0 s** | **0.8 ms** | **3.60 s** | **O(LRU)** | **1,517 ms: ~60 scattered ranges, 9.4 MB** | **wire-latency-bound (~6 MB/s effective); decode 16 ms ≈ 1% (~590 MB/s)** | **118×: 14.6 GB here, ~570 TB at 1T** |
+| **Proposed, 1B-row / 10k-shard store, workers=2 (60-step soak)** | **223 s footer scan**[^3] | **0.8 ms mean, 1.2 ms max** | **3.65 s** | **O(LRU) + 65 MB index** | same pattern as above | same as above | 128×: ~570 TB at 1T |
+| **Proposed + `ShardBlockShuffleSampler` (storage-aligned shuffle), workers=2** | **~0 s** | **0.78 ms** (747 ms on step 1: first window + plan) | **3.61 s** | **O(LRU)** | **364 ms: 16 contiguous groups, 2.5 MB** | **wire-latency-bound; decode 4 ms (~1%)** | **1.00× (measured exactly): 123 MB here, ~4.8 TB at 1T** |
 
 The step mean is invariant (~3.6 s) across every configuration whose data path is off the
 critical path — the previous materialized loader achieves it too, but only by paying startup
@@ -160,10 +164,24 @@ loss curve to the third decimal.
 
 ## Cost analysis at 1T tokens
 
-1. **Read amplification:** each sampled row fetches its full ~128-row group ⇒ ~128× useful
-   bytes; a full 1T-token run reads ~500 TB from S3 against 4 TB consumed. Same-region
-   bandwidth is free; GET request charges are on the order of $1–2k per run; sustained
-   NIC/decode load is ~100–500 MB/s at realistic batch sizes, fully hidden per the benchmarks.
+1. **Read amplification (download cost):** each sampled row fetches its full ~128-row group
+   ⇒ worst case `rows_per_row_group × dataset_bytes` downloaded per epoch — **measured 118×**
+   by byte counters on the loader; a full 1T-token run reads ~500 TB from S3 against ~4 TB
+   consumed. Same-region bandwidth is free; GET request charges are on the order of $1–2k per
+   run; sustained NIC/decode load is ~100–500 MB/s at realistic batch sizes, fully hidden per
+   the benchmarks (decode is ~1% of fetch time; the rest is wire latency). Two implemented
+   mitigations, composable and off by default:
+   - **`ShardBlockShuffleSampler`** aligns the sample order with storage (shard → row-group →
+     windowed row shuffle): measured **exactly 1.00×** per epoch (~4.8 TB at 1T, GET costs in
+     single-digit dollars), same 0.8 ms exposed / ~3.6 s steps, exact resume. The price is
+     shuffle locality — a batch draws from a ~`shuffle_window`-group neighborhood instead of
+     the whole store — so it is a per-workload choice via `sampler="custom"`, not a default.
+   - **Disk LRU cache tier** (`disk_cache_dir`): fetched groups spill to local NVMe (atomic,
+     shared across dataloader workers, mtime-LRU under a byte budget); memory misses re-read
+     from disk instead of S3. Measured on the benchmark store: S3 traffic collapses to one
+     store pass and the 118× moves to local reads. Caveat at 1T: a uniform-random epoch's
+     working set is the whole store, so the tier only absorbs its budget's share — its wins
+     are multi-epoch runs, cross-worker dedup, and stores that fit the node's disk.
 2. **Startup footer scan:** ~1B rows at rg128 ⇒ ~8M row-group entries ≈ 2–3 GB of footer
    bytes over ~10k shards. Must be parallelized (~1–2 min at 32-way; currently sequential) and
    the derived index cached locally; a manifest makes it ~zero.
@@ -236,6 +254,46 @@ fallback.
 
 </details>
 
+<details><summary><b>Option 3: Native HuggingFace IterableDataset (load_dataset streaming=True)</b></summary>
+
+Stream the parquet store sequentially with `datasets`' built-in streaming mode. Cloud paths
+work today (file opens are routed through fsspec, so `s3://` shards stream directly), and
+checkpoint/resume exists: `IterableDataset.state_dict()`/`load_state_dict()` integrates with
+torchdata's `StatefulDataLoader` automatically (available in the `datasets>=4.0` we already
+pin). Shards read sequentially → ~1× read amplification, the best S3 economics of any option,
+with near-zero fetch code to own.
+
+Rejected:
+
+1. **Sampling model:** no random access and no indices — shuffling is shard-order shuffle
+   plus a buffer of ~10k examples (0.001% of a 1B-row store), so randomness is local, not
+   global. Dataset mixing is limited to `interleave_datasets(probabilities=...)`; exact
+   per-batch mixing and custom/curriculum samplers (Goal 2) are outside the model.
+2. **Approximate resume under shuffle:** `state_dict` tracks (shard, example) position, but
+   the shuffle buffer is *not* saved — on resume its contents are lost and refilled, so
+   examples near the checkpoint are skipped or repeated. Resume also re-reads the current
+   shard from its beginning. Exact mid-epoch resume (Goal 3) is unachievable while shuffling.
+3. **Trainer rewiring:** SkyRL's SFT dataloading is map-style end to end — `build_train_sampler`,
+   `DataMixingSampler`, `ConcatDataset`, `len()`-based epoch math and stats. Adopting an
+   iterable dataset replaces that sampler layer rather than reusing it, a larger diff than
+   the ~500-line map-style loader this RFC adds.
+4. **Worker parallelism is shard-granular:** dataloader workers split shards, not batches
+   (needs `num_shards ≥ num_workers` — fine at 10k shards, degenerate for few-shard stores).
+
+| | This RFC (S3 row-level) | Option 3 (HF streaming) |
+|---|---|---|
+| Data format | existing parquet | existing parquet |
+| Sampling | row-level, exact mixing, custom samplers | shard-order + ~10k buffer shuffle |
+| Resume | exact, instant | approximate under shuffle; re-reads current shard |
+| Read amplification | ~128× (hidden; ~$1–2k/run) | ~1× |
+| Integration | existing sampler/dataloader stack unchanged | replaces the sampler layer |
+
+If the workload relaxes to a uniform sequential pass with tolerance for approximate resume,
+this is the simplest and cheapest option — the same relaxation that would justify Option 2,
+without the format migration.
+
+</details>
+
 # Validation Plan
 
 1. Land the two scoped hardening items: parallel footer scan; `ParquetFile` handle LRU.
@@ -266,3 +324,13 @@ the existing trainer's behavior.
 [^3]: Footer parsing at this scale also showed a ~16 GB transient RSS peak (10k parsed
 footers held during the parallel scan) — acceptable on a 121 GB controller, eliminated
 entirely by the manifest fast path or a chunked scan; tracked in the validation plan.
+
+[^4]: Measured by byte-level counters on the loader (compressed bytes actually requested
+from the store), one full epoch at workers=0; the 1T column scales by store size. Worst case
+for random row order is `rows_per_row_group × dataset_bytes` (each group re-downloaded once
+per row it contains — 118× observed vs the 128× bound, the gap being incidental cache hits
+on a small store). Same-region bandwidth is free; the dollar cost is GET requests and the
+real budget is worker I/O time, both fully hidden per the exposed-timing column. Multi-worker
+runs multiply downloads by up to the worker count (workers share no in-memory cache); the
+disk cache tier below removes that factor and, when the store fits the disk budget, caps a
+run's S3 traffic at one store pass regardless of epochs.
