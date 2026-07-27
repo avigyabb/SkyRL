@@ -1309,16 +1309,25 @@ class SFTTrainer:
             eval_sets.append((name, eval_tokenized))
         return eval_sets
 
-    @staticmethod
-    def _sequence_lengths(tokenized) -> Optional[list[int]]:
+    _STATS_UNAVAILABLE = object()
+    """Sentinel: the dataset opts out of full length stats (a scan would fetch
+    the whole store, e.g. cloud row-group datasets)."""
+
+    @classmethod
+    def _sequence_lengths(cls, tokenized):
         """Sequence lengths without materializing rows, when the dataset can
         provide them (pretokenized memory-mapped stores, possibly concatenated).
-        Returns ``None`` when only row iteration can produce them."""
-        lengths = getattr(tokenized, "sequence_lengths", None)
-        if lengths is not None:
+        Returns ``None`` when only row iteration can produce them, and
+        ``_STATS_UNAVAILABLE`` when the dataset explicitly opts out."""
+        lengths = getattr(tokenized, "sequence_lengths", "missing")
+        if lengths is None:
+            return cls._STATS_UNAVAILABLE
+        if not isinstance(lengths, str):
             return lengths.tolist()
         if isinstance(tokenized, ConcatDataset):
-            parts = [getattr(d, "sequence_lengths", None) for d in tokenized.datasets]
+            parts = [cls._sequence_lengths(d) for d in tokenized.datasets]
+            if any(part is cls._STATS_UNAVAILABLE for part in parts):
+                return cls._STATS_UNAVAILABLE
             if all(part is not None for part in parts):
                 return [int(v) for part in parts for v in part]
         return None
@@ -1336,6 +1345,16 @@ class SFTTrainer:
         # Memory-mapped datasets expose lengths from arrow offsets; falling
         # back to row iteration would materialize the whole store once.
         lengths = self._sequence_lengths(tokenized)
+        if lengths is self._STATS_UNAVAILABLE:
+            total_tokens = getattr(tokenized, "total_tokens", None)
+            token_note = ""
+            if total_tokens is not None:
+                token_note = f" total={total_tokens}, mean={total_tokens / len(tokenized):.1f} (from footers)"
+            logger.info(
+                f"Dataset stats (cloud store, {len(tokenized)} examples): length percentiles skipped "
+                f"(would require a full store scan).{token_note}"
+            )
+            return
         if lengths is None:
             lengths = [len(ex["input_ids"]) for ex in tokenized]
         n = len(lengths)
