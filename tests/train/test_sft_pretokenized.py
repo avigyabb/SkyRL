@@ -598,6 +598,9 @@ def test_rowgroup_cache_avoids_refetch(tmp_path, monkeypatch):
                 reads["n"] += 1
                 return pf.read_row_groups(rgs, **kw)
 
+            def __getattr__(self, name):  # delegate e.g. .metadata to the real handle
+                return getattr(pf, name)
+
         return _Wrap()
 
     monkeypatch.setattr(rg_ds, "_parquet_file", counting)
@@ -682,3 +685,153 @@ def test_rowgroup_dataloader_resume_and_spawn_workers(tmp_path):
         multiprocessing_context="spawn",
     )
     assert sum(len(b) for b in spawn_dl) == 32
+
+
+# ---------------------------------------------------------------------------
+# ShardBlockShuffleSampler (~1x read amplification) + disk cache tier
+# ---------------------------------------------------------------------------
+
+
+def test_shard_block_sampler_coverage_and_determinism(tmp_path):
+    from skyrl.train.dataset.pretokenized import RowGroupPretokenizedDataset
+    from skyrl.train.dataset.samplers import ShardBlockShuffleSampler
+
+    store, total = _rowgroup_store(tmp_path)
+    rg_ds = RowGroupPretokenizedDataset(store)
+
+    sampler = ShardBlockShuffleSampler(rg_ds, shuffle_window=4, seed=7)
+    epoch1 = list(sampler)
+    assert sorted(epoch1) == list(range(total))  # every row exactly once
+
+    assert list(ShardBlockShuffleSampler(rg_ds, shuffle_window=4, seed=7)) == epoch1
+    epoch2 = list(sampler)
+    assert sorted(epoch2) == list(range(total))
+    assert epoch2 != epoch1  # persistent generator reshuffles across epochs
+
+
+def test_shard_block_sampler_blocks_are_contiguous_at_window_one(tmp_path):
+    import numpy as np
+
+    from skyrl.train.dataset.pretokenized import RowGroupPretokenizedDataset
+    from skyrl.train.dataset.samplers import ShardBlockShuffleSampler
+
+    store, _ = _rowgroup_store(tmp_path)
+    rg_ds = RowGroupPretokenizedDataset(store)
+    starts, lengths, _ = rg_ds.row_group_blocks()
+
+    plan = list(ShardBlockShuffleSampler(rg_ds, shuffle_window=1, seed=0))
+    block_of = np.searchsorted(starts, plan, side="right") - 1
+    # With a window of one block, each row group's rows are emitted as one
+    # contiguous (internally shuffled) run of exactly the block's length.
+    runs = [(b, len(list(g))) for b, g in __import__("itertools").groupby(block_of)]
+    assert [n for _, n in runs] == [int(lengths[b]) for b, _ in runs]
+    assert sorted(b for b, _ in runs) == list(range(len(starts)))
+
+
+def test_shard_block_sampler_fetches_each_group_once(tmp_path):
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from skyrl.train.dataset.pretokenized import RowGroupPretokenizedDataset
+    from skyrl.train.dataset.samplers import ShardBlockShuffleSampler
+
+    store, total = _rowgroup_store(tmp_path)
+    num_blocks = sum(len(s) - 1 for s in RowGroupPretokenizedDataset(store)._rg_starts)
+
+    # Block-aligned sampling: every row group fetched exactly once per epoch.
+    rg_ds = RowGroupPretokenizedDataset(store, row_group_cache_size=8)
+    dl = StatefulDataLoader(
+        rg_ds, batch_size=8, sampler=ShardBlockShuffleSampler(rg_ds, shuffle_window=4), collate_fn=list
+    )
+    assert sum(len(b) for b in dl) == total
+    assert rg_ds.io_stats["row_groups_fetched"] == num_blocks
+    assert rg_ds.io_stats["rows_fetched"] == rg_ds.io_stats["rows_served"] == total
+
+    # Global shuffle under the same small cache re-fetches heavily.
+    rand_ds = RowGroupPretokenizedDataset(store, row_group_cache_size=8)
+    dl = StatefulDataLoader(rand_ds, batch_size=8, shuffle=True, collate_fn=list)
+    assert sum(len(b) for b in dl) == total
+    assert rand_ds.io_stats["row_groups_fetched"] > 1.5 * num_blocks
+    assert rand_ds.io_stats["rows_fetched"] > 1.5 * rand_ds.io_stats["rows_served"]
+
+
+def test_shard_block_sampler_dataloader_resume(tmp_path):
+    from torchdata.stateful_dataloader import StatefulDataLoader
+
+    from skyrl.train.dataset.pretokenized import RowGroupPretokenizedDataset
+    from skyrl.train.dataset.samplers import ShardBlockShuffleSampler
+
+    store, _ = _rowgroup_store(tmp_path)
+    rg_ds = RowGroupPretokenizedDataset(store)
+
+    def make_dl():
+        return StatefulDataLoader(
+            rg_ds, batch_size=8, sampler=ShardBlockShuffleSampler(rg_ds, shuffle_window=4, seed=3), collate_fn=list
+        )
+
+    dl = make_dl()
+    it = iter(dl)
+    for _ in range(3):
+        next(it)
+    state = dl.state_dict()
+    expected = next(it)
+
+    dl2 = make_dl()
+    dl2.load_state_dict(state)
+    resumed = next(iter(dl2))
+    assert [r["input_ids"] for r in expected] == [r["input_ids"] for r in resumed]
+
+
+def test_shard_block_sampler_requires_block_table():
+    from skyrl.train.dataset.samplers import ShardBlockShuffleSampler
+
+    with pytest.raises(TypeError, match="row_group_blocks"):
+        ShardBlockShuffleSampler([{"input_ids": [1]}])
+
+
+def test_disk_cache_serves_memory_misses_without_refetch(tmp_path):
+    from skyrl.train.dataset.pretokenized import RowGroupPretokenizedDataset
+
+    store, _ = _rowgroup_store(tmp_path)
+    rg_ds = RowGroupPretokenizedDataset(store, row_group_cache_size=2, disk_cache_dir=str(tmp_path / "cache"))
+
+    rg_ds.__getitems__([0])  # group 0: store fetch + disk spill
+    rg_ds.__getitems__([8, 16])  # two more groups; group 0 evicted from memory
+    assert rg_ds.io_stats["row_groups_fetched"] == 3
+    rg_ds.__getitems__([0])  # memory miss -> disk hit, no store re-fetch
+    assert rg_ds.io_stats["disk_hits"] == 1
+    assert rg_ds.io_stats["row_groups_fetched"] == 3
+    row = rg_ds[0]
+    assert row["input_ids"][0] == 0  # disk-tier round-trip preserves content
+
+
+def test_disk_cache_shared_across_dataset_instances(tmp_path):
+    from skyrl.train.dataset.pretokenized import RowGroupPretokenizedDataset
+
+    store, total = _rowgroup_store(tmp_path)
+    cache_dir = str(tmp_path / "cache")
+
+    warm = RowGroupPretokenizedDataset(store, disk_cache_dir=cache_dir)
+    warm.__getitems__(list(range(total)))
+    groups = warm.io_stats["row_groups_fetched"]
+    assert groups > 0
+
+    # A fresh instance (same store geometry) never touches the store again --
+    # this is also the spawn-worker sharing path, which pickles the dir name.
+    cold = RowGroupPretokenizedDataset(store, disk_cache_dir=cache_dir)
+    cold.__getitems__(list(range(total)))
+    assert cold.io_stats["row_groups_fetched"] == 0
+    assert cold.io_stats["disk_hits"] == groups
+
+
+def test_disk_cache_evicts_to_budget(tmp_path):
+    import os
+
+    from skyrl.train.dataset.pretokenized import RowGroupPretokenizedDataset
+
+    store, total = _rowgroup_store(tmp_path)
+    cache_dir = tmp_path / "cache"
+    # A one-byte budget forces an eviction scan after every spill.
+    rg_ds = RowGroupPretokenizedDataset(store, disk_cache_dir=str(cache_dir), disk_cache_bytes=1)
+    rg_ds.__getitems__(list(range(total)))
+    leftover = [f for f in os.listdir(cache_dir) if f.endswith(".arrow")]
+    assert len(leftover) <= 1

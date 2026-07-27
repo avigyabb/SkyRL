@@ -36,13 +36,17 @@ cache rather than dataset size; the backing files must remain on disk for the
 lifetime of the run.
 """
 
+import hashlib
 import os
+import time
 from collections import OrderedDict
 from typing import Optional
 
 import fsspec
 import numpy as np
+import pyarrow as pa
 import pyarrow.compute as pc
+import pyarrow.feather as pafeather
 import pyarrow.parquet as pq
 from datasets import Dataset, concatenate_datasets, load_dataset
 from loguru import logger
@@ -395,11 +399,28 @@ class RowGroupPretokenizedDataset:
     hundred KB per sampled row rather than whole column chunks.
     """
 
-    def __init__(self, path: str, max_length: Optional[int] = None, row_group_cache_size: int = 32):
+    def __init__(
+        self,
+        path: str,
+        max_length: Optional[int] = None,
+        row_group_cache_size: int = 32,
+        disk_cache_dir: Optional[str] = None,
+        disk_cache_bytes: int = 32 << 30,
+    ):
         self._path = path
         self._max_length = max_length
         self._cache_size = row_group_cache_size
         self._transform = _NormalizeTransform(max_length)
+        # Optional second cache tier: fetched row groups spill to local disk
+        # (uncompressed arrow IPC, mtime-LRU under ``disk_cache_bytes``), so
+        # re-sampled groups are re-read from NVMe instead of re-downloaded.
+        # The directory is shared across dataloader worker processes: writes
+        # are atomic (tmp + rename) and reads treat files as immutable.
+        self._disk_cache_dir = disk_cache_dir
+        self._disk_cache_bytes = disk_cache_bytes
+        self._disk_bytes_since_evict = 0
+        if disk_cache_dir:
+            os.makedirs(disk_cache_dir, exist_ok=True)
 
         fs, root = fsspec.core.url_to_fs(path)
         self._files = _list_parquet_files(fs, root)
@@ -461,6 +482,27 @@ class RowGroupPretokenizedDataset:
         self._handle_cache_size = 1024
         self._parquet_files: OrderedDict = OrderedDict()
         self._row_group_cache: OrderedDict = OrderedDict()
+        # Per-process I/O counters (diagnostics; reset when pickled into
+        # dataloader workers). ``rows_fetched / rows_served`` is the observed
+        # read amplification; ``bytes_fetched`` counts compressed bytes pulled
+        # from the store, ``disk_*`` counts row groups served by the disk tier.
+        self.io_stats = dict.fromkeys(
+            (
+                "fetch_calls",
+                "fetch_seconds",
+                "row_groups_fetched",
+                "rows_fetched",
+                "bytes_fetched",
+                "rows_served",
+                "disk_hits",
+                "disk_bytes_read",
+            ),
+            0,
+        )
+        # Store fingerprint namespaces disk-cache entries, so two stores (or a
+        # regenerated store with different geometry) sharing a cache directory
+        # cannot serve each other's row groups.
+        self._disk_key = hashlib.sha1(f"{path}:{len(self._files)}:{len(self)}".encode()).hexdigest()[:12]
 
         logger.info(
             f"Indexed cloud pretokenized store '{path}': {len(self._files)} shard(s), "
@@ -473,6 +515,7 @@ class RowGroupPretokenizedDataset:
         state["_pa_fs"] = None
         state["_parquet_files"] = OrderedDict()
         state["_row_group_cache"] = OrderedDict()
+        state["io_stats"] = dict.fromkeys(self.io_stats, 0)
         return state
 
     def __len__(self) -> int:
@@ -486,6 +529,27 @@ class RowGroupPretokenizedDataset:
         local = index - int(self._shard_starts[shard])
         rg = int(np.searchsorted(self._rg_starts[shard], local, side="right")) - 1
         return shard, rg, local - int(self._rg_starts[shard][rg])
+
+    def row_group_blocks(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Per-row-group block table for block-aware samplers.
+
+        Returns ``(starts, lengths, shards)`` aligned arrays, one entry per row
+        group in (shard, row group) file order: the block's starting *global*
+        row index, its row count, and the shard it lives in. Emitting indices
+        blocked by these boundaries (see ``ShardBlockShuffleSampler``) makes
+        each row group fetch-once per epoch: ~1x read amplification.
+        """
+        starts, lengths, shards = [], [], []
+        for shard, rg_start in enumerate(self._rg_starts):
+            base = int(self._shard_starts[shard])
+            starts.append(base + rg_start[:-1])
+            lengths.append(np.diff(rg_start))
+            shards.append(np.full(len(rg_start) - 1, shard, dtype=np.int64))
+        return (
+            np.concatenate(starts).astype(np.int64),
+            np.concatenate(lengths).astype(np.int64),
+            np.concatenate(shards),
+        )
 
     def _pyarrow_fs(self):
         """pyarrow-native filesystem: unlike fsspec file objects, it lets
@@ -511,17 +575,101 @@ class RowGroupPretokenizedDataset:
             self._parquet_files.popitem(last=False)
         return handle
 
+    def _disk_cache_file(self, shard: int, rg: int) -> str:
+        return os.path.join(self._disk_cache_dir, f"{self._disk_key}-{shard}-{rg}.arrow")
+
+    def _disk_cache_get(self, shard: int, rg: int):
+        """Best-effort read of one row group from the disk tier (None on miss)."""
+        fpath = self._disk_cache_file(shard, rg)
+        try:
+            table = pafeather.read_table(fpath, memory_map=True)
+            os.utime(fpath)  # recency signal for mtime-LRU eviction
+        except (FileNotFoundError, OSError, pa.ArrowInvalid):
+            return None
+        self.io_stats["disk_hits"] += 1
+        self.io_stats["disk_bytes_read"] += table.nbytes
+        return table
+
+    def _disk_cache_put(self, shard: int, rg: int, table) -> None:
+        """Best-effort spill of one row group; atomic rename so concurrent
+        dataloader workers sharing the directory never see partial files."""
+        fpath = self._disk_cache_file(shard, rg)
+        tmp = f"{fpath}.tmp-{os.getpid()}"
+        try:
+            pafeather.write_feather(table, tmp, compression="uncompressed")
+            size = os.path.getsize(tmp)
+            os.replace(tmp, fpath)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return
+        # Amortized eviction: rescan the directory only after enough new bytes
+        # accumulate that the budget could plausibly be exceeded.
+        self._disk_bytes_since_evict += size
+        if self._disk_bytes_since_evict >= max(self._disk_cache_bytes // 16, 1):
+            self._disk_bytes_since_evict = 0
+            self._evict_disk_cache()
+
+    def _evict_disk_cache(self) -> None:
+        try:
+            with os.scandir(self._disk_cache_dir) as it:
+                entries = [(e.stat().st_mtime, e.stat().st_size, e.path) for e in it if e.name.endswith(".arrow")]
+        except OSError:
+            return
+        total = sum(size for _, size, _ in entries)
+        if total <= self._disk_cache_bytes:
+            return
+        for _, size, fpath in sorted(entries):
+            try:
+                os.unlink(fpath)
+            except OSError:
+                continue
+            total -= size
+            if total <= self._disk_cache_bytes * 0.9:
+                break
+
     def _fetch_row_groups(self, shard: int, row_groups: list[int]) -> None:
         """Fetch missing row groups of one shard in a single coalesced,
-        concurrent read, and populate the LRU with zero-copy per-group slices."""
+        concurrent read, and populate the LRU with zero-copy per-group slices.
+        With a disk tier configured, memory misses check disk before the store,
+        and store fetches spill to disk on the way into memory."""
         missing = [rg for rg in row_groups if (shard, rg) not in self._row_group_cache]
         if not missing:
             return
-        table = self._parquet_file(shard).read_row_groups(missing, use_threads=True)
+        if self._disk_cache_dir:
+            remote = []
+            for rg in missing:
+                table = self._disk_cache_get(shard, rg)
+                if table is not None:
+                    self._row_group_cache[(shard, rg)] = table
+                else:
+                    remote.append(rg)
+            missing = remote
+            if not missing:
+                return
+        handle = self._parquet_file(shard)
+        fetch_start = time.perf_counter()
+        table = handle.read_row_groups(missing, use_threads=True)
+        stats = self.io_stats
+        stats["fetch_calls"] += 1
+        stats["fetch_seconds"] += time.perf_counter() - fetch_start
+        stats["row_groups_fetched"] += len(missing)
+        stats["rows_fetched"] += table.num_rows
+        md = handle.metadata
+        stats["bytes_fetched"] += sum(
+            md.row_group(rg).column(col).total_compressed_size
+            for rg in missing
+            for col in range(md.row_group(rg).num_columns)
+        )
         offset = 0
         for rg in missing:
             rows = int(self._rg_starts[shard][rg + 1] - self._rg_starts[shard][rg])
-            self._row_group_cache[(shard, rg)] = table.slice(offset, rows)
+            group = table.slice(offset, rows)
+            self._row_group_cache[(shard, rg)] = group
+            if self._disk_cache_dir:
+                self._disk_cache_put(shard, rg, group)
             offset += rows
 
     def _row_group_table(self, shard: int, rg: int):
@@ -535,6 +683,7 @@ class RowGroupPretokenizedDataset:
 
     def __getitems__(self, indices: list) -> list[dict]:
         located = [self._locate(int(i)) for i in indices]
+        self.io_stats["rows_served"] += len(indices)
 
         # One coalesced fetch per shard for all missing row groups (ranges are
         # read concurrently inside pyarrow); shards themselves fetch in
