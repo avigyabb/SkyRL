@@ -135,6 +135,28 @@ class FakeInt4QatConfig(BaseConfig):
 
 
 @dataclass
+class QuantizationConfig(BaseConfig):
+    """Weight-only quantization for the frozen reference model (FSDP only).
+
+    The reference model is forward-only (it only supplies logprobs for the KL
+    penalty), so quantizing its weights saves memory with no gradient path to
+    destabilize. ``int8`` (LLM.int8) keeps the KL anchor faithful; ``nf4`` (4-bit
+    NormalFloat) saves more memory at the cost of a larger logprob shift. The
+    model is loaded replicated per rank via bitsandbytes and does NOT go through
+    FSDP2 ``fully_shard`` -- a bitsandbytes ``Params4bit``/``Int8Params`` module
+    cannot be sharded -- so a quantized reference must fit on a single GPU.
+    """
+
+    enabled: bool = False
+    method: str = "int8"
+    """``int8`` (LLM.int8; faithful KL anchor) or ``nf4`` (4-bit; smaller, larger logprob shift)."""
+
+    def __post_init__(self) -> None:
+        if self.enabled and self.method not in ("int8", "nf4"):
+            raise ValueError(f"`ref.quantization.method` must be 'int8' or 'nf4', got {self.method!r}")
+
+
+@dataclass
 class ModelConfig(BaseConfig):
     path: Optional[str] = None
     lora: SkyRLLoraConfig = field(default_factory=SkyRLLoraConfig)
@@ -495,6 +517,15 @@ class RefConfig(BaseConfig):
     language_model_only: bool = False
     """When True, skip vision encoder initialization for multimodal models (e.g. Qwen3.5).
     Loads only the language model backbone using AutoModelForCausalLM."""
+    quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
+
+    def __post_init__(self) -> None:
+        if self.quantization.enabled:
+            assert self.sequence_parallel_size == 1, (
+                "A quantized reference model does not go through FSDP sharding, so "
+                "`ref.sequence_parallel_size` must be 1 "
+                f"(got {self.sequence_parallel_size})."
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -424,6 +424,11 @@ class FSDPRefWorkerBase(RefWorkerBase):
         strategy.setup_distributed()
         self.strategy = strategy
 
+        quantization = self.cfg.ref.quantization
+        if quantization.enabled:
+            self._init_quantized_model(model_path, quantization)
+            return
+
         model_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
         use_meta = should_use_meta_init(
             use_meta_tensor=not model_config.tie_word_embeddings, mesh=self.strategy.device_mesh
@@ -446,6 +451,50 @@ class FSDPRefWorkerBase(RefWorkerBase):
         self.model.eval()
 
         self._set_expandable_segments(True)
+
+    def _init_quantized_model(self, model_path, quantization):
+        """Load the frozen reference model with weight-only bitsandbytes quantization.
+
+        A bitsandbytes ``Params4bit``/``Int8Params`` module cannot go through FSDP2
+        ``fully_shard`` (both ``module.to("meta")`` and ``fully_shard`` reject the
+        non-float storage), so the quantized reference is loaded replicated on each
+        rank via ``device_map`` and kept out of ``strategy.prepare()``. It is
+        forward-only, so no optimizer/gradient state is needed; the tradeoff is that
+        the reference must fit on a single GPU.
+        """
+        wrapped_model = HFModelWrapper(
+            model_path,
+            use_flash_attention_2=self.cfg.flash_attn,
+            bf16=self.cfg.bf16,
+            load_in_4bit=(quantization.method == "nf4"),
+            load_in_8bit=(quantization.method == "int8"),
+            sequence_parallel_size=1,
+            remove_microbatch_padding=self.cfg.remove_microbatch_padding,
+            model_config_kwargs=self.cfg.ref.model_config_kwargs,
+            meta_init=False,
+            language_model_only=self.cfg.ref.language_model_only,
+            logprobs_chunk_size=self.cfg.logprobs_chunk_size,
+            device_map={"": torch.cuda.current_device()},
+        )
+
+        # Not FSDP-wrapped: forward runs on the replicated per-rank model directly.
+        self.model = wrapped_model
+        self.model.eval()
+
+        self._set_expandable_segments(True)
+
+    def offload_to_cpu(self, offload_optimizer=True, offload_model=True):
+        # A bitsandbytes-quantized reference cannot be moved off its GPU: ``.to("cpu")``
+        # hits the same Params4bit/Int8Params failure as the meta cast, and the model is
+        # small by construction, so it stays GPU-resident instead of being offloaded.
+        if self.cfg.ref.quantization.enabled:
+            return
+        return super().offload_to_cpu(offload_optimizer=offload_optimizer, offload_model=offload_model)
+
+    def backload_to_gpu(self, backload_optimizer=True, backload_model=True):
+        if self.cfg.ref.quantization.enabled:
+            return
+        return super().backload_to_gpu(backload_optimizer=backload_optimizer, backload_model=backload_model)
 
     def forward(
         self,

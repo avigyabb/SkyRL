@@ -89,6 +89,8 @@ skyrl-train = [
     "wandb",
     "datasets>=4.0.0",
     "tensordict",
+    # Weight-only quantization (bitsandbytes NF4 / LLM.int8) for the reference model.
+    "bitsandbytes; sys_platform == 'linux'",
     "jaxtyping",
     "skyrl-gym",
     "flash-attn==2.8.3; sys_platform == 'linux'",

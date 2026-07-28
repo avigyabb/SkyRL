@@ -43,7 +43,8 @@ class HFModelWrapper(nn.Module):
         pretrain_or_model (nn.Module): A pretrained model or a new model instance to be used as the actor.
         use_flash_attention_2 (bool, optional): Whether to utilize Flash Attention 2.0 for improved performance. Defaults to False.
         bf16 (bool, optional): Enable bfloat16 precision for model computations. Defaults to True.
-        load_in_4bit (bool, optional): Load the model in 4-bit precision. Defaults to False.
+        load_in_4bit (bool, optional): Load the model in 4-bit NF4 precision (bitsandbytes). Defaults to False.
+        load_in_8bit (bool, optional): Load the model in 8-bit precision (bitsandbytes LLM.int8). Defaults to False.
         lora_rank (int, optional): Rank for LoRA adaptation. Defaults to 0.
         lora_alpha (int, optional): Alpha parameter for LoRA. Defaults to 16.
         lora_dropout (float, optional): Dropout rate for LoRA layers. Defaults to 0.
@@ -62,6 +63,7 @@ class HFModelWrapper(nn.Module):
         use_flash_attention_2=False,
         bf16=True,
         load_in_4bit=False,
+        load_in_8bit=False,
         # TODO(shu): combine all LoRA specific configs into one place?
         lora_rank=0,
         lora_alpha=16,
@@ -93,6 +95,7 @@ class HFModelWrapper(nn.Module):
             ), "Flash attention 2 should be used for `remove_microbatch_padding`"
 
         if isinstance(pretrain_or_model, str):
+            assert not (load_in_4bit and load_in_8bit), "Set at most one of load_in_4bit / load_in_8bit"
             if load_in_4bit:
                 assert bf16, "we only support bnb_4bit_compute_dtype = bf16"
                 nf4_config = BitsAndBytesConfig(
@@ -101,6 +104,9 @@ class HFModelWrapper(nn.Module):
                     bnb_4bit_use_double_quant=True,
                     bnb_4bit_compute_dtype=torch.bfloat16,
                 )
+            elif load_in_8bit:
+                # LLM.int8: weight-only 8-bit with fp16 outlier channels.
+                nf4_config = BitsAndBytesConfig(load_in_8bit=True)
             else:
                 nf4_config = None
 
