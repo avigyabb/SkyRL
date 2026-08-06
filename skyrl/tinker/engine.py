@@ -2,6 +2,7 @@
 
 import argparse
 import time
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -785,6 +786,29 @@ class TinkerEngine:
                 results = {request_id: types.ErrorResponse(error=str(e), status="failed") for request_id in requests}
         self._complete_futures(results)
 
+    def process_model_pass_requests(
+        self,
+        requests: dict[str, tuple[str, BaseModel]],
+        processor: Callable[[dict[str, tuple[str, BaseModel]]], dict[str, BaseModel]],
+        name: str,
+    ):
+        """Process model-pass requests (forward/forward_backward) one model at a time.
+
+        Training passes are never batched across models: each model's requests
+        are processed as their own batch, and its futures complete as soon as
+        that batch finishes, so no client waits on another model's work.
+
+        Args:
+            requests: Dict mapping request_id to (model_id, request_data) tuples
+            processor: Function that processes requests and returns results dict
+            name: Name for logging
+        """
+        grouped: dict[str, dict[str, tuple[str, BaseModel]]] = defaultdict(dict)
+        for request_id, item in requests.items():
+            grouped[item[0]][request_id] = item
+        for group in grouped.values():
+            self.process_batch_requests(group, processor, name)
+
     def process_pending_requests(self):
         """Main loop to process pending requests."""
         while True:
@@ -801,8 +825,10 @@ class TinkerEngine:
                 other_requests = self.find_single_requests(session)
 
             # Process batches outside of session context
-            self.process_batch_requests(forward_backward_requests, self.process_forward_backward, "forward_backward")
-            self.process_batch_requests(forward_requests, self.process_forward, "forward")
+            self.process_model_pass_requests(
+                forward_backward_requests, self.process_forward_backward, "forward_backward"
+            )
+            self.process_model_pass_requests(forward_requests, self.process_forward, "forward")
             self.process_batch_requests(sample_requests, self.process_sample, "sample")
 
             # Process other request types individually (in the future we can also batch independent optim_steps)

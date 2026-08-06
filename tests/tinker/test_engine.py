@@ -393,3 +393,46 @@ def test_payload_lookup_is_chunked(scheduling_engine):
         batchable = engine.find_batchable_model_passes(session, types.RequestType.FORWARD_BACKWARD)
 
     assert len(batchable) == count
+
+
+def test_process_model_pass_requests_completes_each_model_before_next(scheduling_engine):
+    """Each model's futures must be completed before another model's group is processed."""
+    from types import SimpleNamespace
+
+    from sqlmodel import select
+
+    engine = scheduling_engine
+    engine.backend = SimpleNamespace(has_model=lambda model_id: True)
+
+    request_ids = add_futures(
+        engine,
+        [
+            (types.RequestType.FORWARD_BACKWARD, "model_a", {}),
+            (types.RequestType.FORWARD_BACKWARD, "model_a", {}),
+            (types.RequestType.FORWARD_BACKWARD, "model_b", {}),
+        ],
+    )
+    adam = types.AdamParams(learning_rate=1e-4, beta1=0.9, beta2=0.95, eps=1e-8, weight_decay=0.0)
+    requests = {
+        str(request_id): (model_id, types.OptimStepInput(adam_params=adam))
+        for request_id, model_id in zip(request_ids, ["model_a", "model_a", "model_b"])
+    }
+
+    processed_groups = []
+
+    def processor(group):
+        (model_id,) = {mid for mid, _ in group.values()}
+        if model_id == "model_b":
+            with Session(engine.db_engine) as session:
+                statuses = [
+                    f.status for f in session.exec(select(FutureDB).where(FutureDB.model_id == "model_a")).all()
+                ]
+                assert statuses == [RequestStatus.COMPLETED] * 2
+        processed_groups.append(sorted(group))
+        return {request_id: types.OptimStepOutput(metrics={}) for request_id in group}
+
+    engine.process_model_pass_requests(requests, processor, "forward_backward")
+
+    assert processed_groups == [[str(request_ids[0]), str(request_ids[1])], [str(request_ids[2])]]
+    with Session(engine.db_engine) as session:
+        assert all(f.status == RequestStatus.COMPLETED for f in session.exec(select(FutureDB)).all())
