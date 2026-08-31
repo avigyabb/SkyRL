@@ -29,7 +29,7 @@ from pydantic import (
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlmodel import SQLModel, func, select
+from sqlmodel import SQLModel, func, select, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from skyrl.tinker import types
@@ -45,6 +45,7 @@ from skyrl.tinker.db_models import (
     enable_sqlite_wal,
     get_async_database_url,
 )
+from skyrl.tinker.external_future_store import ExternalFutureStore, GroupCommitWriter
 from skyrl.tinker.extra import (
     ExternalInferenceClient,
     SkyRLTrainInferenceForwardingClient,
@@ -77,6 +78,14 @@ FUTURE_POLL_INTERVAL_SECONDS = 0.05
 
 # Statuses a request never moves out of, i.e. the ones a waiter resolves on.
 TERMINAL_STATUSES = (RequestStatus.COMPLETED, RequestStatus.FAILED)
+
+# Async connection pool sizing. Writes go through the group-commit writer and
+# hold no pool connection while queued, so the pool only has to cover
+# concurrent reads (validation lookups, the future poller); the defaults leave
+# ample headroom for 1024-way request bursts. Same knobs and defaults as the
+# multi-LoRA tuning in NovaSky-AI/SkyRL#1686.
+DB_POOL_SIZE = int(os.environ.get("SKYRL_DB_POOL_SIZE", "20"))
+DB_MAX_OVERFLOW = int(os.environ.get("SKYRL_DB_MAX_OVERFLOW", "40"))
 
 
 def raw_json_response(payload: str | None) -> Response:
@@ -233,11 +242,26 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown."""
 
     db_url = get_async_database_url(app.state.engine_config.database_url)
-    app.state.db_engine = create_async_engine(db_url, echo=False)
+    # In-memory SQLite uses a StaticPool that rejects sizing arguments; every
+    # real deployment is file- or server-backed (the engine subprocess needs to
+    # see the same database).
+    pool_kwargs = {} if ":memory:" in db_url else {"pool_size": DB_POOL_SIZE, "max_overflow": DB_MAX_OVERFLOW}
+    app.state.db_engine = create_async_engine(db_url, echo=False, **pool_kwargs)
     enable_sqlite_wal(app.state.db_engine.sync_engine)
 
     async with app.state.db_engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+
+    # All hot-path writes (future submissions, forwarded-sample completions,
+    # heartbeats) go through one group-commit writer so they never contend for
+    # pool connections or serialize per-row on SQLite's write lock.
+    app.state.future_writer = GroupCommitWriter(app.state.db_engine)
+    app.state.future_writer.start()
+    app.state.external_future_store = ExternalFutureStore(app.state.db_engine, app.state.future_writer)
+    # Forwards in flight when a previous server process died left PENDING rows
+    # no task will ever complete; fail them before serving so their waiters get
+    # a typed error instead of 408-looping.
+    await app.state.external_future_store.fail_orphaned()
 
     app.state.future_waiters = {}
     app.state.future_poller = asyncio.create_task(poll_futures(app.state.db_engine, app.state.future_waiters))
@@ -262,11 +286,13 @@ async def lifespan(app: FastAPI):
     # when the operator explicitly sets it to False.
     is_colocated = bool(backend_cfg.get("trainer.placement.colocate_all", True))
     if app.state.engine_config.external_inference_url:
-        app.state.external_inference_client = ExternalInferenceClient(app.state.engine_config, app.state.db_engine)
+        app.state.external_inference_client = ExternalInferenceClient(
+            app.state.engine_config, app.state.db_engine, future_store=app.state.external_future_store
+        )
         logger.info(f"External engine configured: {app.state.engine_config.external_inference_url}")
     elif backend_name in ("megatron", "fsdp") and not is_colocated:
         app.state.external_inference_client = SkyRLTrainInferenceForwardingClient(
-            app.state.engine_config, app.state.db_engine
+            app.state.engine_config, app.state.db_engine, future_store=app.state.external_future_store
         )
         logger.info(
             "SkyRL-Train inference forwarding client enabled for non-colocated backend=%s",
@@ -318,6 +344,11 @@ async def lifespan(app: FastAPI):
     app.state.future_poller.cancel()
     with suppress(asyncio.CancelledError):
         await app.state.future_poller
+
+    # Drain the write queue so every accepted request/result is committed
+    # before the process exits.
+    with suppress(Exception):
+        await app.state.future_writer.close()
 
     # Close the forwarding client's persistent httpx connection pool if we
     # installed one. Cheap no-op when external_inference_client doesn't own
@@ -406,6 +437,80 @@ async def create_future(
         return request_id
     assert future_db.request_id
     return future_db.request_id
+
+
+async def submit_future(
+    req: Request,
+    session: AsyncSession,
+    request_type: types.RequestType,
+    model_id: str | None,
+    request_data: BaseModel,
+    seq_id: int | None = None,
+) -> int:
+    """Create a future through the group-commit writer, returning its committed request_id.
+
+    The hot-path counterpart to :func:`create_future` for endpoints whose only
+    write is the future row itself (forward_backward/forward/optim_step/asample).
+    The row is durable when this returns -- the writer commits it -- so callers
+    must not commit it again; ``session`` is used only for the idempotency
+    reads. Endpoints that stage other rows atomically with their future
+    (create_model, save_weights, ...) keep using :func:`create_future`.
+
+    Falls back to :func:`create_future` plus a commit when no writer is
+    installed (unit tests that stub app state).
+    """
+    writer: GroupCommitWriter | None = getattr(req.app.state, "future_writer", None)
+    if writer is None:
+        request_id = await create_future(session, request_type, model_id, request_data, seq_id=seq_id)
+        await session.commit()
+        return request_id
+
+    serialized_request = request_data.model_dump(mode="json")
+
+    async def existing_request_id(lookup_session: AsyncSession) -> int | None:
+        """The request_id already recorded for this (model_id, seq_id), if there is one."""
+        if model_id is None or seq_id is None:
+            return None
+        statement = select(FutureDB).where(FutureDB.model_id == model_id, FutureDB.seq_id == seq_id)
+        existing = (await lookup_session.exec(statement)).first()
+        if existing is None:
+            return None
+        if existing.request_type != request_type or existing.request_data != serialized_request:
+            raise HTTPException(status_code=409, detail="Training request sequence number was reused")
+        return existing.request_id
+
+    if (request_id := await existing_request_id(session)) is not None:
+        return request_id
+
+    async def op(write_session: AsyncSession) -> int:
+        future_db = FutureDB(
+            request_type=request_type,
+            model_id=model_id,
+            seq_id=seq_id,
+            request_data=serialized_request,
+            status=RequestStatus.PENDING,
+        )
+        write_session.add(future_db)
+        await write_session.flush()  # Flush to generate auto-increment request_id
+        return future_db.request_id
+
+    # End the session's read transaction before parking on the writer. The
+    # endpoint's earlier validation reads left a connection checked out, and
+    # holding it across the wait would pin one connection per in-flight
+    # submission -- the pool exhaustion this path exists to remove.
+    await session.rollback()
+
+    try:
+        return await writer.submit(op)
+    except IntegrityError:
+        # A concurrent retry committed the same (model_id, seq_id) first. The
+        # endpoint's session may hold a read snapshot that predates that
+        # commit, so look the winner up on a fresh session.
+        async with AsyncSession(req.app.state.db_engine) as lookup_session:
+            request_id = await existing_request_id(lookup_session)
+        if request_id is None:
+            raise
+        return request_id
 
 
 async def create_checkpoint(
@@ -925,14 +1030,32 @@ async def create_session(request: CreateSessionRequest, session: AsyncSession = 
 
 
 @app.post("/api/v1/session_heartbeat", response_model=SessionHeartbeatResponse)
-async def session_heartbeat(request: SessionHeartbeatRequest, session: AsyncSession = Depends(get_session)):
+async def session_heartbeat(
+    request: SessionHeartbeatRequest, req: Request, session: AsyncSession = Depends(get_session)
+):
     """Heartbeat for an active session to keep it alive."""
-    session_db = await session.get(SessionDB, request.session_id)
-    if session_db is None:
+    heartbeat_at = datetime.now(timezone.utc)
+    statement = (
+        update(SessionDB)
+        .where(SessionDB.session_id == request.session_id)
+        .values(last_heartbeat_at=heartbeat_at, heartbeat_count=SessionDB.heartbeat_count + 1)
+    )
+
+    writer: GroupCommitWriter | None = getattr(req.app.state, "future_writer", None)
+    if writer is None:
+        updated = (await session.exec(statement)).rowcount
+        await session.commit()
+    else:
+        # One UPDATE through the group-commit writer: heartbeats must keep
+        # landing while sample/training bursts flood the write path, since a
+        # missed heartbeat window gets the session's models garbage-collected.
+        async def op(write_session: AsyncSession) -> int:
+            return (await write_session.exec(statement)).rowcount
+
+        updated = await writer.submit(op)
+
+    if not updated:
         raise HTTPException(status_code=404, detail="Session not found")
-    session_db.last_heartbeat_at = datetime.now(timezone.utc)
-    session_db.heartbeat_count += 1
-    await session.commit()
     return SessionHeartbeatResponse()
 
 
@@ -1130,7 +1253,8 @@ async def forward_backward(request: Request, session: AsyncSession = Depends(get
     req, forward_only = await _read_forward_backward_request(request)
     await get_model(session, req.model_id)
 
-    request_id = await create_future(
+    request_id = await submit_future(
+        req=request,
         session=session,
         request_type=types.RequestType.FORWARD if forward_only else types.RequestType.FORWARD_BACKWARD,
         model_id=req.model_id,
@@ -1138,17 +1262,16 @@ async def forward_backward(request: Request, session: AsyncSession = Depends(get
         seq_id=req.seq_id,
     )
 
-    await session.commit()
-
     return FutureResponse(future_id=str(request_id), status="pending", request_id=str(request_id))
 
 
 @app.post("/api/v1/forward", response_model=FutureResponse)
-async def forward(request: ForwardRequest, session: AsyncSession = Depends(get_session)):
+async def forward(request: ForwardRequest, req: Request, session: AsyncSession = Depends(get_session)):
     """Forward pass to obtain logprobs without accumulating gradients"""
     await get_model(session, request.model_id)
 
-    request_id = await create_future(
+    request_id = await submit_future(
+        req=req,
         session=session,
         request_type=types.RequestType.FORWARD,
         model_id=request.model_id,
@@ -1156,25 +1279,22 @@ async def forward(request: ForwardRequest, session: AsyncSession = Depends(get_s
         seq_id=request.seq_id,
     )
 
-    await session.commit()
-
     return FutureResponse(future_id=str(request_id), status="pending", request_id=str(request_id))
 
 
 @app.post("/api/v1/optim_step", response_model=FutureResponse)
-async def optim_step(request: OptimStepRequest, session: AsyncSession = Depends(get_session)):
+async def optim_step(request: OptimStepRequest, req: Request, session: AsyncSession = Depends(get_session)):
     """Update model using accumulated gradients."""
     await get_model(session, request.model_id)
 
-    request_id = await create_future(
+    request_id = await submit_future(
+        req=req,
         session=session,
         request_type=types.RequestType.OPTIM_STEP,
         model_id=request.model_id,
         request_data=types.OptimStepInput(adam_params=request.adam_params.to_types()),
         seq_id=request.seq_id,
     )
-
-    await session.commit()
 
     return FutureResponse(future_id=str(request_id), status="pending", request_id=str(request_id))
 
@@ -1340,7 +1460,8 @@ async def asample(request: SampleRequest, req: Request, session: AsyncSession = 
         # Validate that the checkpoint exists and is ready
         await validate_checkpoint(req, model_id, checkpoint_id, types.CheckpointType.SAMPLER, session)
 
-    request_id = await create_future(
+    request_id = await submit_future(
+        req=req,
         session=session,
         request_type=(
             types.RequestType.EXTERNAL if req.app.state.external_inference_client else types.RequestType.SAMPLE
@@ -1360,8 +1481,6 @@ async def asample(request: SampleRequest, req: Request, session: AsyncSession = 
             sampling_session_id=request.sampling_session_id,
         ),
     )
-
-    await session.commit()
 
     if req.app.state.external_inference_client:
         asyncio.create_task(

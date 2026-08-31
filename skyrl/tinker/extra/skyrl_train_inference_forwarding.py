@@ -21,9 +21,12 @@ from skyrl.utils.log import logger
 class SkyRLTrainInferenceForwardingClient:
     """Forwards EXTERNAL sample requests to the SkyRL-Train-managed vLLM."""
 
-    def __init__(self, engine_config: EngineConfig, db_engine):
+    def __init__(self, engine_config: EngineConfig, db_engine, future_store=None):
         self.engine_config = engine_config
         self.db_engine = db_engine
+        # ExternalFutureStore routing completion writes through the group-commit
+        # writer; None falls back to one session+commit per completion.
+        self.future_store = future_store
         self._cached_proxy_url: str | None = None
         self._cache_lock = asyncio.Lock()
         # Backpressure layered: httpx pool -> vllm-router -> vLLM max_num_seqs.
@@ -79,6 +82,10 @@ class SkyRLTrainInferenceForwardingClient:
             logger.exception("Backend-forwarded sample failed (request_id=%s)", request_id)
             result = types.ErrorResponse(error=str(e), status="failed")
             status = RequestStatus.FAILED
+
+        if self.future_store is not None:
+            await self.future_store.complete(request_id, result, status)
+            return
 
         async with AsyncSession(self.db_engine) as session:
             future = await session.get(FutureDB, request_id)

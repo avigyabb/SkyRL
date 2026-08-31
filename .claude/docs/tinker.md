@@ -49,6 +49,8 @@ All endpoints are under `/api/v1/`. Requests are async -- submit via POST, get a
 - `sample` requests are batched ensuring one checkpoint_id per model_id per batch.
 - `optim_step`, `create_model`, `save_weights`, `load_weights` are processed individually and act as barriers.
 - DB uses SQLite WAL mode with 30s busy timeout by default.
+- Hot-path writes (`forward_backward`/`forward`/`optim_step`/`asample` submissions, forwarded-sample completions, heartbeats) go through the `GroupCommitWriter` in `skyrl/tinker/external_future_store.py`: one dedicated task commits them in batches, so a 1024-way burst is a handful of transactions and queued writes hold no pool connections. Rows are committed before the client receives its request_id (durable, engine-visible). Pool sizing is env-tunable via `SKYRL_DB_POOL_SIZE` / `SKYRL_DB_MAX_OVERFLOW` (defaults 20/40).
+- On startup the API fails any PENDING `EXTERNAL` rows left by a crashed server (`ExternalFutureStore.fail_orphaned`), so their waiters get a typed 400 instead of hanging.
 
 ## Weight Sync Modes
 
