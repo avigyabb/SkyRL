@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from skyrl.env_vars import SKYRL_HTTP_CONNECTION_LIMIT
 from skyrl.tinker import types
 from skyrl.tinker.config import EngineConfig, add_model, config_to_argv
 from skyrl.tinker.db_models import (
@@ -1847,4 +1848,10 @@ if __name__ == "__main__":
     # Store config in app.state so lifespan can access it
     app.state.engine_config = engine_config
 
-    uvicorn.run(app, host=args.host, port=args.port, log_config=get_uvicorn_log_config())
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        backlog=SKYRL_HTTP_CONNECTION_LIMIT,
+        log_config=get_uvicorn_log_config(),
+    )
