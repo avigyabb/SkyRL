@@ -41,13 +41,14 @@ class ExternalFutureStore:
     _FORWARDING_SHUTDOWN_TIMEOUT_SECONDS = 10.0
     _SWEEP_INTERVAL_SECONDS = 30.0
     # Grace kept after a result has been *delivered* to the client, so an SDK
-    # retry following a lost HTTP response still finds it. Measured from
-    # delivery (mark_retrieved), never from the in-store read: a large result
-    # can spend minutes being serialized and sent, and starting the clock at
-    # read would evict it mid-delivery.
-    _RETRIEVED_TTL_SECONDS = 2048.0
+    # retry following a lost HTTP response still finds it. Only covers that
+    # lost-response window, so it stays short — a delivered result should not
+    # occupy memory for long. Kept well below the completed TTL so a large
+    # in-flight delivery (governed by that longer TTL) is never swept early.
+    _RETRIEVED_TTL_SECONDS = 120.0
     # Completed but not yet delivered — governs the read/serialize/send window
-    # and clients that never come back.
+    # and clients that never come back. Long enough for a large rollout burst to
+    # drain behind the inference engine.
     _COMPLETED_TTL_SECONDS = 2048.0
     # Pending entries whose forwarding task died without completing them.
     _PENDING_TTL_SECONDS = 3600.0

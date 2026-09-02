@@ -606,7 +606,12 @@ async def test_sweep_evicts_entries_by_ttl(future_store):
     # A completed-but-undelivered entry (read via wait() but never marked
     # delivered) must NOT be governed by the short retrieved-TTL: a slow
     # in-flight delivery would otherwise be evicted out from under the client.
+    # This is only meaningful because retrieved-TTL < completed-TTL.
+    assert ExternalFutureStore._RETRIEVED_TTL_SECONDS < ExternalFutureStore._COMPLETED_TTL_SECONDS
     store._sweep(now + timedelta(seconds=ExternalFutureStore._RETRIEVED_TTL_SECONDS + 1))
+    assert set(store._entries) == {completed_id, pending_id}
+
+    store._sweep(now + timedelta(seconds=ExternalFutureStore._COMPLETED_TTL_SECONDS + 1))
     assert set(store._entries) == {pending_id}
 
     store._sweep(now + timedelta(seconds=ExternalFutureStore._PENDING_TTL_SECONDS + 1))
