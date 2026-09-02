@@ -23,6 +23,7 @@ async def test_client_config_keeps_sampling_retries_request_idempotent():
     config = await api.client_config()
 
     assert config.sample_no_retries
+    assert not config.sample_enable_stuck_detection
     assert config.sample_max_concurrent_requests == 2048
 
 

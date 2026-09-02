@@ -933,6 +933,7 @@ class WeightsInfoResponse(BaseModel):
 class ClientConfigResponse(BaseModel):
     pjwt_auth_enabled: bool = False
     sample_no_retries: bool = True
+    sample_enable_stuck_detection: bool = False
     sample_max_concurrent_requests: int = 2048
 
 
