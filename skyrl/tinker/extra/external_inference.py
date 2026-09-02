@@ -66,7 +66,7 @@ class ExternalInferenceClient:
             async with httpx.AsyncClient(
                 base_url=self.base_url,
                 headers={"Authorization": f"Bearer {self.api_key}"},
-                timeout=httpx.Timeout(300.0, connect=10.0),  # 5 minutes for inference, 10s for connect
+                timeout=httpx.Timeout(2_048.0, connect=10.0),
             ) as http_client:
                 result = await self._forward_to_engine(
                     sample_req, model_id, checkpoint_id, http_client, base_model=base_model
