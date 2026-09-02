@@ -30,7 +30,7 @@ from skyrl.tinker.extra.skyrl_train_inference_forwarding import (
 )
 
 
-def _sample_input(seq_id: int) -> types.SampleInput:
+def _sample_input(seq_id: int, sampling_session_id: str = "session_a") -> types.SampleInput:
     return types.SampleInput(
         base_model="model_a",
         prompt=types.ModelInput(chunks=[types.EncodedTextChunk(tokens=[seq_id])]),
@@ -39,6 +39,7 @@ def _sample_input(seq_id: int) -> types.SampleInput:
         checkpoint_id="",
         prompt_logprobs=False,
         seq_id=seq_id,
+        sampling_session_id=sampling_session_id,
     )
 
 
@@ -64,6 +65,17 @@ def test_get_or_create_rejects_reused_sequence_with_different_request():
 
     with pytest.raises(ValueError, match="Sampling request sequence number was reused"):
         store.get_or_create("model_a", changed_request)
+
+
+def test_get_or_create_scopes_sequence_to_sampling_session():
+    store = ExternalFutureStore()
+
+    first_request_id, first_created = store.get_or_create("model_a", _sample_input(7, "session_a"))
+    second_request_id, second_created = store.get_or_create("model_a", _sample_input(7, "session_b"))
+
+    assert first_created
+    assert second_created
+    assert second_request_id != first_request_id
 
 
 class _CompletingForwarder:

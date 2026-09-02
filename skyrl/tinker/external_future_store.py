@@ -54,7 +54,7 @@ class ExternalFutureStore:
 
     def __init__(self):
         self._entries: dict[int, ExternalFuture] = {}
-        self._request_ids_by_sequence: dict[tuple[str, int], int] = {}
+        self._request_ids_by_sequence: dict[tuple[str | None, str | None, int], int] = {}
         # Boot-epoch id space: each server process starts below every id an
         # earlier process could plausibly have handed out (2^20 ids per
         # millisecond of uptime), so a client polling a pre-restart id gets an
@@ -74,7 +74,8 @@ class ExternalFutureStore:
         """Create a future, or return the original future for an SDK retry."""
         serialized_request = request_data.model_dump(mode="json")
         seq_id = getattr(request_data, "seq_id", None)
-        sequence_key = (model_id, seq_id) if model_id is not None and seq_id is not None else None
+        sampling_session_id = getattr(request_data, "sampling_session_id", None)
+        sequence_key = (model_id, sampling_session_id, seq_id) if seq_id is not None else None
         if sequence_key is not None and (request_id := self._request_ids_by_sequence.get(sequence_key)) is not None:
             entry = self._entries[request_id]
             if entry.request_data != serialized_request:
@@ -164,7 +165,8 @@ class ExternalFutureStore:
         for request_id in expired_ids:
             entry = self._entries.pop(request_id)
             seq_id = entry.request_data.get("seq_id")
-            sequence_key = (entry.model_id, seq_id) if entry.model_id is not None and seq_id is not None else None
+            sampling_session_id = entry.request_data.get("sampling_session_id")
+            sequence_key = (entry.model_id, sampling_session_id, seq_id) if seq_id is not None else None
             if sequence_key is not None:
                 self._request_ids_by_sequence.pop(sequence_key, None)
         if expired_ids:
