@@ -50,7 +50,7 @@ This controls:
 - uvicorn TCP backlog in the router and vLLM server
 """
 
-SKYRL_GENERATE_CONCURRENCY_PER_ENGINE = int(os.environ.get("SKYRL_GENERATE_CONCURRENCY_PER_ENGINE", 512))
+SKYRL_GENERATE_CONCURRENCY_PER_ENGINE = int(os.environ.get("SKYRL_GENERATE_CONCURRENCY_PER_ENGINE", 2048))
 """
 Maximum number of concurrent generate tasks per inference engine.
 
