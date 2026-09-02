@@ -45,10 +45,10 @@ class ExternalFutureStore:
     # delivery (mark_retrieved), never from the in-store read: a large result
     # can spend minutes being serialized and sent, and starting the clock at
     # read would evict it mid-delivery.
-    _RETRIEVED_TTL_SECONDS = 120.0
+    _RETRIEVED_TTL_SECONDS = 2048.0
     # Completed but not yet delivered — governs the read/serialize/send window
     # and clients that never come back.
-    _COMPLETED_TTL_SECONDS = 600.0
+    _COMPLETED_TTL_SECONDS = 2048.0
     # Pending entries whose forwarding task died without completing them.
     _PENDING_TTL_SECONDS = 3600.0
 
