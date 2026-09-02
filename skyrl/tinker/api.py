@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import random
@@ -744,14 +745,16 @@ class SamplingParams(BaseModel):
     top_k: int = -1
     top_p: float = 1
 
-    def to_types(self) -> types.SamplingParams:
+    def to_types(self, default_seed: int | None = None) -> types.SamplingParams:
         if self.max_tokens is None:
             raise HTTPException(status_code=400, detail="max_tokens is currently required")
         if self.max_tokens <= 0:
             raise HTTPException(status_code=400, detail="max_tokens must be a positive number")
 
         # Generate a random seed if not provided
-        seed = self.seed if self.seed is not None else random.randint(0, 2**31 - 1)
+        seed = self.seed if self.seed is not None else default_seed
+        if seed is None:
+            seed = random.randint(0, 2**31 - 1)
 
         # Determine if stop values are token IDs (int) or strings
         stop_tokens = None
@@ -1432,10 +1435,15 @@ async def asample(request: SampleRequest, req: Request, session: AsyncSession = 
             )
         await validate_sampler_checkpoint_once(req, model_id, checkpoint_id, session)
 
+    default_seed = None
+    if request.sampling_session_id is not None and request.seq_id is not None:
+        request_identity = f"{request.sampling_session_id}:{request.seq_id}".encode()
+        default_seed = int.from_bytes(hashlib.sha256(request_identity).digest()[:4], "big") % (2**31)
+
     sample_input = types.SampleInput(
         base_model=base_model,
         prompt=request.prompt.to_types(),
-        sampling_params=request.sampling_params.to_types(),
+        sampling_params=request.sampling_params.to_types(default_seed=default_seed),
         num_samples=request.num_samples,
         checkpoint_id=checkpoint_id,
         # A positive topk implies prompt logprobs: both are read off the same

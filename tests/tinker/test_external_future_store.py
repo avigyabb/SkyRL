@@ -235,7 +235,7 @@ async def test_sustained_model_path_rollouts_training_futures_and_heartbeats(fut
                 async with AsyncSession(engine) as session:
                     request = api.SampleRequest(
                         prompt=api.ModelInput(chunks=[api.EncodedTextChunk(tokens=[index])]),
-                        sampling_params=api.SamplingParams(temperature=0.0, max_tokens=1, seed=index),
+                        sampling_params=api.SamplingParams(temperature=0.0, max_tokens=1),
                         sampling_session_id="session_a",
                         seq_id=wave * 512 + index,
                     )
