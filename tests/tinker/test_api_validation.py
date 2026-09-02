@@ -18,6 +18,14 @@ def _make_datum() -> api.Datum:
     )
 
 
+@pytest.mark.asyncio
+async def test_client_config_keeps_sampling_retries_request_idempotent():
+    config = await api.client_config()
+
+    assert config.sample_no_retries
+    assert config.sample_max_concurrent_requests == 2048
+
+
 def test_forward_backward_input_accepts_ppo_threshold_keys():
     req = api.ForwardBackwardInput(
         data=[_make_datum()],
