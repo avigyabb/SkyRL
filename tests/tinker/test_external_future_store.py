@@ -58,13 +58,19 @@ def test_get_or_create_deduplicates_sdk_retries():
 
 def test_get_or_create_rejects_reused_sequence_with_different_request():
     store = ExternalFutureStore()
-    store.get_or_create("model_a", _sample_input(7))
+    existing_request_id, _ = store.get_or_create("model_a", _sample_input(7))
 
     changed_request = _sample_input(7)
     changed_request.prompt.chunks[0].tokens = [8]
 
-    with pytest.raises(ValueError, match="Sampling request sequence number was reused"):
+    with pytest.raises(ValueError) as error:
         store.get_or_create("model_a", changed_request)
+
+    assert str(error.value) == (
+        "Sampling request sequence number was reused: model_id='model_a', "
+        "sampling_session_id='session_a', seq_id=7, existing_request_id="
+        f"{existing_request_id}"
+    )
 
 
 def test_get_or_create_scopes_sequence_to_sampling_session():

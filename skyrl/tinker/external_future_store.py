@@ -79,7 +79,11 @@ class ExternalFutureStore:
         if sequence_key is not None and (request_id := self._request_ids_by_sequence.get(sequence_key)) is not None:
             entry = self._entries[request_id]
             if entry.request_data != serialized_request:
-                raise ValueError("Sampling request sequence number was reused")
+                raise ValueError(
+                    "Sampling request sequence number was reused: "
+                    f"model_id={model_id!r}, sampling_session_id={sampling_session_id!r}, "
+                    f"seq_id={seq_id}, existing_request_id={request_id}"
+                )
             return request_id, False
 
         request_id = self._next_request_id
