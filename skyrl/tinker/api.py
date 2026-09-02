@@ -70,11 +70,12 @@ API_SERVER_STARTUP_ARGS = ["-m", "skyrl.tinker.api"]
 # Timeout for graceful shutdown when engine crashes
 SHUTDOWN_TIMEOUT_SECONDS = 10
 
-# How long retrieve_future waits for a result before returning 408. Large
-# rollout bursts can legitimately queue behind the inference engine for many
-# minutes; returning 408 makes the SDK retry the whole sample and duplicate
-# inference work.
-RETRIEVE_FUTURE_TIMEOUT_SECONDS = 2_048
+# How long retrieve_future waits for a result before returning 408. The SDK
+# long-polls with its own ~45s timeout and maps a 408 to "re-poll the same
+# future", not to a resample, so a live client never lets the server reach this
+# ceiling. Raising it only lets coroutines orphaned by client-side timeouts
+# linger on futures that never complete.
+RETRIEVE_FUTURE_TIMEOUT_SECONDS = 300
 
 # How often poll_futures looks for newly finished requests. A single query
 # covers every waiter, so this can stay tight without the load scaling up with
@@ -935,8 +936,6 @@ class WeightsInfoResponse(BaseModel):
 
 class ClientConfigResponse(BaseModel):
     pjwt_auth_enabled: bool = False
-    sample_no_retries: bool = True
-    sample_enable_stuck_detection: bool = False
     sample_max_concurrent_requests: int = 2048
 
 

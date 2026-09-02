@@ -19,11 +19,9 @@ def _make_datum() -> api.Datum:
 
 
 @pytest.mark.asyncio
-async def test_client_config_keeps_sampling_retries_request_idempotent():
+async def test_client_config_advertises_sample_concurrency_cap():
     config = await api.client_config()
 
-    assert config.sample_no_retries
-    assert not config.sample_enable_stuck_detection
     assert config.sample_max_concurrent_requests == 2048
 
 
