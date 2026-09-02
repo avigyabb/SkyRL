@@ -54,6 +54,7 @@ class ExternalFutureStore:
 
     def __init__(self):
         self._entries: dict[int, ExternalFuture] = {}
+        self._request_ids_by_sequence: dict[tuple[str, int], int] = {}
         # Boot-epoch id space: each server process starts below every id an
         # earlier process could plausibly have handed out (2^20 ids per
         # millisecond of uptime), so a client polling a pre-restart id gets an
@@ -66,14 +67,30 @@ class ExternalFutureStore:
         self._sweeper = asyncio.create_task(self._sweep_loop())
 
     def create(self, model_id: str | None, request_data: BaseModel) -> int:
+        request_id, _ = self.get_or_create(model_id, request_data)
+        return request_id
+
+    def get_or_create(self, model_id: str | None, request_data: BaseModel) -> tuple[int, bool]:
+        """Create a future, or return the original future for an SDK retry."""
+        serialized_request = request_data.model_dump(mode="json")
+        seq_id = getattr(request_data, "seq_id", None)
+        sequence_key = (model_id, seq_id) if model_id is not None and seq_id is not None else None
+        if sequence_key is not None and (request_id := self._request_ids_by_sequence.get(sequence_key)) is not None:
+            entry = self._entries[request_id]
+            if entry.request_data != serialized_request:
+                raise ValueError("Sampling request sequence number was reused")
+            return request_id, False
+
         request_id = self._next_request_id
         self._next_request_id -= 1
         self._entries[request_id] = ExternalFuture(
             request_id=request_id,
             model_id=model_id,
-            request_data=request_data.model_dump(mode="json"),
+            request_data=serialized_request,
         )
-        return request_id
+        if sequence_key is not None:
+            self._request_ids_by_sequence[sequence_key] = request_id
+        return request_id, True
 
     async def wait(self, request_id: int, timeout: float) -> tuple[RequestStatus, types.RequestType, str | None] | None:
         entry = self._entries.get(request_id)
@@ -145,7 +162,11 @@ class ExternalFutureStore:
 
         expired_ids = [request_id for request_id, entry in self._entries.items() if expired(entry)]
         for request_id in expired_ids:
-            del self._entries[request_id]
+            entry = self._entries.pop(request_id)
+            seq_id = entry.request_data.get("seq_id")
+            sequence_key = (entry.model_id, seq_id) if entry.model_id is not None and seq_id is not None else None
+            if sequence_key is not None:
+                self._request_ids_by_sequence.pop(sequence_key, None)
         if expired_ids:
             logger.info("Evicted %d expired external futures", len(expired_ids))
 

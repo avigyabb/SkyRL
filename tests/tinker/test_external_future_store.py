@@ -42,9 +42,34 @@ def _sample_input(seq_id: int) -> types.SampleInput:
     )
 
 
+def test_get_or_create_deduplicates_sdk_retries():
+    store = ExternalFutureStore()
+    sample_input = _sample_input(7)
+
+    request_id, created = store.get_or_create("model_a", sample_input)
+    retry_request_id, retry_created = store.get_or_create("model_a", sample_input)
+
+    assert created
+    assert not retry_created
+    assert retry_request_id == request_id
+    assert len(store._entries) == 1
+
+
+def test_get_or_create_rejects_reused_sequence_with_different_request():
+    store = ExternalFutureStore()
+    store.get_or_create("model_a", _sample_input(7))
+
+    changed_request = _sample_input(7)
+    changed_request.prompt.chunks[0].tokens = [8]
+
+    with pytest.raises(ValueError, match="Sampling request sequence number was reused"):
+        store.get_or_create("model_a", changed_request)
+
+
 class _CompletingForwarder:
     def __init__(self, store: ExternalFutureStore):
         self.store = store
+        self.calls = 0
 
     async def call_and_store_result(
         self,
@@ -54,6 +79,7 @@ class _CompletingForwarder:
         checkpoint_id: str,
         base_model: str | None = None,
     ) -> None:
+        self.calls += 1
         await self.store.complete(
             request_id,
             types.SampleOutput(sequences=[]),
@@ -189,16 +215,15 @@ async def test_sustained_model_path_rollouts_training_futures_and_heartbeats(fut
 
             async def create_sample(index: int) -> int:
                 async with AsyncSession(engine) as session:
-                    response = await api.asample(
-                        api.SampleRequest(
-                            prompt=api.ModelInput(chunks=[api.EncodedTextChunk(tokens=[index])]),
-                            sampling_params=api.SamplingParams(temperature=0.0, max_tokens=1, seed=index),
-                            sampling_session_id="session_a",
-                            seq_id=wave * 512 + index,
-                        ),
-                        sample_request,
-                        session,
+                    request = api.SampleRequest(
+                        prompt=api.ModelInput(chunks=[api.EncodedTextChunk(tokens=[index])]),
+                        sampling_params=api.SamplingParams(temperature=0.0, max_tokens=1, seed=index),
+                        sampling_session_id="session_a",
+                        seq_id=wave * 512 + index,
                     )
+                    response = await api.asample(request, sample_request, session)
+                    retry_response = await api.asample(request, sample_request, session)
+                    assert retry_response.request_id == response.request_id
                 return int(response.request_id)
 
             async def create_training_future(index: int) -> None:
@@ -248,6 +273,7 @@ async def test_sustained_model_path_rollouts_training_futures_and_heartbeats(fut
     assert persisted_by_type[types.RequestType.FORWARD_BACKWARD] == 2048
     assert session_db is not None
     assert session_db.heartbeat_count == 128
+    assert forwarder.calls == 2048
     assert sample_request.app.state.validated_sampler_checkpoints == {("model_a", "weights_a")}
     assert not store._forwarding_tasks
 

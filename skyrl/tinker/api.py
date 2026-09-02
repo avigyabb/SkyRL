@@ -1446,12 +1446,16 @@ async def asample(request: SampleRequest, req: Request, session: AsyncSession = 
     if external_future_store is not None:
         # Every external inference mode has a store, so this branch covers all
         # forwarded samples; the DB path below is only for the internal engine.
-        request_id = external_future_store.create(model_id, sample_input)
-        external_future_store.spawn_forwarding_task(
-            req.app.state.external_inference_client.call_and_store_result(
-                request_id, request, model_id, checkpoint_id, base_model=base_model
+        try:
+            request_id, created = external_future_store.get_or_create(model_id, sample_input)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if created:
+            external_future_store.spawn_forwarding_task(
+                req.app.state.external_inference_client.call_and_store_result(
+                    request_id, request, model_id, checkpoint_id, base_model=base_model
+                )
             )
-        )
     else:
         request_id = await create_future(
             session=session,
@@ -1460,7 +1464,6 @@ async def asample(request: SampleRequest, req: Request, session: AsyncSession = 
             request_data=sample_input,
         )
         await session.commit()
-
     return FutureResponse(future_id=str(request_id), status="pending", request_id=str(request_id))
 
 
