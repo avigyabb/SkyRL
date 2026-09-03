@@ -32,7 +32,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
-from starlette.background import BackgroundTask
 
 from skyrl.env_vars import SKYRL_HTTP_CONNECTION_LIMIT
 from skyrl.tinker import types
@@ -1530,8 +1529,6 @@ async def retrieve_future(request: RetrieveFutureRequest, req: Request):
             response: Response = Response(content=content, media_type=PROTO_CONTENT_TYPE)
         else:
             response = raw_json_response(result_data)
-        if found_in_memory:
-            response.background = BackgroundTask(external_future_store.mark_retrieved, request_id)
         return response
 
     # Return 400 for handled errors (validation, etc.), 500 for unexpected failures.
