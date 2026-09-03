@@ -46,10 +46,10 @@ class EngineConfig(BaseModel):
     forwarding_inference_max_connections: int | None = Field(
         default=None,
         description=(
-            "Optional cap on the httpx connection pool used by "
+            "Optional cap on the connection pool used by "
             "SkyRLTrainInferenceForwardingClient to forward sample requests to "
             "the engine-managed vLLM. The natural backpressure chain is "
-            "httpx pool -> vllm-router -> vLLM's max_num_seqs; this knob "
+            "connector limit -> vllm-router -> vLLM's max_num_seqs; this knob "
             "only sets the API-side connection ceiling. Default `None` is "
             "unlimited — vllm-router/vLLM are the only queues — which is "
             "usually what you want. Raise your host's `ulimit -n` for very "
@@ -57,6 +57,31 @@ class EngineConfig(BaseModel):
             "file descriptors). Set an int to enforce a per-API-process cap."
         ),
         json_schema_extra={"argparse_type": lambda v: None if v == "None" else int(v)},
+    )
+    forwarding_inference_timeout_sec: float = Field(
+        default=2048.0,
+        gt=0,
+        description=(
+            "Read timeout in seconds for API-side requests forwarded to the "
+            "SkyRL-Train-managed inference engine. This must cover time spent "
+            "queued behind other requests as well as generation time: with the "
+            "default unlimited connection count a large rollout burst waits inside "
+            "vLLM's queue, and 128x128 bursts routinely exceed 300s there."
+        ),
+        json_schema_extra={
+            "argparse_type": float,
+            "env_var": "SKYRL_FORWARDING_INFERENCE_TIMEOUT_SEC",
+        },
+    )
+    sample_max_concurrent_requests: int = Field(
+        default=2048,
+        gt=0,
+        description=(
+            "Advertised to the Tinker SDK via /api/v1/client/config as the maximum "
+            "number of sample requests one SamplingClient keeps in flight; the SDK "
+            "queues the rest client-side. Each in-flight sample costs the API server "
+            "one open long-poll connection and one retrieve_future re-poll every 45s."
+        ),
     )
     session_cleanup_interval_sec: int = Field(
         default=60,

@@ -19,10 +19,16 @@ def _make_datum() -> api.Datum:
 
 
 @pytest.mark.asyncio
-async def test_client_config_advertises_sample_concurrency_cap():
-    config = await api.client_config()
+async def test_client_config_advertises_configured_sample_concurrency_cap():
+    from types import SimpleNamespace
 
-    assert config.sample_max_concurrent_requests == 2048
+    from skyrl.tinker.config import EngineConfig
+
+    req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(engine_config=EngineConfig(base_model="m"))))
+    assert (await api.client_config(req)).sample_max_concurrent_requests == 2048
+
+    req.app.state.engine_config = EngineConfig(base_model="m", sample_max_concurrent_requests=16384)
+    assert (await api.client_config(req)).sample_max_concurrent_requests == 16384
 
 
 def test_forward_backward_input_accepts_ppo_threshold_keys():

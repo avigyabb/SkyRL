@@ -4,7 +4,6 @@ import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -27,8 +26,8 @@ from skyrl.tinker.db_models import (
 )
 from skyrl.tinker.external_future_store import ExternalFutureStore
 from skyrl.tinker.extra.skyrl_train_inference_forwarding import (
-    _FORWARDING_INFERENCE_TIMEOUT_SECONDS,
     SkyRLTrainInferenceForwardingClient,
+    TransientInferenceError,
 )
 
 
@@ -587,9 +586,14 @@ async def test_forwarding_client_completes_in_memory_future(future_store, monkey
 @pytest.mark.asyncio
 async def test_forwarding_client_allows_full_burst_timeout(future_store):
     store, engine, _ = future_store
-    client = SkyRLTrainInferenceForwardingClient(EngineConfig(base_model="model_a"), engine, store)
+    config = EngineConfig(base_model="model_a")
+    client = SkyRLTrainInferenceForwardingClient(config, engine, store)
     try:
-        assert client._http_client.timeout.read == _FORWARDING_INFERENCE_TIMEOUT_SECONDS
+        session = client._get_session()
+        assert session.timeout.sock_read == config.forwarding_inference_timeout_sec == 2048.0
+        # No overall deadline: a request may wait in the connector queue for
+        # as long as the engine takes to get to it.
+        assert session.timeout.total is None
     finally:
         await client.aclose()
 
@@ -608,9 +612,7 @@ async def test_forwarding_client_retries_vllm_server_error(future_store, monkeyp
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            request = httpx.Request("POST", "http://vllm/v1/completions")
-            response = httpx.Response(500, request=request)
-            raise httpx.HTTPStatusError("transient vLLM failure", request=request, response=response)
+            raise TransientInferenceError("vLLM /v1/completions returned 500: transient vLLM failure")
         return result
 
     monkeypatch.setattr(client, "_resolve_proxy_url", resolve_proxy_url)

@@ -936,13 +936,17 @@ class WeightsInfoResponse(BaseModel):
 
 class ClientConfigResponse(BaseModel):
     pjwt_auth_enabled: bool = False
+    # Cap on in-flight samples per SamplingClient; the SDK applies it as its
+    # sampling RetryConfig.max_connections.
     sample_max_concurrent_requests: int = 2048
 
 
 @app.post("/api/v1/client/config", response_model=ClientConfigResponse)
-async def client_config():
-    """Stub for tinker SDK client_config handshake."""
-    return ClientConfigResponse()
+async def client_config(req: Request):
+    """Tinker SDK client_config handshake: server-side flags for the client."""
+    return ClientConfigResponse(
+        sample_max_concurrent_requests=req.app.state.engine_config.sample_max_concurrent_requests,
+    )
 
 
 @app.get("/api/v1/healthz", response_model=HealthResponse)
