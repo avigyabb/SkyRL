@@ -929,12 +929,17 @@ class WeightsInfoResponse(BaseModel):
 
 class ClientConfigResponse(BaseModel):
     pjwt_auth_enabled: bool = False
+    # Cap on in-flight samples per SamplingClient; the SDK applies it as its
+    # sampling RetryConfig.max_connections.
+    sample_max_concurrent_requests: int = 2000
 
 
 @app.post("/api/v1/client/config", response_model=ClientConfigResponse)
-async def client_config():
-    """Stub for tinker SDK client_config handshake."""
-    return ClientConfigResponse()
+async def client_config(req: Request):
+    """Tinker SDK client_config handshake: server-side flags for the client."""
+    return ClientConfigResponse(
+        sample_max_concurrent_requests=req.app.state.engine_config.sample_max_concurrent_requests,
+    )
 
 
 @app.get("/api/v1/healthz", response_model=HealthResponse)
@@ -1515,8 +1520,13 @@ async def retrieve_future(request: RetrieveFutureRequest, req: Request):
         else:
             response = raw_json_response(result_data)
         # Start the retry-grace clock now that the response is built and about to
-        # be sent, so a large result is never evicted mid-delivery.
-        if found_in_memory:
+        # be sent, so a large result is never evicted mid-delivery -- but only if
+        # this client is still there to receive it. The SDK abandons a poll after
+        # 45s and retries the same request_id; if the result lands after that,
+        # this handler wakes on a dead connection (uvicorn drops the send
+        # silently) and starting the short clock here would let the sweeper
+        # evict a result nobody received, turning the retry into a 404.
+        if found_in_memory and not await req.is_disconnected():
             external_future_store.mark_retrieved(request_id)
         return response
 

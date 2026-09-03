@@ -59,17 +59,30 @@ class EngineConfig(BaseModel):
         json_schema_extra={"argparse_type": lambda v: None if v == "None" else int(v)},
     )
     forwarding_inference_timeout_sec: float = Field(
-        default=300.0,
+        default=2048.0,
         gt=0,
         description=(
             "Read timeout in seconds for API-side requests forwarded to the "
             "SkyRL-Train-managed inference engine. This must cover time spent "
-            "queued behind other requests as well as generation time."
+            "queued behind other requests as well as generation time: with the "
+            "default unlimited connection count a large rollout burst waits inside "
+            "vLLM's queue, and 128x128 bursts routinely exceed 300s there."
         ),
         json_schema_extra={
             "argparse_type": float,
             "env_var": "SKYRL_FORWARDING_INFERENCE_TIMEOUT_SEC",
         },
+    )
+    sample_max_concurrent_requests: int = Field(
+        default=2000,
+        gt=0,
+        description=(
+            "Advertised to the Tinker SDK via /api/v1/client/config as the maximum "
+            "number of sample requests one SamplingClient keeps in flight; the SDK "
+            "queues the rest client-side. Each in-flight sample costs the API server "
+            "one open long-poll connection and one retrieve_future re-poll every 45s. "
+            "2000 is the SDK's own default."
+        ),
     )
     session_cleanup_interval_sec: int = Field(
         default=60,
