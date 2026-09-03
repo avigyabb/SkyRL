@@ -23,6 +23,8 @@ from skyrl.tinker.proto_serialization import (
 )
 from skyrl.utils.log import logger
 
+_ROUTER_CONNECT_TIMEOUT_SECONDS = 60.0
+
 
 class TransientInferenceError(RuntimeError):
     """A 5xx from vllm-router/vLLM: the request was rejected, not executed, so it is safe to retry."""
@@ -67,12 +69,18 @@ class SkyRLTrainInferenceForwardingClient:
             max_conn = self.engine_config.forwarding_inference_max_connections
             # keepalive_timeout must stay under the router's idle timeout so a
             # pooled connection is never reused after the server closed it.
-            connector = aiohttp.TCPConnector(limit=max_conn or 0, keepalive_timeout=2)
+            # Happy Eyeballs is off: a burst of connect timeouts cancels its
+            # sock_connect calls mid-flight, and under uvloop the closed sockets'
+            # descriptors get reused before the loop forgets them ("File
+            # descriptor N is used by transport"), failing unrelated forwards.
+            connector = aiohttp.TCPConnector(limit=max_conn or 0, keepalive_timeout=2, happy_eyeballs_delay=None)
             self._session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=aiohttp.ClientTimeout(
                     total=None,
-                    sock_connect=10.0,
+                    # A saturated router can take tens of seconds to accept;
+                    # that is queueing, not failure.
+                    sock_connect=_ROUTER_CONNECT_TIMEOUT_SECONDS,
                     sock_read=self.engine_config.forwarding_inference_timeout_sec,
                 ),
             )

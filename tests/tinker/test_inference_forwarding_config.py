@@ -33,7 +33,7 @@ async def test_forwarding_client_uses_configured_timeout_and_connection_limit() 
     client = SkyRLTrainInferenceForwardingClient(config, db_engine=None)
     try:
         session = client._get_session()
-        assert session.timeout.sock_connect == 10.0
+        assert session.timeout.sock_connect == 60.0
         assert session.timeout.sock_read == 1800.0
         # No overall deadline: a request may wait in the connector queue for
         # as long as the engine takes to get to it.
