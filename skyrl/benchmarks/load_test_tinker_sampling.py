@@ -509,6 +509,7 @@ def run_server(args: argparse.Namespace) -> None:
         checkpoints_base=str(workdir / "checkpoints"),
         forwarding_inference_max_connections=args.forwarding_max_connections,
         forwarding_inference_timeout_sec=args.forwarding_timeout,
+        **({"external_future_retrieved_ttl_sec": args.retrieved_ttl} if args.retrieved_ttl is not None else {}),
     )
     profile_path = os.environ.get("TINKER_LOADTEST_PROFILE")
     if profile_path:
@@ -635,6 +636,8 @@ def start_api_server(args: argparse.Namespace, workdir: Path, vllm_url: str) -> 
     ]
     if args.forwarding_max_connections is not None:
         cmd += ["--forwarding-max-connections", str(args.forwarding_max_connections)]
+    if args.retrieved_ttl is not None:
+        cmd += ["--retrieved-ttl", str(args.retrieved_ttl)]
     print(f"[orchestrator] starting API server: {' '.join(cmd)}")
     print(f"[orchestrator] server log: {log_path}")
     proc = subprocess.Popen(cmd, stdout=open(log_path, "w"), stderr=subprocess.STDOUT, start_new_session=True)
@@ -817,6 +820,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--forwarding-timeout", type=float, default=300.0, help="EngineConfig.forwarding_inference_timeout_sec"
+    )
+    p.add_argument(
+        "--retrieved-ttl",
+        type=float,
+        default=None,
+        help="EngineConfig.external_future_retrieved_ttl_sec for the launched server (memory = rate x size x ttl)",
     )
     p.add_argument("--server-startup-timeout", type=float, default=120.0)
     p.add_argument("--api-port", type=int, default=DEFAULT_API_PORT)
