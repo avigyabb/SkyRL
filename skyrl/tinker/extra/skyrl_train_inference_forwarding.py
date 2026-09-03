@@ -18,6 +18,8 @@ from skyrl.tinker.db_models import EngineStateDB, FutureDB, RequestStatus
 from skyrl.tinker.external_future_store import ExternalFutureStore
 from skyrl.utils.log import logger
 
+_FORWARDING_INFERENCE_TIMEOUT_SECONDS = 2048.0
+
 
 class SkyRLTrainInferenceForwardingClient:
     """Forwards EXTERNAL sample requests to the SkyRL-Train-managed vLLM."""
@@ -42,7 +44,7 @@ class SkyRLTrainInferenceForwardingClient:
         max_conn = engine_config.forwarding_inference_max_connections
         max_keepalive = max(max_conn // 4, 32) if max_conn is not None else None
         self._http_client: httpx.AsyncClient = httpx.AsyncClient(
-            timeout=httpx.Timeout(300.0, connect=10.0),
+            timeout=httpx.Timeout(_FORWARDING_INFERENCE_TIMEOUT_SECONDS, connect=10.0),
             limits=httpx.Limits(
                 max_connections=max_conn,
                 max_keepalive_connections=max_keepalive,
@@ -114,14 +116,14 @@ class SkyRLTrainInferenceForwardingClient:
             await session.commit()
 
     async def _forward_with_retry(self, sample_req, model_id: str, *, base_model: str | None) -> types.SampleOutput:
-        # httpx.RequestError covers ConnectError, ReadError, TimeoutException, etc.
-        # HTTP 4xx/5xx surfaces as RuntimeError below and is NOT retried.
+        # RequestError covers transport failures; HTTPStatusError covers the
+        # transient vLLM 5xx responses raised below. Client errors remain final.
         try:
             proxy_url = await self._resolve_proxy_url()
             return await self._forward(proxy_url, sample_req, model_id, base_model=base_model)
-        except httpx.RequestError as e:
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
             logger.warning(
-                "Network error talking to %s (%s: %s) — refreshing proxy URL and retrying once",
+                "Transient error talking to %s (%s: %s) — refreshing proxy URL and retrying once",
                 self._cached_proxy_url,
                 type(e).__name__,
                 e,
@@ -176,6 +178,12 @@ class SkyRLTrainInferenceForwardingClient:
 
         url = f"{proxy_url}/v1/completions"
         response = await self._http_client.post(url, json=payload, headers=headers)
+        if response.status_code >= 500:
+            raise httpx.HTTPStatusError(
+                f"vLLM /v1/completions returned {response.status_code}: {response.text}",
+                request=response.request,
+                response=response,
+            )
         if response.status_code >= 400:
             raise RuntimeError(f"vLLM /v1/completions returned {response.status_code}: {response.text}")
         try:

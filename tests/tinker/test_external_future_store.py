@@ -4,6 +4,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -26,6 +27,7 @@ from skyrl.tinker.db_models import (
 )
 from skyrl.tinker.external_future_store import ExternalFutureStore
 from skyrl.tinker.extra.skyrl_train_inference_forwarding import (
+    _FORWARDING_INFERENCE_TIMEOUT_SECONDS,
     SkyRLTrainInferenceForwardingClient,
 )
 
@@ -580,6 +582,46 @@ async def test_forwarding_client_completes_in_memory_future(future_store, monkey
         types.RequestType.EXTERNAL,
         result.model_dump_json(),
     )
+
+
+@pytest.mark.asyncio
+async def test_forwarding_client_allows_full_burst_timeout(future_store):
+    store, engine, _ = future_store
+    client = SkyRLTrainInferenceForwardingClient(EngineConfig(base_model="model_a"), engine, store)
+    try:
+        assert client._http_client.timeout.read == _FORWARDING_INFERENCE_TIMEOUT_SECONDS
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_forwarding_client_retries_vllm_server_error(future_store, monkeypatch):
+    store, engine, _ = future_store
+    client = SkyRLTrainInferenceForwardingClient(EngineConfig(base_model="model_a"), engine, store)
+    result = types.SampleOutput(sequences=[])
+    attempts = 0
+
+    async def resolve_proxy_url(*, force_refresh=False):
+        return "http://vllm"
+
+    async def forward(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            request = httpx.Request("POST", "http://vllm/v1/completions")
+            response = httpx.Response(500, request=request)
+            raise httpx.HTTPStatusError("transient vLLM failure", request=request, response=response)
+        return result
+
+    monkeypatch.setattr(client, "_resolve_proxy_url", resolve_proxy_url)
+    monkeypatch.setattr(client, "_forward", forward)
+    try:
+        actual = await client._forward_with_retry(SimpleNamespace(), "model_a", base_model="model_a")
+    finally:
+        await client.aclose()
+
+    assert actual == result
+    assert attempts == 2
 
 
 @pytest.mark.asyncio
