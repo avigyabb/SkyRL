@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Load test: is the Tinker API server the bottleneck at N concurrent sample requests?
 
+Structure follows Chuck Tang's SQLite QueuePool repro
+(https://gist.github.com/j316chuck/f44f35572ffb8584519d13b943f99ef8): a barrier
+fake vLLM, the real API server, and a Tinker-SDK-shaped client, extended with
+orchestration, server profiling/monitoring, payload sizing and a raw client that
+can exceed the SDK's in-flight cap.
+
 Exercises the API server layers on the non-colocated SkyRL-Train path
 (``backend=megatron``, ``trainer.placement.colocate_all=false``): FastAPI +
 uvicorn, the SQLite-backed session/model tables, the in-memory
@@ -75,6 +81,8 @@ DEFAULT_REQUESTS_PER_WORKER = 16384
 # The Tinker SDK gives up on each retrieve_future poll after 45s and re-polls
 # the same request_id (the server would hold it for up to 300s).
 SDK_RETRIEVE_POLL_TIMEOUT_SECONDS = 45.0
+# The SDK gives up on a request after this many consecutive connection errors.
+SDK_MAX_CONNECTION_ERROR_RETRIES = 16
 
 
 # --------------------------------------------------------------------------- #
@@ -82,13 +90,75 @@ SDK_RETRIEVE_POLL_TIMEOUT_SECONDS = 45.0
 # --------------------------------------------------------------------------- #
 
 
+class _SharedCounters:
+    """Request counters shared by the fake router's worker processes."""
+
+    def __init__(self) -> None:
+        import multiprocessing
+
+        self._lock = multiprocessing.Lock()
+        self._values = {
+            k: multiprocessing.Value("q", 0, lock=False) for k in ("received", "completed", "in_flight", "peak")
+        }
+
+    def enter(self) -> None:
+        with self._lock:
+            self._values["received"].value += 1
+            self._values["in_flight"].value += 1
+            self._values["peak"].value = max(self._values["peak"].value, self._values["in_flight"].value)
+
+    def exit(self, completed: bool) -> None:
+        with self._lock:
+            self._values["in_flight"].value -= 1
+            if completed:
+                self._values["completed"].value += 1
+
+    def snapshot(self) -> dict[str, int]:
+        with self._lock:
+            v = self._values
+            return {
+                "received": v["received"].value,
+                "completed": v["completed"].value,
+                "in_flight": v["in_flight"].value,
+                "peak_in_flight": v["peak"].value,
+            }
+
+
 def run_fake_vllm(args: argparse.Namespace) -> None:
+    """Serve the fake router; with --router-workers > 1, fork workers sharing the port (SO_REUSEPORT)."""
+    import multiprocessing
+
+    counters = _SharedCounters()
+    workers = max(1, args.router_workers)
+    if workers == 1:
+        _serve_fake_vllm(args, counters, worker_index=0, workers=1)
+        return
+    procs = [
+        multiprocessing.Process(target=_serve_fake_vllm, args=(args, counters, i, workers), daemon=True)
+        for i in range(workers)
+    ]
+    for proc in procs:
+        proc.start()
+
+    def terminate_workers(signum, frame):
+        # SIGTERM from the orchestrator would otherwise leave the workers
+        # orphaned (daemon cleanup only runs on a normal exit).
+        for proc in procs:
+            proc.terminate()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, terminate_workers)
+    for proc in procs:
+        proc.join()
+
+
+def _serve_fake_vllm(args: argparse.Namespace, counters: _SharedCounters, worker_index: int, workers: int) -> None:
     from aiohttp import web
 
-    state = {"received": 0, "completed": 0, "in_flight": 0, "peak_in_flight": 0}
     barrier_requests = args.barrier_requests or args.num_requests
     release = asyncio.Event()
-    admit = asyncio.Semaphore(args.max_num_seqs)
+    # Each worker admits its share of the engine's concurrent sequences.
+    admit = asyncio.Semaphore(max(1, args.max_num_seqs // workers))
     body_cache: dict[tuple[int, int], bytes] = {}
 
     def body_for(n: int, max_tokens: int) -> bytes:
@@ -107,33 +177,33 @@ def run_fake_vllm(args: argparse.Namespace) -> None:
         if not release.is_set():
             print(
                 f"[fake-vllm] barrier timeout after {args.barrier_timeout}s with "
-                f"{state['received']}/{barrier_requests} received -- releasing",
+                f"{counters.snapshot()['received']}/{barrier_requests} received -- releasing",
                 flush=True,
             )
             release.set()
 
     async def completions(request: web.Request) -> web.Response:
         payload = await request.json()
-        state["received"] += 1
-        state["in_flight"] += 1
-        state["peak_in_flight"] = max(state["peak_in_flight"], state["in_flight"])
+        counters.enter()
+        completed = False
         try:
             if args.vllm_mode == "barrier":
-                if state["received"] >= barrier_requests:
+                # Barrier mode is single-process: the release is local state.
+                if counters.snapshot()["received"] >= barrier_requests:
                     release.set()
                 await release.wait()
             else:
                 async with admit:
                     await asyncio.sleep(args.gen_seconds)
-            state["completed"] += 1
+            completed = True
             return web.Response(
                 body=body_for(payload.get("n", 1), payload["max_tokens"]), content_type="application/json"
             )
         finally:
-            state["in_flight"] -= 1
+            counters.exit(completed)
 
     async def stats(_: web.Request) -> web.Response:
-        return web.json_response(state)
+        return web.json_response(counters.snapshot())
 
     async def serve() -> None:
         app = web.Application(client_max_size=64 * 1024 * 1024)
@@ -142,11 +212,15 @@ def run_fake_vllm(args: argparse.Namespace) -> None:
         app.router.add_get("/stats", stats)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
-        site = web.TCPSite(runner, "127.0.0.1", args.vllm_port, backlog=65535)
+        site = web.TCPSite(runner, "127.0.0.1", args.vllm_port, backlog=65535, reuse_port=workers > 1)
         await site.start()
         if args.vllm_mode == "barrier":
             asyncio.create_task(barrier_timeout_watch())
-        print(f"[fake-vllm] mode={args.vllm_mode} listening on 127.0.0.1:{args.vllm_port}", flush=True)
+        if worker_index == 0:
+            print(
+                f"[fake-vllm] mode={args.vllm_mode} workers={workers} listening on 127.0.0.1:{args.vllm_port}",
+                flush=True,
+            )
         await asyncio.Event().wait()
 
     asyncio.run(serve())
@@ -197,13 +271,24 @@ async def raw_worker(args: argparse.Namespace, worker_index: int, count: int) ->
         # (its sample dispatch semaphore); results are then awaited with one
         # long-poll each. Mirror that so the submit burst matches production.
         submit_gate = asyncio.Semaphore(max(1, args.submit_concurrency))
+        # The SDK keeps at most sample_max_concurrent_requests samples in flight
+        # per SamplingClient (submit through result) and queues the rest.
+        outstanding_gate = asyncio.Semaphore(max(1, args.max_outstanding)) if args.max_outstanding else None
 
         async def one(i: int) -> None:
+            if outstanding_gate is None:
+                await _one(i)
+            else:
+                async with outstanding_gate:
+                    await _one(i)
+
+        async def _one(i: int) -> None:
             nonlocal retries_408, reconnects, asample_retries, poll_timeouts, completed
             t0 = time.monotonic()
             phase = "asample"
             try:
                 async with submit_gate:
+                    connection_failures = 0
                     while True:
                         try:
                             async with session.post(f"{base}/asample", json=payload) as resp:
@@ -212,17 +297,25 @@ async def raw_worker(args: argparse.Namespace, worker_index: int, count: int) ->
                                     return
                                 request_id = (await resp.json())["request_id"]
                             break
-                        except (aiohttp.ServerDisconnectedError, aiohttp.ClientOSError) as e:
-                            # The SDK re-sends an asample whose connection was
-                            # reset (the server may or may not have accepted
-                            # the first copy). Mirror that, once per request.
-                            if asample_retries >= count:
-                                record_error("asample_retry_budget_exhausted", str(e))
+                        except (
+                            aiohttp.ServerDisconnectedError,
+                            aiohttp.ClientOSError,
+                            aiohttp.ClientConnectorError,
+                            asyncio.TimeoutError,
+                        ) as e:
+                            # The SDK re-sends an asample whose connection failed
+                            # or timed out (the server may or may not have
+                            # accepted the first copy), up to 16 times with
+                            # exponential backoff.
+                            connection_failures += 1
+                            if connection_failures > SDK_MAX_CONNECTION_ERROR_RETRIES:
+                                record_error("asample_connection_retries_exhausted", str(e))
                                 return
                             asample_retries += 1
-                            await asyncio.sleep(0.05)
+                            await asyncio.sleep(min(2 ** (connection_failures - 1), 30))
                 submit_latency.append(time.monotonic() - t0)
                 phase = "retrieve"
+                retrieve_failures = 0
                 while True:
                     if time.monotonic() - t0 > args.request_timeout:
                         record_error("request_timeout", f"no result after {args.request_timeout}s")
@@ -244,16 +337,21 @@ async def raw_worker(args: argparse.Namespace, worker_index: int, count: int) ->
                         # and immediately re-polls the same request_id.
                         poll_timeouts += 1
                         continue
-                    except (aiohttp.ServerDisconnectedError, aiohttp.ClientOSError) as e:
-                        # The server dropped the connection (e.g. uvicorn's
-                        # keep-alive timer firing during an event-loop stall).
-                        # retrieve_future is idempotent and the Tinker SDK
-                        # retries it, so do the same.
+                    except (
+                        aiohttp.ServerDisconnectedError,
+                        aiohttp.ClientOSError,
+                        aiohttp.ClientConnectorError,
+                    ) as e:
+                        # The server dropped or refused the connection (e.g.
+                        # uvicorn's keep-alive timer firing during an event-loop
+                        # stall, or a full accept backlog). retrieve_future is
+                        # idempotent; the SDK retries with backoff, so do the same.
                         reconnects += 1
-                        if reconnects > args.max_reconnects * count:
-                            record_error("retrieve_reconnect_budget_exhausted", str(e))
+                        retrieve_failures += 1
+                        if retrieve_failures > SDK_MAX_CONNECTION_ERROR_RETRIES:
+                            record_error("retrieve_connection_retries_exhausted", str(e))
                             return
-                        await asyncio.sleep(0.05)
+                        await asyncio.sleep(min(2 ** (retrieve_failures - 1), 30))
                 e2e_latency.append(time.monotonic() - t0)
                 completed += 1
             except aiohttp.ClientConnectorError as e:
@@ -427,6 +525,8 @@ def run_load(args: argparse.Namespace) -> dict[str, Any]:
                 str(args.request_timeout),
                 "--max-reconnects",
                 str(args.max_reconnects),
+                "--max-outstanding",
+                str(args.max_outstanding // workers if args.max_outstanding else 0),
                 "--poll-timeout",
                 str(args.poll_timeout),
                 "--submit-concurrency",
@@ -501,15 +601,20 @@ def run_server(args: argparse.Namespace) -> None:
         "-c",
         "import time; time.sleep(10**9)",
     ]
+    # Older commits lack some of these knobs; pass only the fields this
+    # EngineConfig knows so the same harness can baseline them.
+    optional_fields = {
+        "forwarding_inference_max_connections": args.forwarding_max_connections,
+        "forwarding_inference_timeout_sec": args.forwarding_timeout,
+        "external_future_retrieved_ttl_sec": args.retrieved_ttl,
+    }
     tinker_api.app.state.engine_config = EngineConfig(
         base_model=args.base_model,
         backend="megatron",
         backend_config=NON_COLOCATED_MEGATRON_BACKEND_CONFIG,
         database_url=database_url,
         checkpoints_base=str(workdir / "checkpoints"),
-        forwarding_inference_max_connections=args.forwarding_max_connections,
-        forwarding_inference_timeout_sec=args.forwarding_timeout,
-        **({"external_future_retrieved_ttl_sec": args.retrieved_ttl} if args.retrieved_ttl is not None else {}),
+        **{k: v for k, v in optional_fields.items() if v is not None and k in EngineConfig.model_fields},
     )
     profile_path = os.environ.get("TINKER_LOADTEST_PROFILE")
     if profile_path:
@@ -525,7 +630,14 @@ def run_server(args: argparse.Namespace) -> None:
 
         signal.signal(signal.SIGUSR1, dump_profile)
         profiler.enable()
-    uvicorn.run(tinker_api.app, host="127.0.0.1", port=args.api_port, log_config=get_uvicorn_log_config())
+    uvicorn.run(
+        tinker_api.app,
+        host="127.0.0.1",
+        port=args.api_port,
+        log_config=get_uvicorn_log_config(),
+        backlog=getattr(tinker_api, "SKYRL_HTTP_CONNECTION_LIMIT", 2048),
+        timeout_keep_alive=getattr(tinker_api, "HTTP_KEEP_ALIVE_TIMEOUT_SECONDS", 5),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -699,6 +811,8 @@ def run_all(args: argparse.Namespace) -> dict[str, Any]:
             str(args.max_num_seqs),
             "--gen-seconds",
             str(args.gen_seconds),
+            "--router-workers",
+            str(args.router_workers),
         ]
         children.append(subprocess.Popen(vllm_cmd))
         wait_for_http(f"{vllm_url}/healthz", 30)
@@ -798,6 +912,12 @@ def parse_args() -> argparse.Namespace:
         help="max asample POSTs in flight across all workers (Tinker SDK default: 400 per client)",
     )
     p.add_argument(
+        "--max-outstanding",
+        type=int,
+        default=0,
+        help="cap on samples in flight across all workers, like the SDK's sample_max_concurrent_requests (0 = unlimited)",
+    )
+    p.add_argument(
         "--max-reconnects",
         type=float,
         default=2.0,
@@ -835,6 +955,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--barrier-timeout", type=float, default=600.0, help="release the barrier anyway after this long")
     p.add_argument("--max-num-seqs", type=int, default=1024, help="latency mode: concurrent generations")
     p.add_argument("--gen-seconds", type=float, default=2.0, help="latency mode: seconds per generation")
+    p.add_argument(
+        "--router-workers",
+        type=int,
+        default=1,
+        help="fake router processes sharing the port (latency mode only); raise when large results saturate one process",
+    )
     p.add_argument("--json-out", type=Path, default=None)
     # internal
     p.add_argument("--vllm-url", default=f"http://127.0.0.1:{DEFAULT_VLLM_PORT}")
