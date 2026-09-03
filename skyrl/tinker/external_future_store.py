@@ -109,13 +109,7 @@ class ExternalFutureStore:
         return entry.status, types.RequestType.EXTERNAL, entry.result_data
 
     def mark_retrieved(self, request_id: int) -> None:
-        """Record that a result was delivered, starting its retry-grace clock.
-
-        Called by the endpoint after the response is serialized and handed to
-        the transport — not by wait() — so the short retrieved-TTL measures time
-        since delivery, and a slow in-flight delivery is never swept out from
-        under a retrying client.
-        """
+        """Start the retry grace period after the response body is sent."""
         entry = self._entries.get(request_id)
         if entry is not None:
             entry.retrieved_at = datetime.now(timezone.utc)

@@ -43,6 +43,13 @@ def _sample_input(seq_id: int, sampling_session_id: str = "session_a") -> types.
     )
 
 
+async def _send_response(response) -> None:
+    async def send(_message):
+        pass
+
+    await response({"type": "http"}, None, send)
+
+
 def test_get_or_create_deduplicates_sdk_retries():
     store = ExternalFutureStore()
     sample_input = _sample_input(7)
@@ -272,6 +279,7 @@ async def test_sustained_model_path_rollouts_training_futures_and_heartbeats(fut
                 )
             )
             assert all(response.body == expected_sample for response in retrievals)
+            await asyncio.gather(*(_send_response(response) for response in retrievals))
             assert all(store._entries[request_id].retrieved_at is not None for request_id in request_ids)
 
         repeated = await api.retrieve_future(api.RetrieveFutureRequest(request_id=str(request_ids[-1])), sample_request)
@@ -695,3 +703,56 @@ async def test_retrieve_future_serializes_in_memory_result_as_proto(future_store
     assert response.media_type == "application/x-protobuf"
     result = deserialize_proto_response(response.body, SampleResponse)
     assert result.sequences[0].tokens == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_future_marks_retrieved_after_response_body_is_sent(future_store):
+    store, _, _ = future_store
+    request_id = store.create("model_a", _sample_input(1))
+    await store.complete(request_id, types.SampleOutput(sequences=[]), RequestStatus.COMPLETED)
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(external_future_store=store, future_waiters={})),
+        headers={},
+    )
+    response = await api.retrieve_future(api.RetrieveFutureRequest(request_id=str(request_id)), request)
+    body_send_started = asyncio.Event()
+    release_body_send = asyncio.Event()
+
+    async def send(message):
+        if message["type"] == "http.response.body":
+            body_send_started.set()
+            await release_body_send.wait()
+
+    response_task = asyncio.create_task(response({"type": "http"}, None, send))
+    await body_send_started.wait()
+    assert store._entries[request_id].retrieved_at is None
+    now = datetime.now(timezone.utc)
+    store._sweep(now + timedelta(seconds=ExternalFutureStore._RETRIEVED_TTL_SECONDS + 1))
+    assert request_id in store._entries
+
+    release_body_send.set()
+    await response_task
+    assert store._entries[request_id].retrieved_at is not None
+    store._sweep(now + timedelta(seconds=ExternalFutureStore._RETRIEVED_TTL_SECONDS + 1))
+    assert request_id not in store._entries
+
+
+@pytest.mark.asyncio
+async def test_retrieve_future_does_not_mark_retrieved_when_response_send_fails(future_store):
+    store, _, _ = future_store
+    request_id = store.create("model_a", _sample_input(1))
+    await store.complete(request_id, types.SampleOutput(sequences=[]), RequestStatus.COMPLETED)
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(external_future_store=store, future_waiters={})),
+        headers={},
+    )
+    response = await api.retrieve_future(api.RetrieveFutureRequest(request_id=str(request_id)), request)
+
+    async def send(message):
+        if message["type"] == "http.response.body":
+            raise OSError("client disconnected")
+
+    with pytest.raises(OSError, match="client disconnected"):
+        await response({"type": "http"}, None, send)
+
+    assert store._entries[request_id].retrieved_at is None
