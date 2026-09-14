@@ -1176,6 +1176,15 @@ class RemoteInferenceClient(InferenceEngineInterface):
             {"method": "skyrl_wake_for_weight_sync", "kwargs": {"tags": tags}},
         )
 
+    async def push_sonic_artifacts(self, mirror: str) -> Dict[str, Any]:
+        """Publish every engine's staged weight shards and compile cache to a sonicloader
+        ``mirror`` (see ``NewInferenceWorkerWrap.push_artifacts``). Idempotent: parts already
+        published under their digest are skipped, so calling it on every startup is cheap."""
+        return await self._call_all_servers(
+            "/collective_rpc",
+            {"method": "push_artifacts", "args": [mirror]},
+        )
+
     async def reset_prefix_cache(
         self,
         reset_running_requests: bool = False,

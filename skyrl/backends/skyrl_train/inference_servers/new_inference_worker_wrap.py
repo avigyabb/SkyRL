@@ -204,6 +204,23 @@ class NewInferenceWorkerWrap:
     model_config: "ModelConfig"
     device: torch.device
 
+    def push_artifacts(self, dst: str, capture_dir: str | None = None, force: bool = False) -> dict:
+        """Publish this engine's weight shards and compile cache to a sonicloader mirror.
+
+        vLLM takes a single ``--worker-extension-cls``, which SkyRL uses for this class,
+        so sonicloader's ``SonicWorkerExtension.push_artifacts`` is exposed here instead.
+        Same semantics: every rank uploads its own shard, rank 0 uploads the compile
+        cache, and parts already published under their digest are skipped.
+        """
+        try:
+            from sonic.adapters.vllm.worker import SonicWorkerExtension
+        except ImportError as e:
+            raise RuntimeError(
+                "push_artifacts needs the `sonic-loader` package in the engine environment "
+                "(generator.inference_engine.sonic_mirror)."
+            ) from e
+        return SonicWorkerExtension.push_artifacts(self, dst, capture_dir=capture_dir, force=force)
+
     def fetch_weights(self, target_version: int, sync_dir: str | None = None, uri: str | None = None):
         """Fetch/apply a checkpoint delta before the paused reload phase."""
         if self.weight_transfer_engine is None:

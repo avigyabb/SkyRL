@@ -1,5 +1,6 @@
 import os
 import shutil
+import time
 from collections import defaultdict
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -65,6 +66,7 @@ from skyrl.backends.skyrl_train.weight_sync.fp8 import (
     registered_fp8_spec_names,
     resolve_fp8_spec,
 )
+from skyrl.backends.skyrl_train.workers.megatron import hf_import_cache
 from skyrl.backends.skyrl_train.workers.megatron.adapter_store import (
     AdapterStore,
     LoraSignature,
@@ -161,9 +163,13 @@ class MegatronWorker:
         enable_mtp=False,
         language_model_only=False,
         bridge_weights_path=None,
+        load_hf_weights=True,
     ):
         """
         Initialize the Megatron-Bridge bridge and provider objects + hf_config and tokenizer
+
+        ``load_hf_weights=False`` builds the provider without the HF import hook; the
+        caller then fills the weights itself (HF import cache hit).
 
         ``bridge_weights_path`` (fake-INT4 QAT): when set, the Megatron-Bridge loads
         its BF16 master weights from this path instead of ``model_path``. Used when
@@ -247,7 +253,11 @@ class MegatronWorker:
                 "DeepSeek-V3 bridge (vision tower + mm projector dropped)"
             )
 
-        provider = bridge.to_megatron_provider()
+        provider = bridge.to_megatron_provider(load_weights=load_hf_weights)
+        if not load_hf_weights:
+            # Weights arrive after the build from the HF import cache; skip the
+            # random init they would overwrite.
+            provider.perform_initialization = False
 
         if not enable_mtp and getattr(provider, "mtp_num_layers", None):
             logger.info(f"Disabling MTP for training (mtp_num_layers={provider.mtp_num_layers} -> None)")
@@ -442,6 +452,71 @@ class MegatronWorker:
                 exclude_modules=[] if lora_config.exclude_modules is None else lora_config.exclude_modules,
                 normalize_moe_lora=self.cfg.policy.megatron_config.lora_config.normalize_moe_lora,
             )
+
+    def _resolve_hf_import_cache(
+        self,
+        model_path: str,
+        megatron_config,
+        *,
+        bridge_weights_path: Optional[str],
+        language_model_only: bool,
+        enable_mtp: bool,
+        is_lora: bool,
+    ) -> Optional["hf_import_cache.HFImportCache"]:
+        """Decide whether this build can skip the HF import (or should fill the cache).
+
+        Returns ``None`` when the cache is off or does not apply: LoRA wraps the base
+        params before the build finishes, and fake-INT4 QAT loads from a different
+        checkpoint than ``model_path``.
+        """
+        root = megatron_config.hf_import_cache_dir
+        if not root:
+            return None
+        transformer_config_kwargs = get_config_as_dict(megatron_config.transformer_config_kwargs)
+        skip_reason = None
+        if is_lora:
+            skip_reason = "LoRA"
+        elif bridge_weights_path:
+            skip_reason = "fake-INT4 QAT"
+        if skip_reason:
+            if self._rank == 0:
+                logger.info(f"hf_import_cache_dir set but not applicable with {skip_reason}; importing from HF")
+            return None
+        factors = hf_import_cache.import_factors(
+            model_path=model_path,
+            bf16=self.cfg.bf16,
+            language_model_only=language_model_only,
+            enable_mtp=enable_mtp,
+            model_config_kwargs=get_config_as_dict(megatron_config.model_config_kwargs),
+            transformer_config_kwargs=transformer_config_kwargs,
+        )
+        cache = hf_import_cache.resolve(os.path.expanduser(root), model_path, factors)
+        if self._rank == 0:
+            logger.info(hf_import_cache.describe(cache))
+        return cache
+
+    def _apply_hf_import_cache(self, cache: Optional["hf_import_cache.HFImportCache"], build_start: float) -> None:
+        """After the model is built: load the cached weights on a hit, or save them on a miss."""
+        if cache is None:
+            if self._rank == 0:
+                logger.info(f"megatron model build (HF import) took {time.time() - build_start:.2f}s")
+            return
+        if cache.hit:
+            t0 = time.time()
+            hf_import_cache.load_into(self.actor_module, cache.path)
+            if self._rank == 0:
+                logger.info(
+                    f"megatron model build took {t0 - build_start:.2f}s, "
+                    f"HF import cache load took {time.time() - t0:.2f}s ({cache.path})"
+                )
+        else:
+            t0 = time.time()
+            hf_import_cache.save_from(self.actor_module, cache.path, cache.factors)
+            if self._rank == 0:
+                logger.info(
+                    f"megatron model build (HF import) took {t0 - build_start:.2f}s, "
+                    f"HF import cache save took {time.time() - t0:.2f}s ({cache.path})"
+                )
 
     def make_megatron_module(
         self,
@@ -768,6 +843,15 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # served checkpoint is INT4) redirect the trainer's BF16 master weights.
         bridge_weights_path = self._maybe_setup_fake_int4_qat()
 
+        import_cache = self._resolve_hf_import_cache(
+            model_path,
+            self.cfg.policy.megatron_config,
+            bridge_weights_path=bridge_weights_path,
+            language_model_only=self.cfg.policy.language_model_only,
+            enable_mtp=self.cfg.mtp.enabled,
+            is_lora=self._is_lora,
+        )
+
         # initialize the bridge and provider objects
         self.init_configs(
             model_path,
@@ -779,6 +863,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             language_model_only=self.cfg.policy.language_model_only,
             bridge_weights_path=bridge_weights_path,
             enable_mtp=self.cfg.mtp.enabled,
+            load_hf_weights=not (import_cache is not None and import_cache.hit),
         )
 
         if self.enable_router_replay:
@@ -797,6 +882,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
 
         # wrap with DDP for training
         wrap_with_ddp = not self.cfg.policy.inference_only_init
+        build_start = time.time()
         self.actor_module = self.make_megatron_module(
             wrap_with_ddp=wrap_with_ddp,
             ddp_config=self.cfg.policy.megatron_config.ddp_config if wrap_with_ddp else None,
@@ -810,6 +896,8 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         ):  # if not local path, try downloading model weights from huggingface
             snapshot_download(model_path)  # will be no-op if already downloaded
         torch.distributed.barrier()
+
+        self._apply_hf_import_cache(import_cache, build_start)
 
         if self._rank == 0:
             print_model_size(self.actor_module[0])
@@ -1656,6 +1744,15 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         # (global) fake-quant hook keeps the KL anchor in the same weight space.
         bridge_weights_path = self._maybe_setup_fake_int4_qat()
 
+        import_cache = self._resolve_hf_import_cache(
+            model_path,
+            self.cfg.ref.megatron_config,
+            bridge_weights_path=bridge_weights_path,
+            language_model_only=self.cfg.ref.language_model_only,
+            enable_mtp=False,
+            is_lora=False,
+        )
+
         # initialize the bridge and provider objects
         self.init_configs(
             model_path,
@@ -1667,8 +1764,10 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
             enable_mtp=False,
             language_model_only=self.cfg.ref.language_model_only,
             bridge_weights_path=bridge_weights_path,
+            load_hf_weights=not (import_cache is not None and import_cache.hit),
         )
 
+        build_start = time.time()
         self.actor_module = self.make_megatron_module(
             wrap_with_ddp=False,
             ddp_config=None,
@@ -1681,6 +1780,8 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         ):  # if not local path, try downloading model weights from huggingface
             snapshot_download(model_path)  # will be no-op if already downloaded
         torch.distributed.barrier()
+
+        self._apply_hf_import_cache(import_cache, build_start)
 
         # load weights
         if self._rank == 0:

@@ -484,6 +484,13 @@ class MegatronConfig(BaseConfig):
     """Pipeline model parallel size, sharding model layers across GPUs."""
     context_parallel_size: int = 1
     """Context parallel size, reducing activation memory along the sequence-length dimension."""
+    hf_import_cache_dir: Optional[str] = None
+    """Directory (local or shared filesystem) caching the HF -> Megatron weight import as a Megatron
+    distributed checkpoint. The first run of a checkpoint + model config imports from HF as usual and
+    saves the converted weights there; later runs load them instead of re-reading and re-converting
+    the HF safetensors on every rank. The cache is parallelism-agnostic and keyed on the checkpoint
+    files, library versions, and the config knobs that change parameter shapes. Not used with LoRA
+    or fake-INT4 QAT. ``None`` disables it."""
     expert_model_parallel_size: int = 1
     """Expert parallel size, sharding expert modules across GPUs."""
     expert_tensor_parallel_size: Optional[int] = None
@@ -649,6 +656,13 @@ class PlacementConfig(BaseConfig):
 
     colocate_all: bool = True
     """When True, training and inference share the same GPUs."""
+    overlap_worker_spawn: bool = True
+    """Spawn the policy/ref/critic Ray actors (process start, backend imports, process groups)
+    while the inference engines are still starting, instead of after they are healthy. Model
+    loading still waits for the engines when colocated. The trainer processes then hold a CUDA
+    context on the shared GPUs during vLLM's memory profiling, which shrinks the KV cache by that
+    much; set to ``False`` to restore the fully sequential startup if ``gpu_memory_utilization``
+    is pushed to the limit."""
     colocate_policy_ref: bool = True
     """When colocate_all is False, True (default) still colocates policy and ref
     on the same GPUs (one shared placement group). Set this item to False to place
@@ -1275,6 +1289,31 @@ class InferenceEngineConfig(BaseConfig):
     with ``trainer.policy.model_config_kwargs.rope_parameters`` (FSDP) or
     ``trainer.policy.megatron_config.transformer_config_kwargs.rope_parameters`` (Megatron). The two
     must agree, and are validated against each other."""
+    sonic_mirror: Optional[str] = None
+    """S3 prefix of a `sonicloader <https://github.com/anyscale/sonicloader>`_ mirror holding
+    pre-sharded weights and the vLLM compile cache (torch.compile / Inductor / Triton / FlashInfer).
+    When set, engines start with ``load_format="sonic"``: a published compile cache is restored
+    before compilation and published weights stream straight into GPU tensors, so warm starts skip
+    both the JIT work and the Hugging Face load. Requires the ``sonic-loader`` package in the
+    engine environment. ``None`` disables it."""
+    sonic_publish_on_startup: bool = True
+    """With ``sonic_mirror`` set, publish the compile cache (and, with ``sonic_stream_weights``,
+    the staged weight shards) once every engine is healthy (``push_artifacts`` over
+    ``/collective_rpc``). Publishing is idempotent, so runs after the first only upload what is
+    missing. Set to ``False`` to only consume an already-published mirror."""
+    sonic_stream_weights: bool = False
+    """With ``sonic_mirror`` set, also stage per-rank weight shards during load (a full copy of the
+    checkpoint under ``SONIC_CAPTURE_DIR``), publish them, and on later boots stream them S3 -> GPU
+    instead of loading from Hugging Face. Needs sonicloader's native engine (``libsonicgpu.so``)
+    in the engine environment and a multi-ENI host to beat a local disk; the compile cache alone
+    needs neither, which is why this defaults to ``False``. Once weights are published under a
+    digest, every boot with that engine config streams them, so enable it deliberately."""
+    dummy_initial_weights: bool = False
+    """Start the vLLM engines with ``load_format="dummy"`` and let the weight sync before the first
+    step supply the real weights, skipping the engines' own checkpoint read. That sync always runs,
+    so this removes one full model load per engine for free. Not for models with buffers the sync
+    does not cover (e.g. Gemma-3's ``normalizer``), and rejected together with
+    ``skip_initial_weight_sync``, ``sonic_mirror``, LoRA adapter sync, and simulated training."""
     speculative_config: Optional[Dict[str, Any]] = None
     """Speculative-decoding config passed through to vLLM for MTP drafter decoding.
     (needs ``policy.megatron_config.mtp_num_layers`` > 0 to train mtp). ``None`` disables it."""
@@ -1527,6 +1566,13 @@ class TrainerConfig(BaseConfig):
     """Batch size for evaluation."""
     eval_before_train: bool = True
     """Evaluate the model once before training starts."""
+    skip_initial_weight_sync: bool = False
+    """Skip the weight sync that normally runs before the first step. Only valid for a fresh
+    (``resume_mode=none``), non-colocated run where the inference engines loaded the same checkpoint
+    as the trainer, so the sync would rewrite identical weights. Colocated engines are slept at
+    level 2 after startup, which discards their weights, so there the first sync is what restores
+    them. Also rejected with ``dummy_initial_weights``, ``fp8_weight_sync_mode``, LoRA adapter sync,
+    and the ``delta`` backend, which all rely on that first sync to supply real weights."""
     eval_interval: int = 5
     """Evaluate against the validation dataset every N steps. ``-1`` to disable evaluation."""
     max_prompt_length: int = 512

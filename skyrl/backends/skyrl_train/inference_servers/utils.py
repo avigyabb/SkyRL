@@ -247,6 +247,20 @@ def build_vllm_cli_args(cfg: SkyRLTrainConfig) -> Namespace:
         args.speculative_config = spec_cfg
         logger.info(f"vLLM speculative decoding enabled: speculative_config={spec_cfg}")
 
+    if ie_cfg.dummy_initial_weights:
+        # The weight sync before the first step supplies the real weights.
+        args.load_format = "dummy"
+
+    if ie_cfg.sonic_mirror is not None:
+        # sonicloader mirror: restore the published compile cache before compiling and
+        # stream published weights into the GPU tensors; otherwise load from HF. `capture`
+        # stages the per-rank shards for the post-start push; the cache is pushed either way.
+        args.load_format = "sonic"
+        args.model_loader_extra_config = {
+            "mirror": ie_cfg.sonic_mirror,
+            "capture": ie_cfg.sonic_publish_on_startup and ie_cfg.sonic_stream_weights,
+        }
+
     engine_kwargs = get_config_as_dict(ie_cfg.engine_init_kwargs)
     _apply_serialized_fp8_weight_sync_defaults(
         ie_cfg,

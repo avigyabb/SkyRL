@@ -1,4 +1,5 @@
 import functools
+import importlib.util
 import ipaddress
 import logging
 import math
@@ -587,7 +588,63 @@ def validate_inference_engine_cfg(cfg: SkyRLTrainConfig):
     Raises:
         ValueError / NotImplementedError / AssertionError: on invalid combinations.
     """
+    # Local import: inference_servers.utils pulls in the vLLM worker extension module.
+    from skyrl.backends.skyrl_train.inference_servers.utils import (
+        _uses_lora_weight_sync,
+    )
+
     ie_cfg = cfg.generator.inference_engine
+
+    if ie_cfg.dummy_initial_weights:
+        if ie_cfg.backend != "vllm":
+            raise ValueError("generator.inference_engine.dummy_initial_weights requires backend='vllm'")
+        if ie_cfg.sonic_mirror is not None:
+            raise ValueError("dummy_initial_weights and sonic_mirror both set vLLM's load_format; pick one")
+        if _uses_lora_weight_sync(cfg):
+            raise ValueError(
+                "dummy_initial_weights needs full-weight sync; LoRA adapter sync never writes the base weights"
+            )
+        if cfg.trainer.fully_async.simulate_training:
+            raise ValueError("dummy_initial_weights requires a real weight sync; simulate_training never syncs")
+        if "load_format" in get_config_as_dict(ie_cfg.engine_init_kwargs):
+            raise ValueError("dummy_initial_weights sets load_format; remove it from engine_init_kwargs")
+
+    if cfg.trainer.skip_initial_weight_sync:
+        if cfg.trainer.placement.colocate_all:
+            raise ValueError(
+                "trainer.skip_initial_weight_sync requires placement.colocate_all=false: colocated engines are "
+                "slept at level 2 after startup, which discards their weights, so the first sync must restore them"
+            )
+        if ie_cfg.dummy_initial_weights or ie_cfg.fp8_weight_sync_mode is not None:
+            raise ValueError(
+                "trainer.skip_initial_weight_sync cannot be combined with dummy_initial_weights or "
+                "fp8_weight_sync_mode: the engines start without real weights"
+            )
+        if _uses_lora_weight_sync(cfg):
+            raise ValueError("trainer.skip_initial_weight_sync is not supported with LoRA adapter sync")
+        if ie_cfg.weight_sync_backend == "delta":
+            raise ValueError("trainer.skip_initial_weight_sync is not supported with weight_sync_backend='delta'")
+        if cfg.trainer.resume_mode not in (None, "none"):
+            raise ValueError("trainer.skip_initial_weight_sync requires resume_mode='none'; a resumed run must sync")
+
+    if ie_cfg.sonic_mirror is not None:
+        if ie_cfg.backend != "vllm":
+            raise ValueError("generator.inference_engine.sonic_mirror requires backend='vllm'")
+        if not ie_cfg.sonic_mirror.startswith("s3://"):
+            raise ValueError(
+                f"generator.inference_engine.sonic_mirror must be an s3:// prefix, got {ie_cfg.sonic_mirror!r}"
+            )
+        if importlib.util.find_spec("sonic") is None:
+            raise ValueError(
+                "generator.inference_engine.sonic_mirror is set but the `sonic-loader` package is not "
+                "installed; see https://github.com/anyscale/sonicloader for the wheel."
+            )
+        if ie_cfg.fp8_weight_sync_mode is not None:
+            raise ValueError("sonic_mirror is incompatible with fp8_weight_sync_mode: both set vLLM's load_format")
+        engine_kwargs = get_config_as_dict(ie_cfg.engine_init_kwargs)
+        clashing = {"load_format", "model_loader_extra_config"} & set(engine_kwargs)
+        if clashing:
+            raise ValueError(f"sonic_mirror sets {sorted(clashing)} on the engine; remove them from engine_init_kwargs")
 
     if ie_cfg.fp8_weight_sync_mode not in (None, BLOCKWISE_FP8):
         raise ValueError(
@@ -849,6 +906,14 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
             )
             env_vars["VLLM_DISABLE_COMPILE_CACHE"] = os.environ["VLLM_DISABLE_COMPILE_CACHE"]
 
+        if cfg.generator.inference_engine.sonic_mirror is not None:
+            # The sonic loader runs inside the engine workers and reads its S3 region and
+            # SONIC_* tuning from the environment; workers inherit the raylet's env, not
+            # the driver's, so forward what the driver has set.
+            for var_name, value in os.environ.items():
+                if var_name in ("AWS_REGION", "AWS_DEFAULT_REGION") or var_name.startswith("SONIC_"):
+                    env_vars[var_name] = value
+
         if not os.environ.get("VLLM_USE_V1", False):
             logger.info(
                 "`VLLM_USE_V1` is not specified, setting `VLLM_USE_V1` to 1. To override, set `VLLM_USE_V1` explicitly"
@@ -867,6 +932,13 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
                 f"Exporting `RAY_CGRAPH_get_timeout` to ray runtime env: {os.environ['RAY_CGRAPH_get_timeout']}"
             )
             env_vars["RAY_CGRAPH_get_timeout"] = os.environ["RAY_CGRAPH_get_timeout"]
+
+    # JIT cache locations set on the driver reach the trainer and engine workers so a
+    # pre-seeded or shared cache directory is used instead of each node's default.
+    for cache_var in ("TRITON_CACHE_DIR", "VLLM_CACHE_ROOT"):
+        if os.environ.get(cache_var):
+            logger.info(f"Exporting `{cache_var}` to ray runtime env: {os.environ[cache_var]}")
+            env_vars[cache_var] = os.environ[cache_var]
 
     # Use max of available GPU counts, defaulting to 1 if none found
     gpu_counts = []
