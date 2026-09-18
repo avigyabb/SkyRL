@@ -33,7 +33,10 @@ from skyrl.backends.skyrl_train.distributed.fsdp_utils import (
     offload_fsdp2_model_to_cpu,
     offload_fsdp_optimizer,
 )
-from skyrl.backends.skyrl_train.distributed.strategy import DistributedStrategy
+from skyrl.backends.skyrl_train.distributed.strategy import (
+    MODEL_SCOPE_ALL,
+    DistributedStrategy,
+)
 from skyrl.backends.skyrl_train.distributed.utils import ModelOrModelOptimPair
 from skyrl.backends.skyrl_train.utils.io import io
 from skyrl.backends.skyrl_train.workers.model_wrapper import HFModelWrapper
@@ -54,6 +57,13 @@ elif version.parse(torch.__version__) >= version.parse("2.4"):
     )
 else:
     CPUOffloadPolicy, FSDPModule, MixedPrecisionPolicy = None, None, None
+
+
+def _require_full_model_scope(model_scope: str) -> None:
+    if model_scope != MODEL_SCOPE_ALL:
+        raise NotImplementedError(
+            f"FSDP offloads the whole module; model_scope={model_scope!r} is only supported with Megatron."
+        )
 
 
 class FSDPStrategy(DistributedStrategy):
@@ -113,12 +123,14 @@ class FSDPStrategy(DistributedStrategy):
 
         self.device_mesh = create_device_mesh(world_size=self.world_size, fsdp_size=self.fsdp_config.fsdp_size)
 
-    def offload_to_cpu(self, model, optimizer, offload_optimizer=True, offload_model=True):
+    def offload_to_cpu(self, model, optimizer, offload_optimizer=True, offload_model=True, model_scope=MODEL_SCOPE_ALL):
         """
         Offload model weights and optimizer to CPU memory.
 
         Only runs when cpu_offload is disabled in the FSDP config; otherwise FSDP2 handles offload natively.
+        FSDP moves the wrapped module as a unit, so only ``model_scope="all"`` is supported.
         """
+        _require_full_model_scope(model_scope)
         if isinstance(model, HFModelWrapper):
             model = model.model
 
@@ -132,8 +144,11 @@ class FSDPStrategy(DistributedStrategy):
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
 
-    def backload_to_gpu(self, model, optimizer, backload_optimizer=True, backload_model=True):
-        """Reload model weights back to GPU."""
+    def backload_to_gpu(
+        self, model, optimizer, backload_optimizer=True, backload_model=True, model_scope=MODEL_SCOPE_ALL
+    ):
+        """Reload model weights back to GPU. Only ``model_scope="all"``; see :meth:`offload_to_cpu`."""
+        _require_full_model_scope(model_scope)
         if isinstance(model, HFModelWrapper):
             model = model.model
 

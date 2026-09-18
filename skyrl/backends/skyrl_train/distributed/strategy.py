@@ -15,6 +15,15 @@ from skyrl.utils.tok import check_is_vlm, get_processor
 
 DataT = TypeVar("DataT", bound=Union[Dict[str, Any], torch.Tensor])
 
+# Which model parameters an offload/backload touches. "trainable" is the
+# ``requires_grad`` set (with Megatron, the fused DDP param buffers), "frozen" the
+# rest. They only differ for LoRA, where the frozen base weights dwarf the
+# adapters; a full-parameter model has no frozen part.
+MODEL_SCOPE_ALL = "all"
+MODEL_SCOPE_TRAINABLE = "trainable"
+MODEL_SCOPE_FROZEN = "frozen"
+MODEL_SCOPES = (MODEL_SCOPE_ALL, MODEL_SCOPE_TRAINABLE, MODEL_SCOPE_FROZEN)
+
 
 class DistributedStrategy(ABC):
     @abstractmethod
