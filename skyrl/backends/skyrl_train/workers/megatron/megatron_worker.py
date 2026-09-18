@@ -47,6 +47,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     resolve_auto_fp8_recipe,
     validate_concrete_fp8_recipe,
 )
+from skyrl.backends.skyrl_train.distributed.strategy import MODEL_SCOPE_ALL
 from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
     SKYRL_LORA_ADAPTER_NAME,
 )
@@ -1933,7 +1934,9 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             return  # FFT path: no-op
         self.adapter_store.swap_to(model_id, self.actor_module, self.optimizer)
 
-    def offload_to_cpu(self, offload_optimizer: bool = True, offload_model: bool = True):
+    def offload_to_cpu(
+        self, offload_optimizer: bool = True, offload_model: bool = True, model_scope: str = MODEL_SCOPE_ALL
+    ):
         """Park the live adapter's grads before offloading.
 
         The optimizer half of the offload frees the DDP grad buffers, dropping
@@ -1942,15 +1945,21 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         """
         if offload_optimizer and self.adapter_store is not None and self.actor_module is not None:
             self.adapter_store.park_grads(self.actor_module)
-        super().offload_to_cpu(offload_optimizer=offload_optimizer, offload_model=offload_model)
+        super().offload_to_cpu(
+            offload_optimizer=offload_optimizer, offload_model=offload_model, model_scope=model_scope
+        )
 
-    def backload_to_gpu(self, backload_optimizer: bool = True, backload_model: bool = True):
+    def backload_to_gpu(
+        self, backload_optimizer: bool = True, backload_model: bool = True, model_scope: str = MODEL_SCOPE_ALL
+    ):
         """Unpark the live adapter's grads after backloading.
 
         The live adapter may differ from the parked one if a swap happened in
         between.
         """
-        super().backload_to_gpu(backload_optimizer=backload_optimizer, backload_model=backload_model)
+        super().backload_to_gpu(
+            backload_optimizer=backload_optimizer, backload_model=backload_model, model_scope=model_scope
+        )
         if backload_optimizer and self.adapter_store is not None and self.actor_module is not None:
             self.adapter_store.unpark_grads(self.actor_module)
 

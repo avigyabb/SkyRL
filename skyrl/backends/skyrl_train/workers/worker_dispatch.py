@@ -20,6 +20,11 @@ from skyrl.backends.skyrl_train.distributed.dispatch import (
     MeshDispatch,
     WorkerOutput,
 )
+from skyrl.backends.skyrl_train.distributed.strategy import (
+    MODEL_SCOPE_ALL,
+    MODEL_SCOPE_FROZEN,
+    MODEL_SCOPE_TRAINABLE,
+)
 from skyrl.backends.skyrl_train.training_batch import (
     TrainingInputBatch,
 )
@@ -34,10 +39,23 @@ if TYPE_CHECKING:
 
 @dataclass
 class GPUState:
-    """Tracks what's on GPU for a model."""
+    """Tracks what's on GPU for a model.
+
+    ``model_on_gpu`` means every parameter is resident. ``trainable_on_gpu``
+    tracks the ``requires_grad`` subset on its own: with Megatron LoRA the
+    adapters (fused DDP buffers) and the frozen base weights offload
+    independently, so the adapters can be resident while the base weights are
+    not. ``model_on_gpu`` implies ``trainable_on_gpu``; for models without a
+    trainable/frozen split the two always agree.
+    """
 
     model_on_gpu: bool
     optimizer_on_gpu: bool
+    trainable_on_gpu: bool
+
+    @classmethod
+    def offloaded(cls) -> "GPUState":
+        return cls(model_on_gpu=False, optimizer_on_gpu=False, trainable_on_gpu=False)
 
 
 class WorkerDispatch:
@@ -79,34 +97,33 @@ class WorkerDispatch:
         # colocated callers offload first and then immediately mark_all_offloaded(),
         # so "resident" is the correct starting assumption here.
         self._gpu_state: Dict[str, GPUState] = {
-            name: GPUState(model_on_gpu=True, optimizer_on_gpu=(name != "ref")) for name in self._actor_groups.keys()
+            name: GPUState(model_on_gpu=True, optimizer_on_gpu=(name != "ref"), trainable_on_gpu=True)
+            for name in self._actor_groups.keys()
         }
 
     def register_actor_group(self, model: str, actor_group: PPORayActorGroup) -> None:
         self._actor_groups[model] = actor_group
         # Not initialized yet -- callers register, then call init_model(), which
         # records the model as resident.
-        self._gpu_state[model] = GPUState(model_on_gpu=False, optimizer_on_gpu=False)
+        self._gpu_state[model] = GPUState.offloaded()
 
     # ------------------------------------------------------------------
     # Multi-LoRA: per-model adapter swap orchestration.
     # ------------------------------------------------------------------
 
-    def ensure_active_adapter(self, role: str, model_id: Optional[str], require_model_resident: bool = True) -> None:
+    def ensure_active_adapter(self, role: str, model_id: Optional[str]) -> None:
         """Make ``model_id`` the live LoRA adapter for ``role`` workers.
 
         No-op when ``model_id is None`` (single-tenant / FFT path) or when
         the workers don't have an AdapterStore (non-LoRA strategies).
 
-        By default the swap ensures the model is GPU-resident because
-        AdapterStore copies DDP param buffers. The Megatron adapter-only sync
-        path can skip that backload: Megatron LoRA offload keeps the LoRA DDP
-        buffers resident even when frozen base weights are offloaded.
+        AdapterStore copies the DDP param buffers, so the trainable parameters
+        must be resident; the frozen base weights may stay offloaded. Grad
+        buffers and optimizer state may stay offloaded too.
         """
         if model_id is None or role not in self._actor_groups:
             return
-        if require_model_resident:
-            self._ensure_on_gpu(role, need_optimizer=False, need_model=True)
+        self._ensure_on_gpu(role, need_optimizer=False, need_model=False, need_trainable=True)
         ray.get(self._actor_groups[role].async_run_ray_method("pass_through", "swap_to_adapter", model_id))
 
     def register_adapter(self, role: str, model_id: str) -> None:
@@ -156,10 +173,39 @@ class WorkerDispatch:
     def _offload_inactive_model(self, model: str) -> None:
         """Offload an inactive colocated model to CPU."""
         self._actor_groups[model].offload_to_cpu()
-        self._gpu_state[model] = GPUState(model_on_gpu=False, optimizer_on_gpu=False)
+        self._gpu_state[model] = GPUState.offloaded()
 
-    def _ensure_on_gpu(self, model: str, need_optimizer: bool = True, need_model: bool = True) -> None:
-        """Ensure model is on GPU, offloading others in same colocation group if needed."""
+    def _has_split_residency(self, model: str) -> bool:
+        """True when ``model`` offloads its trainable and frozen parameters independently.
+
+        Megatron LoRA: the adapters live in the fused DDP buffers and the frozen
+        base weights outside them, and the worker accepts a ``model_scope`` for
+        each. FSDP and full-parameter Megatron move the model as one unit.
+        """
+        if self.cfg.trainer.strategy != "megatron":
+            return False
+        model_cfg = getattr(self.cfg.trainer, model, None)
+        lora = getattr(getattr(model_cfg, "model", None), "lora", None)
+        return lora is not None and lora.rank > 0
+
+    @staticmethod
+    def _is_resident(state: GPUState) -> bool:
+        return state.model_on_gpu or state.optimizer_on_gpu or state.trainable_on_gpu
+
+    def _ensure_on_gpu(
+        self,
+        model: str,
+        need_optimizer: bool = True,
+        need_model: bool = True,
+        need_trainable: bool = False,
+    ) -> None:
+        """Ensure model state is on GPU, offloading others in the same colocation group if needed.
+
+        ``need_model`` asks for every parameter; ``need_trainable`` for the
+        ``requires_grad`` subset only (the LoRA adapters, enough for an
+        adapter-only weight sync or an adapter swap). On a model without a
+        trainable/frozen split ``need_trainable`` is the same as ``need_model``.
+        """
         if not self._should_manage_offload(model):
             return
 
@@ -171,43 +217,77 @@ class WorkerDispatch:
         # Offload others in the same colocation group.
         for other in group:
             if other != model and other in self._actor_groups:
-                state = self._gpu_state[other]
-                if state.model_on_gpu or state.optimizer_on_gpu:
+                if self._is_resident(self._gpu_state[other]):
                     self._offload_inactive_model(other)
 
-        # Reload only missing state; model weights may remain resident while the
-        # optimizer is offloaded.
-        state = self._gpu_state[model]
-        backload_model = need_model and not state.model_on_gpu
-        backload_optimizer = need_optimizer and not state.optimizer_on_gpu
+        if need_trainable and not self._has_split_residency(model):
+            need_model = True
 
-        if backload_model or backload_optimizer:
+        # Reload only missing state; model weights may remain resident while the
+        # optimizer is offloaded, and the adapters while the base weights are.
+        state = self._gpu_state[model]
+        backload_optimizer = need_optimizer and not state.optimizer_on_gpu
+        model_scope = None
+        if need_model and not state.model_on_gpu:
+            model_scope = MODEL_SCOPE_FROZEN if state.trainable_on_gpu else MODEL_SCOPE_ALL
+        elif need_trainable and not state.trainable_on_gpu:
+            model_scope = MODEL_SCOPE_TRAINABLE
+
+        if model_scope is not None or backload_optimizer:
             self._actor_groups[model].backload_to_gpu(
                 backload_optimizer=backload_optimizer,
-                backload_model=backload_model,
+                backload_model=model_scope is not None,
+                model_scope=model_scope or MODEL_SCOPE_ALL,
             )
-            if backload_model:
-                self._gpu_state[model].model_on_gpu = True
+            if model_scope is not None:
+                state.trainable_on_gpu = True
+                if model_scope != MODEL_SCOPE_TRAINABLE:
+                    state.model_on_gpu = True
             if backload_optimizer:
-                self._gpu_state[model].optimizer_on_gpu = True
+                state.optimizer_on_gpu = True
 
-    def _offload(self, model: str, offload_optimizer: bool = True, offload_model: bool = True) -> None:
-        """Offload model to CPU."""
+    def _offload(
+        self,
+        model: str,
+        offload_optimizer: bool = True,
+        offload_model: bool = True,
+        model_scope: str = MODEL_SCOPE_ALL,
+    ) -> None:
+        """Offload model state to CPU.
+
+        ``model_scope`` narrows ``offload_model`` to the trainable or frozen
+        parameters (Megatron LoRA only). Either partial scope leaves the model
+        less than fully resident, so ``model_on_gpu`` drops in both cases;
+        ``trainable_on_gpu`` drops unless only the frozen part moved. A
+        ``"trainable"`` offload of a fully resident model widens to ``"all"``.
+        """
         if not self._should_manage_offload(model):
             return
 
         if model not in self._actor_groups:
             return
 
+        if model_scope != MODEL_SCOPE_ALL and not self._has_split_residency(model):
+            raise ValueError(f"model {model!r} has no trainable/frozen split; model_scope={model_scope!r}")
+
+        state = self._gpu_state[model]
+        if offload_model and model_scope == MODEL_SCOPE_TRAINABLE and state.model_on_gpu:
+            # The frozen part is resident too; moving only the adapters would
+            # leave it on the GPU with no flag saying so.
+            model_scope = MODEL_SCOPE_ALL
+
         self._actor_groups[model].offload_to_cpu(
             offload_optimizer=offload_optimizer,
             offload_model=offload_model,
+            model_scope=model_scope,
         )
 
         if offload_model:
-            self._gpu_state[model].model_on_gpu = False
+            state.model_on_gpu = False
+            if model_scope != MODEL_SCOPE_FROZEN:
+                state.trainable_on_gpu = False
         if offload_optimizer:
-            self._gpu_state[model].optimizer_on_gpu = False
+            state.optimizer_on_gpu = False
 
     def offload_for_sampling(self) -> None:
         """Fully offload every colocated trainer model so inference engines can reclaim VRAM.
@@ -220,7 +300,7 @@ class WorkerDispatch:
         if not self.colocate_all:
             return
         for model, state in self._gpu_state.items():
-            if state.model_on_gpu or state.optimizer_on_gpu:
+            if self._is_resident(state):
                 self._offload(model, offload_optimizer=True, offload_model=True)
 
     def mark_all_offloaded(self) -> None:
@@ -232,7 +312,7 @@ class WorkerDispatch:
         """Mark a specific model as offloaded without changing others."""
         if model not in self._actor_groups:
             return
-        self._gpu_state[model] = GPUState(model_on_gpu=False, optimizer_on_gpu=False)
+        self._gpu_state[model] = GPUState.offloaded()
 
     def forward(
         self,
@@ -591,8 +671,7 @@ class WorkerDispatch:
             group = self._get_colocation_group(model)
             for other in group:
                 if other != model and other in self._actor_groups:
-                    state = self._gpu_state[other]
-                    if state.model_on_gpu or state.optimizer_on_gpu:
+                    if self._is_resident(self._gpu_state[other]):
                         self._offload_inactive_model(other)
 
         kwargs = {"model_path": model_path}
@@ -603,6 +682,7 @@ class WorkerDispatch:
 
         # After init, model is on GPU
         self._gpu_state[model].model_on_gpu = True
+        self._gpu_state[model].trainable_on_gpu = True
         self._gpu_state[model].optimizer_on_gpu = model != "ref"  # ref has no optimizer
 
     def set_inference_engine_client(self, inference_engine_client: "RemoteInferenceClient") -> None:
@@ -680,14 +760,32 @@ class WorkerDispatch:
         return {"sync_weights_only_transfer": self.last_weight_sync_seconds}
 
     async def _prepare_for_weight_sync(self, adapter_only_sync: bool = False) -> None:
-        """Prepare colocated trainer/engine residency for sampler weight sync."""
+        """Prepare colocated trainer/engine residency for sampler weight sync.
+
+        Adapter-only sync (Megatron LoRA, ``merge_lora=False``) exports the
+        adapters straight from the fused DDP buffers, so only the trainable
+        parameters need to be resident: the frozen base weights, the optimizer
+        and every other model are offloaded so the engines fit, and the
+        adapters are backloaded if a previous sync left them on the CPU. The
+        full sync (merged LoRA or full-parameter) needs the whole policy.
+        """
         if not self.colocate_all:
             return
 
         if adapter_only_sync:
             for model, state in self._gpu_state.items():
-                if state.model_on_gpu or state.optimizer_on_gpu:
-                    self._offload(model, offload_optimizer=True, offload_model=True)
+                if model == "policy" or not self._is_resident(state):
+                    continue
+                self._offload(model, offload_optimizer=True, offload_model=True)
+            policy_state = self._gpu_state["policy"]
+            if policy_state.model_on_gpu or policy_state.optimizer_on_gpu:
+                self._offload(
+                    "policy",
+                    offload_optimizer=policy_state.optimizer_on_gpu,
+                    offload_model=policy_state.model_on_gpu,
+                    model_scope=MODEL_SCOPE_FROZEN,
+                )
+            self._ensure_on_gpu("policy", need_optimizer=False, need_model=False, need_trainable=True)
             self.empty_cache("policy")
             return
 
@@ -712,8 +810,16 @@ class WorkerDispatch:
         self.empty_cache("policy")
 
     def _finish_weight_sync(self, adapter_only_sync: bool = False) -> None:
-        """Offload policy weights and conditionally offload optimizer state."""
-        if not self.colocate_all or adapter_only_sync:
+        """Offload policy weights and conditionally offload optimizer state.
+
+        After the sync nothing of the trainer stays on the GPU while the engines
+        generate. On the adapter-only path the base weights and optimizer were
+        offloaded in :meth:`_prepare_for_weight_sync`, so only the adapters move.
+        """
+        if not self.colocate_all:
+            return
+        if adapter_only_sync:
+            self._offload("policy", offload_optimizer=False, offload_model=True, model_scope=MODEL_SCOPE_TRAINABLE)
             return
         self._offload(
             "policy",
@@ -765,7 +871,7 @@ class WorkerDispatch:
         await self._prepare_for_weight_sync(adapter_only_sync=adapter_only_sync)
         # Make the requested adapter live on every worker before broadcasting
         # — otherwise we'd export some other tenant's LoRA weights to vLLM.
-        self.ensure_active_adapter("policy", model_id, require_model_resident=not adapter_only_sync)
+        self.ensure_active_adapter("policy", model_id)
         if self.colocate_all:
             await self._inference_engine_client.wake_up(tags=["weights"])
             _broadcast_and_finish()

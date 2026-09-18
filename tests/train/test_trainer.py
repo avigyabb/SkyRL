@@ -337,10 +337,10 @@ def test_micro_batches_accumulated_initialized():
         def init_model(self, *args, **kwargs):
             pass
 
-        def offload_to_cpu(self, offload_optimizer=True, offload_model=True):
+        def offload_to_cpu(self, offload_optimizer=True, offload_model=True, model_scope="all"):
             pass
 
-        def backload_to_gpu(self, backload_optimizer=True, backload_model=True):
+        def backload_to_gpu(self, backload_optimizer=True, backload_model=True, model_scope="all"):
             pass
 
         def _forward_micro_batch(self, micro_batch):

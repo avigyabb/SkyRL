@@ -35,7 +35,10 @@ from skyrl.backends.skyrl_train.distributed.megatron.megatron_utils import (
     offload_megatron_model_to_cpu,
     offload_megatron_optimizer,
 )
-from skyrl.backends.skyrl_train.distributed.strategy import DistributedStrategy
+from skyrl.backends.skyrl_train.distributed.strategy import (
+    MODEL_SCOPE_ALL,
+    DistributedStrategy,
+)
 from skyrl.backends.skyrl_train.distributed.utils import ModelOrModelOptimPair
 from skyrl.backends.skyrl_train.utils.io import io
 from skyrl.backends.skyrl_train.workers.megatron.megatron_model_wrapper import (
@@ -220,16 +223,20 @@ class MegatronStrategy(DistributedStrategy):
         self.set_seed(self.seed)
         self.world_size = dist.get_world_size()
 
-    def offload_to_cpu(self, model, optimizer, offload_optimizer=True, offload_model=True):
+    def offload_to_cpu(self, model, optimizer, offload_optimizer=True, offload_model=True, model_scope=MODEL_SCOPE_ALL):
         """
         Offload model weights and optimizer to CPU memory.
 
         The grad buffer belongs to the DDP-wrapped model, not the optimizer,
         so it is offloaded whenever ``offload_optimizer`` is requested even if
         ``optimizer is None`` (e.g. ``policy.inference_only_init=True`` flows).
+
+        ``model_scope`` narrows ``offload_model`` to the trainable (fused DDP
+        buffers) or frozen (LoRA base weights) parameters; see
+        :func:`offload_megatron_model_to_cpu`.
         """
         if offload_model:
-            offload_megatron_model_to_cpu(model, is_lora=self.is_lora)
+            offload_megatron_model_to_cpu(model, model_scope=model_scope)
         if offload_optimizer:
             offload_megatron_grads_to_cpu(model)
             if optimizer is not None:
@@ -237,14 +244,16 @@ class MegatronStrategy(DistributedStrategy):
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
 
-    def backload_to_gpu(self, model, optimizer, backload_optimizer=True, backload_model=True):
+    def backload_to_gpu(
+        self, model, optimizer, backload_optimizer=True, backload_model=True, model_scope=MODEL_SCOPE_ALL
+    ):
         """Reload model weights back to GPU.
 
         See :meth:`offload_to_cpu` for why the grad-buffer half is decoupled
-        from optimizer existence.
+        from optimizer existence, and for ``model_scope``.
         """
         if backload_model:
-            load_megatron_model_to_gpu(model, is_lora=self.is_lora)
+            load_megatron_model_to_gpu(model, model_scope=model_scope)
         if backload_optimizer:
             load_megatron_grads_to_gpu(model)
             if optimizer is not None:

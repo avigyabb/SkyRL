@@ -31,7 +31,10 @@ from skyrl.backends.skyrl_train.distributed.dispatch import (
     MeshRank,
     WorkerOutput,
 )
-from skyrl.backends.skyrl_train.distributed.strategy import DistributedStrategy
+from skyrl.backends.skyrl_train.distributed.strategy import (
+    MODEL_SCOPE_ALL,
+    DistributedStrategy,
+)
 from skyrl.backends.skyrl_train.distributed.ulysses import (
     apply_monkey_patch,
     set_ulysses_sequence_parallel_group,
@@ -425,7 +428,9 @@ class Worker(DistributedTorchRayActor):
         """Return the model module(s) to be offloaded/backloaded. Megatron offloads `self.actor_module`. FSDP workers use `self.model` directly."""
         return self.model
 
-    def offload_to_cpu(self, offload_optimizer: bool = True, offload_model: bool = True):
+    def offload_to_cpu(
+        self, offload_optimizer: bool = True, offload_model: bool = True, model_scope: str = MODEL_SCOPE_ALL
+    ):
         """Offload all worker state to CPU.
 
         After this function runs, only temporary reserved memory and torch's pre-loaded cuda kernels (~ GB) will remain.
@@ -433,6 +438,9 @@ class Worker(DistributedTorchRayActor):
         Args:
             offload_optimizer: Whether to offload optimizer state (no-op when there is no optimizer, e.g. Ref worker).
             offload_model: Whether to offload model parameters.
+            model_scope: Which model parameters ``offload_model`` covers: ``"all"``, ``"trainable"``
+                (LoRA adapters / fused DDP buffers) or ``"frozen"`` (LoRA base weights). Megatron only
+                for anything but ``"all"``.
         """
         self._set_numa_affinity(torch.distributed.get_rank() % torch.cuda.device_count())
         self.strategy.offload_to_cpu(
@@ -440,20 +448,25 @@ class Worker(DistributedTorchRayActor):
             self.optimizer,
             offload_optimizer=offload_optimizer,
             offload_model=offload_model,
+            model_scope=model_scope,
         )
 
-    def backload_to_gpu(self, backload_optimizer: bool = True, backload_model: bool = True):
+    def backload_to_gpu(
+        self, backload_optimizer: bool = True, backload_model: bool = True, model_scope: str = MODEL_SCOPE_ALL
+    ):
         """Backload worker state to GPU.
 
         Args:
             backload_optimizer: Whether to backload optimizer state (no-op when there is no optimizer).
             backload_model: Whether to backload model parameters.
+            model_scope: Which model parameters ``backload_model`` covers; see :meth:`offload_to_cpu`.
         """
         self.strategy.backload_to_gpu(
             self._get_module_for_offload(),
             self.optimizer,
             backload_optimizer=backload_optimizer,
             backload_model=backload_model,
+            model_scope=model_scope,
         )
 
     def get_cuda_memory(self) -> Dict[str, Any]:
@@ -832,7 +845,13 @@ class PPORayActorGroup:
             raise RuntimeError("Cannot determine data-parallel size before actor group initialization.")
         return self._last_dp_size
 
-    def offload_to_cpu(self, nonblocking: bool = False, offload_optimizer: bool = True, offload_model: bool = True):
+    def offload_to_cpu(
+        self,
+        nonblocking: bool = False,
+        offload_optimizer: bool = True,
+        offload_model: bool = True,
+        model_scope: str = MODEL_SCOPE_ALL,
+    ):
         """Offload all worker state to CPU.
 
         Args:
@@ -840,16 +859,26 @@ class PPORayActorGroup:
                 If `nonblocking=True`, then the function returns a list of object refs.
             offload_optimizer: Whether to offload optimizer state.
             offload_model: Whether to offload model parameters.
+            model_scope: Which model parameters ``offload_model`` covers (``"all"``, ``"trainable"``,
+                ``"frozen"``); see :meth:`Worker.offload_to_cpu`.
         """
         refs = [
-            actor.offload_to_cpu.remote(offload_optimizer=offload_optimizer, offload_model=offload_model)
+            actor.offload_to_cpu.remote(
+                offload_optimizer=offload_optimizer, offload_model=offload_model, model_scope=model_scope
+            )
             for actor in self._actor_handlers
         ]
         if nonblocking:
             return refs
         return ray.get(refs)
 
-    def backload_to_gpu(self, nonblocking: bool = False, backload_optimizer: bool = True, backload_model: bool = True):
+    def backload_to_gpu(
+        self,
+        nonblocking: bool = False,
+        backload_optimizer: bool = True,
+        backload_model: bool = True,
+        model_scope: str = MODEL_SCOPE_ALL,
+    ):
         """Backload worker state to GPU
 
         Args:
@@ -857,9 +886,12 @@ class PPORayActorGroup:
                 If `nonblocking=True`, then the function returns a list of ObjectRefs.
             backload_optimizer: Whether to backload optimizer state.
             backload_model: Whether to backload model parameters.
+            model_scope: Which model parameters ``backload_model`` covers; see :meth:`offload_to_cpu`.
         """
         refs = [
-            actor.backload_to_gpu.remote(backload_optimizer=backload_optimizer, backload_model=backload_model)
+            actor.backload_to_gpu.remote(
+                backload_optimizer=backload_optimizer, backload_model=backload_model, model_scope=model_scope
+            )
             for actor in self._actor_handlers
         ]
         if nonblocking:

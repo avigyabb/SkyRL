@@ -43,6 +43,12 @@ from skyrl.backends.skyrl_train.distributed.megatron.packing_utils import (
     get_packed_seq_align_size,
     get_unpacked_seq_align_size,
 )
+from skyrl.backends.skyrl_train.distributed.strategy import (
+    MODEL_SCOPE_ALL,
+    MODEL_SCOPE_FROZEN,
+    MODEL_SCOPE_TRAINABLE,
+    MODEL_SCOPES,
+)
 
 ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
 
@@ -332,8 +338,18 @@ def _offload_frozen_param_to_file(name: str, param) -> bool:
         return False
 
 
+def _scope_flags(model_scope: str) -> tuple[bool, bool]:
+    """Return ``(touch_trainable, touch_frozen)`` for a model scope."""
+    if model_scope not in MODEL_SCOPES:
+        raise ValueError(f"model_scope must be one of {MODEL_SCOPES}, got {model_scope!r}")
+    return (
+        model_scope in (MODEL_SCOPE_ALL, MODEL_SCOPE_TRAINABLE),
+        model_scope in (MODEL_SCOPE_ALL, MODEL_SCOPE_FROZEN),
+    )
+
+
 @torch.no_grad()
-def offload_megatron_model_to_cpu(models, is_lora: bool = False):
+def offload_megatron_model_to_cpu(models, model_scope: str = MODEL_SCOPE_ALL):
     """
     In megatron, the model and optimizer storage are:
     - bf16 parameter data chunked in model parallel group
@@ -341,26 +357,31 @@ def offload_megatron_model_to_cpu(models, is_lora: bool = False):
     - fp32 main_parameter chunked in model and dp group
     - fp32 optimizer state chunked in model and dp group
 
-    ``is_lora``: the run trains LoRA adapters only (base weights frozen).
+    ``model_scope`` selects which parameters move:
+
+    - ``"trainable"``: the fused DDP param buffers. Megatron only buckets
+      ``requires_grad`` params, so under LoRA these hold nothing but the
+      adapters (a few GB) and under full-parameter training the whole model.
+      Megatron keeps one pinned CPU mirror per buffer across cycles.
+    - ``"frozen"``: ``requires_grad=False`` non-adapter params, which live
+      outside the buffers (LoRA base weights). Immutable for the run, so their
+      CPU copies are file-backed mmap tensors (clean, evictable page cache)
+      rather than pinned RAM; see ``_offload_frozen_param_to_file``.
+    - ``"all"``: both.
+
+    Each part is idempotent: already-offloaded storage is left alone.
     """
+    offload_trainable, offload_frozen = _scope_flags(model_scope)
     for model_chunk in models:
         if isinstance(model_chunk, DDP):
-            # LoRA: Megatron's fused param/grad buffers only hold grad-requiring
-            # params, so here they contain nothing but the adapters (a few GB) —
-            # keep them resident. The adapter-only weight sync exports straight
-            # from these GPU tensors, so the TB-scale frozen masters never need
-            # to round-trip through the GPU just to sync a rank-32 adapter.
-            if not is_lora:
+            if offload_trainable:
                 for buffer in model_chunk.buffers + model_chunk.expert_parallel_buffers:
                     # use megatron buffer built in function to offload to cpu
                     # https://github.com/NVIDIA/Megatron-LM/blob/core_v0.16.0/megatron/core/distributed/param_and_grad_buffer.py#L964
                     buffer.offload_to_cpu(move_params=True, move_grads=False)
 
-            # LoRA-aware offloading: offload non-lora base weights that live
-            # outside the fused Megatron buffers (e.g. HF/bridge "to_wrap" weights).
-            # Frozen weights are immutable, so prefer file-backed mmap copies
-            # (clean, evictable page cache) over pinned RAM; see
-            # _offload_frozen_param_to_file.
+            if not offload_frozen:
+                continue
             use_file_offload = _frozen_offload_enabled()
             for name, param in model_chunk.named_parameters():
                 if (
@@ -381,27 +402,39 @@ def offload_megatron_model_to_cpu(models, is_lora: bool = False):
                     param.data = torch.empty(0, dtype=param.data.dtype, device=param.data.device)
         else:
             for _, param in model_chunk.named_parameters():
+                if param.requires_grad and not offload_trainable:
+                    continue
+                if not param.requires_grad and not offload_frozen:
+                    continue
                 param.data = param.data.to("cpu", non_blocking=True)
 
 
 @torch.no_grad()
-def load_megatron_model_to_gpu(models, is_lora: bool = False):
+def load_megatron_model_to_gpu(models, model_scope: str = MODEL_SCOPE_ALL):
+    """Inverse of :func:`offload_megatron_model_to_cpu` for the same ``model_scope``.
+
+    Idempotent per part: resident buffers and params are left alone.
+    """
+    load_trainable, load_frozen = _scope_flags(model_scope)
+    device_id = torch.cuda.current_device()
     for model_chunk in models:
         if isinstance(model_chunk, DDP):
-            # LoRA buffers never offload (see offload_megatron_model_to_cpu).
-            if not is_lora:
+            if load_trainable:
                 for buffer in model_chunk.buffers + model_chunk.expert_parallel_buffers:
                     buffer.reload_from_cpu(move_params=True, move_grads=False)
 
-            # Restore any LoRA-frozen base weights that were offloaded above.
-            device_id = torch.cuda.current_device()
+            if not load_frozen:
+                continue
             for name, param in model_chunk.named_parameters():
                 if hasattr(param, "_offload_cpu_data") and param.data.storage().size() == 0:
                     restored = param._offload_cpu_data.to(device_id, non_blocking=True)
                     param.data = restored
         else:
-            device_id = torch.cuda.current_device()
             for _, param in model_chunk.named_parameters():
+                if param.requires_grad and not load_trainable:
+                    continue
+                if not param.requires_grad and not load_frozen:
+                    continue
                 param.data = param.data.to(device_id, non_blocking=True)
 
 

@@ -428,9 +428,10 @@ class SkyRLTrainBackend(AbstractBackend):
         # LoRA weight sync is in use, since level 2 would discard the base model).
         #
         # Adapter-only LoRA sync is the exception: engines are created lazily by
-        # the first save_weights_for_sampler, which exports the adapter from the
-        # always-GPU-resident LoRA buffers and loads it onto *awake* engines —
-        # no trainer backload happens, so nothing needs the GPUs freed. Sleeping
+        # the first save_weights_for_sampler, which backloads only the LoRA
+        # buffers (a few GB), exports the adapter from them, offloads them
+        # again and loads the adapter onto *awake* engines — the frozen masters
+        # never return to the GPU, so nothing needs the GPUs freed. Sleeping
         # here would back up ~TBs of engine weights to CPU (evicting the frozen-
         # offload page cache, minutes per node) only for the sync to wake them
         # right back up. Training paths (forward/optim/checkpoint) sleep the
