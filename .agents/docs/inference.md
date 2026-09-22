@@ -81,8 +81,11 @@ loads the models (`placement.overlap_worker_spawn=false` restores the sequential
 its backends to pass health checks, so it can only start once they are up; its port is reserved in
 `__init__`, so the proxy URL is known before then). The training workers are then built while the engines
 load and compile, and `InferenceServerSetup.wait_until_ready()` resolves the start refs and starts the router
-before `train()`. Colocated runs keep the old order because the engines must be healthy to be slept before
-the training workers load. Entrypoints that call `get_inference_client()` directly (`serve`, `main_generate`)
+before `train()`. The URLs are resolved (`ray.get` on `get_server_info`) *before* `start` is submitted: the
+engine build runs synchronously inside the async `start` and holds the actor's event loop, so an info RPC
+queued behind it waits for the whole engine startup. `_setup_trainer` launches the engines first and builds
+the datasets (`BasePPOExp.train_dataset` / `eval_dataset` are lazy properties) behind them, timed as
+`startup/datasets`. Colocated runs (`placement.overlap_model_init`, default on) build and offload the training models while the engines boot: the entrypoint creates a job-scoped `StartupBarrier` actor before launching the engines, `patch_startup_barrier` (applied from `NewInferenceWorkerWrap`) holds every vLLM worker's `init_device` until the entrypoint releases it after `init_models`, so profiling and the KV cache see the same free GPU as the load-after-sleep order; with it off the engines must be healthy and slept before the models load. Entrypoints that call `get_inference_client()` directly (`serve`, `main_generate`)
 still get fully-ready engines.
 
 vLLM's torch.compile cache (`~/.cache/vllm/torch_compile_cache`) is **enabled** by default (#2167) so warm starts
@@ -108,7 +111,9 @@ vLLM accepts one `--worker-extension-cls`). Publishing is digest-keyed and idemp
 consumes only. By default only the compile cache is published (`capture=false`): the cache path is pure
 Python (boto3 + tar) and works from a source checkout, while weight streaming (`sonic_stream_weights=true`) needs
 the Rust engine `libsonicgpu.so` and, once weights are published under a digest, every boot with that engine
-config takes the stream path and fails without it. Constraints: S3 only; `sonic-loader` must be in the engine env; incompatible with
+config and `sonic_stream_weights=true` takes the stream path and fails without it (with the knob off the loader
+always restores the cache and loads from HF, whatever the mirror holds — see
+`patches/vllm/patch_sonic_loader_extra_config.py`). Constraints: S3 only; `sonic-loader` must be in the engine env; incompatible with
 `fp8_weight_sync_mode` (both set `load_format`); the cache digest folds in `VllmConfig.compute_hash()` + tp/pp/dp/ep,
 gpu arch, torch and cuda, so any engine-config change misses cleanly. The #2183 device-index AOT dirs are per GPU
 index, so publish from a node where every engine has started so the tar carries every `rank_*_dev*` directory.
@@ -118,9 +123,9 @@ the trainer then overwrites every weight in the step-0 sync, so one of the two l
 `generator.inference_engine.dummy_initial_weights=true` drops the engine's read (`load_format=dummy`; the sync
 supplies the weights, NeMo RL's default) and `trainer.skip_initial_weight_sync=true` drops the sync instead, on a
 fresh **non-colocated** run whose engines loaded the same checkpoint (`RayPPOTrainer._initial_weight_sync`).
-Colocated is rejected: those engines are slept at level 2 right after startup, which discards their weights, and
-the first sync is what restores them (measured: skipping it left a rollout-vs-trainer logprob gap of 17 max /
-2.5 mean instead of 0.5 / ~0). They are mutually exclusive and validated in `validate_inference_engine_cfg`. Dummy weights
+Colocated engines then take their first sleep at level 1 (weights backed up to CPU memory, restored by the first
+wake) rather than level 2, which discards them (measured: skipping the sync over a level-2 sleep left a
+rollout-vs-trainer logprob gap of 17 max / 2.5 mean instead of 0.5 / ~0); later sleeps stay at level 2. They are mutually exclusive and validated in `validate_inference_engine_cfg`. Dummy weights
 are wrong for models with buffers the sync never writes (Gemma-3 `normalizer`), and skipping the sync assumes the
 vLLM loader and the trainer export agree byte-for-byte, which quantized or fused layers may not.
 
