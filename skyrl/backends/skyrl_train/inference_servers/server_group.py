@@ -243,12 +243,15 @@ class ServerGroup:
                 logger.info(f"Server {i}: {info.url}")
             return server_infos
 
-        # Submit the info RPCs before ``start`` so they execute ahead of it on each
-        # actor; engine startup can hold the actor's event loop for a long time.
-        info_refs = [actor.get_server_info.remote() for actor in actors]
-        start_refs = self._pool.start(blocking=False)
-        self._nowait_infos = ray.get(info_refs)
-        return start_refs
+        # Resolve the constructor-time infos *before* submitting ``start``. The engine
+        # build runs synchronously inside the async ``start`` and holds the actor's event
+        # loop until the engine is healthy, so an info RPC that is merely *submitted*
+        # first is not guaranteed to run first: when it lands behind ``start`` it waits
+        # for the whole engine startup and the caller's overlap silently degrades to the
+        # sequential order (observed on 8xH100: 171s instead of 29s). This blocks only on
+        # actor construction, which the caller pays for either way.
+        self._nowait_infos = ray.get([actor.get_server_info.remote() for actor in actors])
+        return self._pool.start(blocking=False)
 
     @property
     def server_infos(self) -> List[ServerInfo]:
