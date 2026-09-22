@@ -301,9 +301,13 @@ class BasePPOExp:
         if self._engines_slept:
             return
         # Callers must invoke this from a sync context (no running event loop).
-        asyncio.run(client.sleep())
+        # With ``skip_initial_weight_sync`` the engines must keep their weights across this sleep:
+        # level 1 backs them up to CPU memory and the first ``wake_up(["weights"])`` restores them.
+        # The step loop's later sleeps stay at level 2.
+        level = 1 if self.cfg.trainer.skip_initial_weight_sync else 2
+        asyncio.run(client.sleep(level=level))
         self._engines_slept = True
-        logger.info("HTTP Inference: Colocated mode - slept inference engines after startup")
+        logger.info(f"HTTP Inference: Colocated mode - slept inference engines after startup (level {level})")
 
     def _publish_sonic_artifacts(self, client: InferenceEngineInterface) -> None:
         """Publish weights + compile cache to the configured sonicloader mirror, once.

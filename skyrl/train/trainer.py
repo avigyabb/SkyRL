@@ -914,11 +914,19 @@ class RayPPOTrainer:
 
         With ``trainer.skip_initial_weight_sync`` on a fresh non-colocated run both sides
         already hold the same checkpoint and the engines were never slept, so the sync
-        would only rewrite identical weights. (Colocated engines are slept at level 2
-        after startup, which discards their weights; validation rejects the flag there.)
+        would only rewrite identical weights. Colocated engines take their first sleep at
+        level 1 in that case (weights backed up to CPU memory) so the first ``wake_up`` restores
+        them; the step loop's later sleeps stay at level 2.
         """
         if self.cfg.trainer.skip_initial_weight_sync and self.resume_mode == ResumeMode.NONE:
             logger.info("skip_initial_weight_sync=True: engines keep their loaded weights for the first step")
+            if self.colocate_all:
+                # Colocated engines were slept (level 1) after startup, and the sync being skipped is
+                # what would have woken them: restore the weights from their CPU backup and re-allocate
+                # the KV cache so generation can start (the wake sequence of save_weights_for_sampler
+                # without the broadcast). A sleeping engine queues requests forever.
+                await self.inference_engine_client.wake_up(tags=["weights"])
+                await self.inference_engine_client.wake_up(tags=["kv_cache"])
             return
         await self.dispatch.save_weights_for_sampler()
 
