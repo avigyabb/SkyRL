@@ -30,6 +30,7 @@ Usage:
         skyrl.backends.skyrl_train.inference_servers.new_inference_worker_wrap.NewInferenceWorkerWrap
 """
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -55,6 +56,13 @@ try:
     )
 
     apply_model_runner_registry_patch()
+except ModuleNotFoundError:
+    pass
+
+try:
+    # vLLM >= 0.28 validates model_loader_extra_config keys in DefaultModelLoader; let the
+    # sonic load format keep its own (see the patch module). No-op for other formats.
+    import skyrl.backends.skyrl_train.patches.vllm.patch_sonic_loader_extra_config  # noqa: F401
 except ModuleNotFoundError:
     pass
 
@@ -203,6 +211,32 @@ class NewInferenceWorkerWrap:
     model_runner: "GPUModelRunner"
     model_config: "ModelConfig"
     device: torch.device
+
+    def push_artifacts(self, dst: str, capture_dir: str | None = None, force: bool = False) -> dict:
+        """Publish this engine's weight shards and compile cache to a sonicloader mirror.
+
+        vLLM takes a single ``--worker-extension-cls``, which SkyRL uses for this class,
+        so sonicloader's ``SonicWorkerExtension.push_artifacts`` is exposed here instead.
+        Same semantics: every rank uploads its own shard, rank 0 uploads the compile
+        cache, and parts already published under their digest are skipped.
+        """
+        try:
+            from sonic.adapters.vllm.worker import SonicWorkerExtension
+        except ImportError as e:
+            raise RuntimeError(
+                "push_artifacts needs the `sonic-loader` package in the engine environment "
+                "(generator.inference_engine.sonic_mirror)."
+            ) from e
+        # Older sonic-loader wheels (e.g. 0.2.0) have no ``force`` parameter; forward it only
+        # when the installed extension accepts it.
+        kwargs = {"capture_dir": capture_dir}
+        if "force" in inspect.signature(SonicWorkerExtension.push_artifacts).parameters:
+            kwargs["force"] = force
+        elif force:
+            logging.getLogger(__name__).warning(
+                "installed sonic-loader has no `force` parameter; publishing without it"
+            )
+        return SonicWorkerExtension.push_artifacts(self, dst, **kwargs)
 
     def fetch_weights(self, target_version: int, sync_dir: str | None = None, uri: str | None = None):
         """Fetch/apply a checkpoint delta before the paused reload phase."""

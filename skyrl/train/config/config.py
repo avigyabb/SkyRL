@@ -1282,6 +1282,25 @@ class InferenceEngineConfig(BaseConfig):
     with ``trainer.policy.model_config_kwargs.rope_parameters`` (FSDP) or
     ``trainer.policy.megatron_config.transformer_config_kwargs.rope_parameters`` (Megatron). The two
     must agree, and are validated against each other."""
+    sonic_mirror: Optional[str] = None
+    """S3 prefix of a `sonicloader <https://github.com/anyscale/sonicloader>`_ mirror holding
+    pre-sharded weights and the vLLM compile cache (torch.compile / Inductor / Triton / FlashInfer).
+    When set, engines start with ``load_format="sonic"``: a published compile cache is restored
+    before compilation and published weights stream straight into GPU tensors, so warm starts skip
+    both the JIT work and the Hugging Face load. Requires the ``sonic-loader`` package in the
+    engine environment. ``None`` disables it."""
+    sonic_publish_on_startup: bool = True
+    """With ``sonic_mirror`` set, publish the compile cache (and, with ``sonic_stream_weights``,
+    the staged weight shards) once every engine is healthy (``push_artifacts`` over
+    ``/collective_rpc``). Publishing is idempotent, so runs after the first only upload what is
+    missing. Set to ``False`` to only consume an already-published mirror."""
+    sonic_stream_weights: bool = False
+    """With ``sonic_mirror`` set, also stage per-rank weight shards during load (a full copy of the
+    checkpoint under ``SONIC_CAPTURE_DIR``), publish them, and on later boots stream them S3 -> GPU
+    instead of loading from Hugging Face. Needs sonicloader's native engine (``libsonicgpu.so``)
+    in the engine environment and a multi-ENI host to beat a local disk; the compile cache alone
+    needs neither, which is why this defaults to ``False``. Once weights are published under a
+    digest, every boot with that engine config streams them, so enable it deliberately."""
     speculative_config: Optional[Dict[str, Any]] = None
     """Speculative-decoding config passed through to vLLM for MTP drafter decoding.
     (needs ``policy.megatron_config.mtp_num_layers`` > 0 to train mtp). ``None`` disables it."""

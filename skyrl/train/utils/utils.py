@@ -1,4 +1,5 @@
 import functools
+import importlib.util
 import ipaddress
 import logging
 import math
@@ -612,6 +613,25 @@ def validate_inference_engine_cfg(cfg: SkyRLTrainConfig):
         if cfg.trainer.resume_mode not in (None, "none"):
             raise ValueError("trainer.skip_initial_weight_sync requires resume_mode='none'; a resumed run must sync")
 
+    if ie_cfg.sonic_mirror is not None:
+        if ie_cfg.backend != "vllm":
+            raise ValueError("generator.inference_engine.sonic_mirror requires backend='vllm'")
+        if not ie_cfg.sonic_mirror.startswith("s3://"):
+            raise ValueError(
+                f"generator.inference_engine.sonic_mirror must be an s3:// prefix, got {ie_cfg.sonic_mirror!r}"
+            )
+        if importlib.util.find_spec("sonic") is None:
+            raise ValueError(
+                "generator.inference_engine.sonic_mirror is set but the `sonic-loader` package is not "
+                "installed; see https://github.com/anyscale/sonicloader for the wheel."
+            )
+        if ie_cfg.fp8_weight_sync_mode is not None:
+            raise ValueError("sonic_mirror is incompatible with fp8_weight_sync_mode: both set vLLM's load_format")
+        engine_kwargs = get_config_as_dict(ie_cfg.engine_init_kwargs)
+        clashing = {"load_format", "model_loader_extra_config"} & set(engine_kwargs)
+        if clashing:
+            raise ValueError(f"sonic_mirror sets {sorted(clashing)} on the engine; remove them from engine_init_kwargs")
+
     if ie_cfg.fp8_weight_sync_mode not in (None, BLOCKWISE_FP8):
         raise ValueError(
             f"Unsupported fp8_weight_sync_mode={ie_cfg.fp8_weight_sync_mode!r}; " f"expected {BLOCKWISE_FP8!r} or None"
@@ -871,6 +891,14 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
                 f"{os.environ['VLLM_DISABLE_COMPILE_CACHE']}"
             )
             env_vars["VLLM_DISABLE_COMPILE_CACHE"] = os.environ["VLLM_DISABLE_COMPILE_CACHE"]
+
+        if cfg.generator.inference_engine.sonic_mirror is not None:
+            # The sonic loader runs inside the engine workers and reads its S3 region and
+            # SONIC_* tuning from the environment; workers inherit the raylet's env, not
+            # the driver's, so forward what the driver has set.
+            for var_name, value in os.environ.items():
+                if var_name in ("AWS_REGION", "AWS_DEFAULT_REGION") or var_name.startswith("SONIC_"):
+                    env_vars[var_name] = value
 
         if not os.environ.get("VLLM_USE_V1", False):
             logger.info(
