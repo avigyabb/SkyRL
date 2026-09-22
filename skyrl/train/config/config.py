@@ -663,6 +663,13 @@ class PlacementConfig(BaseConfig):
     context on the shared GPUs during vLLM's memory profiling, which shrinks the KV cache by that
     much; set to ``False`` to restore the fully sequential startup if ``gpu_memory_utilization``
     is pushed to the limit."""
+    overlap_model_init: bool = True
+    """Colocated only (with ``overlap_worker_spawn``): build the policy/ref/critic models -- HF import,
+    optimizer, offload to CPU -- while the inference engines are still booting, instead of after they
+    are healthy and slept. The engine workers hold their CUDA init on a startup barrier until the
+    models are offloaded, so vLLM profiles and sizes its KV cache against the same free GPU as before.
+    Requires the ``ray`` executor backend (the barrier is a Ray actor the workers look up); ``False``
+    restores the load-after-sleep order."""
     colocate_policy_ref: bool = True
     """When colocate_all is False, True (default) still colocates policy and ref
     on the same GPUs (one shared placement group). Set this item to False to place

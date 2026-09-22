@@ -45,6 +45,11 @@ def build_engine_runtime_env(
     env_vars: Dict[str, str] = {}
     if use_expandable_segments:
         env_vars["PYTORCH_CUDA_ALLOC_CONF"] = _alloc_conf_with_expandable_segments()
+    # Startup barrier name (see inference_servers/startup_barrier.py): set on the driver right
+    # before the engines are launched, inherited by vLLM's EngineCore subprocess and copied to
+    # its Ray workers, where init_device waits on it.
+    if barrier := os.environ.get("SKYRL_STARTUP_BARRIER"):
+        env_vars["SKYRL_STARTUP_BARRIER"] = barrier
     if extra_env_vars:
         env_vars.update(extra_env_vars)
     if not env_vars:

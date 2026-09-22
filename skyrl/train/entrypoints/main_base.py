@@ -21,6 +21,10 @@ from skyrl.env_vars import SKYRL_RAY_PG_TIMEOUT_IN_S
 from skyrl.train.config import SkyRLTrainConfig, get_config_as_yaml_str
 from skyrl.train.dataset import PromptDataset
 from skyrl.train.generators.base import GeneratorInterface
+from skyrl.backends.skyrl_train.inference_servers.startup_barrier import (
+    create_startup_barrier,
+    release_startup_barrier,
+)
 from skyrl.train.trainer import RayPPOTrainer, spawn_actor_groups
 from skyrl.train.utils import validate_cfg
 from skyrl.train.utils.tracking import Tracking
@@ -342,6 +346,17 @@ class BasePPOExp:
         # the training workers load models.
         placement = self.cfg.trainer.placement
         self._wait_for_inference_ready = placement.colocate_all and not placement.overlap_worker_spawn
+        simulate_training = self.cfg.trainer.fully_async.simulate_training
+        # Colocated: build + offload the models while the engines boot, behind a startup barrier
+        # that holds the engine workers' CUDA init (see inference_servers/startup_barrier.py).
+        overlap_model_init = (
+            placement.colocate_all
+            and placement.overlap_worker_spawn
+            and placement.overlap_model_init
+            and not simulate_training
+            and self.cfg.generator.inference_engine.distributed_executor_backend == "ray"
+        )
+        startup_barrier = create_startup_barrier() if overlap_model_init else None
 
         if self.cfg.trainer.strategy == "fsdp":
             from skyrl.backends.skyrl_train.workers.fsdp.fsdp_worker import (
@@ -363,7 +378,6 @@ class BasePPOExp:
         # (sleep + pause/resume, no broadcast), typically against external served endpoints.
         # TODO: we should make a top level TrainerConfig.simulate_training flag to provide a consistent way
         # for simulating training steps
-        simulate_training = self.cfg.trainer.fully_async.simulate_training
         spawn_pool = spawn_future = None
         if not simulate_training and placement.overlap_worker_spawn:
             # The training actors (process start, uv re-exec, backend imports, process groups) need
@@ -421,10 +435,18 @@ class BasePPOExp:
                 else:
                     # overlap_worker_spawn=false: the sequential order, engines healthy first.
                     trainer.create_actor_groups(PolicyWorker, CriticWorker, RefWorker)
-            if not placement.colocate_all:
-                # Own GPUs: load the models while the engines are still coming up.
-                with Timer("startup/init_models", trainer.startup_timings):
-                    trainer.init_models()
+            if not placement.colocate_all or overlap_model_init:
+                # Own GPUs, or shared GPUs the engines have not touched yet (their workers wait on
+                # the barrier): load the models while the engines are still coming up.
+                try:
+                    with Timer("startup/init_models", trainer.startup_timings):
+                        trainer.init_models()
+                finally:
+                    # Whatever happened, never leave the engine workers waiting.
+                    if startup_barrier is not None:
+                        waiting = release_startup_barrier(startup_barrier)
+                        logger.info(f"startup barrier released: {waiting} engine worker(s) were holding init_device")
+                        startup_barrier = None
 
         # Residual engine startup not hidden behind the training-side work (zero when
         # the engines were already awaited, e.g. a custom client hook).
@@ -436,8 +458,8 @@ class BasePPOExp:
                 self._sleep_colocated_engines(inference_engine_client)
             trainer.startup_timings.update(self.startup_timings)
 
-        if not simulate_training and placement.colocate_all:
-            # Shared GPUs: the engines are asleep now, load the models.
+        if not simulate_training and placement.colocate_all and not overlap_model_init:
+            # Shared GPUs, load-after-sleep order: the engines are asleep now, load the models.
             with Timer("startup/init_models", trainer.startup_timings):
                 trainer.init_models()
         return trainer
