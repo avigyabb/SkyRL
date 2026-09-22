@@ -596,11 +596,8 @@ def validate_inference_engine_cfg(cfg: SkyRLTrainConfig):
     ie_cfg = cfg.generator.inference_engine
 
     if cfg.trainer.skip_initial_weight_sync:
-        if cfg.trainer.placement.colocate_all:
-            raise ValueError(
-                "trainer.skip_initial_weight_sync requires placement.colocate_all=false: colocated engines are "
-                "slept at level 2 after startup, which discards their weights, so the first sync must restore them"
-            )
+        # Colocated engines take their first sleep at level 1 (weights backed up to CPU) so the
+        # skipped sync is not needed to restore them; see BasePPOExp._sleep_colocated_engines.
         if ie_cfg.fp8_weight_sync_mode is not None:
             raise ValueError(
                 "trainer.skip_initial_weight_sync cannot be combined with fp8_weight_sync_mode: "

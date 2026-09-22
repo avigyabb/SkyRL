@@ -1555,11 +1555,12 @@ class TrainerConfig(BaseConfig):
     """Evaluate the model once before training starts."""
     skip_initial_weight_sync: bool = False
     """Skip the weight sync that normally runs before the first step. Only valid for a fresh
-    (``resume_mode=none``), non-colocated run where the inference engines loaded the same checkpoint
-    as the trainer, so the sync would rewrite identical weights. Colocated engines are slept at
-    level 2 after startup, which discards their weights, so there the first sync is what restores
-    them. Also rejected with ``fp8_weight_sync_mode``, LoRA adapter sync, and the ``delta`` backend,
-    which all rely on that first sync to supply real weights."""
+    (``resume_mode=none``) run where the inference engines loaded the same checkpoint as the
+    trainer, so the sync would rewrite identical weights. Colocated engines then take their first
+    sleep at level 1 (weights backed up to CPU memory, restored by the first wake) instead of level
+    2, which would discard them; later sleeps stay at level 2. Rejected with ``fp8_weight_sync_mode``,
+    LoRA adapter sync, and the ``delta`` backend, which all rely on that first sync to supply real
+    weights."""
     eval_interval: int = 5
     """Evaluate against the validation dataset every N steps. ``-1`` to disable evaluation."""
     max_prompt_length: int = 512
