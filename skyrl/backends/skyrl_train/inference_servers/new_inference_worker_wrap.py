@@ -30,6 +30,7 @@ Usage:
         skyrl.backends.skyrl_train.inference_servers.new_inference_worker_wrap.NewInferenceWorkerWrap
 """
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +51,10 @@ if TYPE_CHECKING:
 # before model init, which is what guarantees it. Each is guarded because this
 # module is also imported from processes without the optional deps.
 try:
+    # vLLM >= 0.28 validates model_loader_extra_config keys in DefaultModelLoader; let the
+    # sonic load format keep its own (see the patch module). No-op for other formats.
+    import skyrl.backends.skyrl_train.patches.vllm.patch_sonic_loader_extra_config  # noqa: F401
+
     from skyrl.backends.skyrl_train.patches.vllm.patch_model_runner_registry import (
         apply_model_runner_registry_patch,
     )
@@ -219,7 +224,14 @@ class NewInferenceWorkerWrap:
                 "push_artifacts needs the `sonic-loader` package in the engine environment "
                 "(generator.inference_engine.sonic_mirror)."
             ) from e
-        return SonicWorkerExtension.push_artifacts(self, dst, capture_dir=capture_dir, force=force)
+        # Older sonic-loader wheels (e.g. 0.2.0) have no ``force`` parameter; forward it only
+        # when the installed extension accepts it.
+        kwargs = {"capture_dir": capture_dir}
+        if "force" in inspect.signature(SonicWorkerExtension.push_artifacts).parameters:
+            kwargs["force"] = force
+        elif force:
+            logging.getLogger(__name__).warning("installed sonic-loader has no `force` parameter; publishing without it")
+        return SonicWorkerExtension.push_artifacts(self, dst, **kwargs)
 
     def fetch_weights(self, target_version: int, sync_dir: str | None = None, uri: str | None = None):
         """Fetch/apply a checkpoint delta before the paused reload phase."""

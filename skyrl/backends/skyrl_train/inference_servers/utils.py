@@ -259,6 +259,11 @@ def build_vllm_cli_args(cfg: SkyRLTrainConfig) -> Namespace:
         args.model_loader_extra_config = {
             "mirror": ie_cfg.sonic_mirror,
             "capture": ie_cfg.sonic_publish_on_startup and ie_cfg.sonic_stream_weights,
+            # Consume-side guard (patch_sonic_loader_extra_config): with ``stream`` false the
+            # loader restores the compile cache and loads from HF even if a weights manifest
+            # exists in the mirror. Cache-only publishes stamp an empty weights manifest, which
+            # would otherwise send every later boot down the stream path with no shards.
+            "stream": ie_cfg.sonic_stream_weights,
         }
 
     engine_kwargs = get_config_as_dict(ie_cfg.engine_init_kwargs)
