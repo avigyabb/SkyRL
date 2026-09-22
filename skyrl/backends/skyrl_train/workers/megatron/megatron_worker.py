@@ -716,6 +716,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         """
         Override DistributedTorchRayActor.init_worker_process_group to use megatron distributed setup to create the mesh.
         """
+        self._ensure_master_addr_port()
         if not torch.distributed.is_initialized():
             # Ensure CUDA device is set before process group init — required when
             # using split "cpu:gloo,cuda:nccl" backend to avoid 'invalid device ordinal'
@@ -1618,6 +1619,7 @@ class MegatronRefWorkerBase(MegatronWorker, RefWorkerBase):
         """
         Override DistributedTorchRayActor.init_worker_process_group to use megatron distributed setup to create the mesh.
         """
+        self._ensure_master_addr_port()
         if not torch.distributed.is_initialized():
             # Ensure CUDA device is set before process group init — required when
             # using split "cpu:gloo,cuda:nccl" backend to avoid 'invalid device ordinal'
