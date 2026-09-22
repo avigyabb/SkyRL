@@ -91,10 +91,17 @@ class DistributedTorchRayActor:
         self._world_size = world_size
         self._rank = rank
         self._local_rank = local_rank
-        self._master_addr = master_addr if master_addr else self._get_current_node_ip()
-        self._master_port = master_port if master_port else self._get_free_port()
-        os.environ["MASTER_ADDR"] = self._master_addr
-        os.environ["MASTER_PORT"] = str(self._master_port)
+        if master_addr or rank == 0:
+            self._master_addr = master_addr if master_addr else self._get_current_node_ip()
+            self._master_port = master_port if master_port else self._get_free_port()
+            os.environ["MASTER_ADDR"] = self._master_addr
+            os.environ["MASTER_PORT"] = str(self._master_port)
+        else:
+            # Ranks > 0 are created before rank 0 has finished constructing; the actor group
+            # pushes rank 0's address with ``set_master_addr_port`` before the process
+            # group is initialized.
+            self._master_addr = None
+            self._master_port = None
         os.environ["WORLD_SIZE"] = str(self._world_size)
         os.environ["RANK"] = str(self._rank)
         # NOTE: Ray will automatically set the CUDA_VISIBLE_DEVICES
@@ -116,7 +123,21 @@ class DistributedTorchRayActor:
     def get_node_local_rank(self):
         return self._local_rank
 
+    def set_master_addr_port(self, master_addr: str, master_port: int) -> None:
+        """Rendezvous address for ranks created before rank 0 finished constructing."""
+        self._master_addr = master_addr
+        self._master_port = master_port
+        os.environ["MASTER_ADDR"] = master_addr
+        os.environ["MASTER_PORT"] = str(master_port)
+
+    def _ensure_master_addr_port(self) -> None:
+        assert self._master_addr is not None and self._master_port is not None, (
+            f"rank {self._rank}: master address not set; the actor group must call set_master_addr_port "
+            "before init_worker_process_group"
+        )
+
     def init_worker_process_group(self):
+        self._ensure_master_addr_port()
         if not torch.distributed.is_initialized():
             # Default torch dist pg init timeout is 10 minutes (600 seconds)
             torch.distributed.init_process_group(
@@ -849,7 +870,9 @@ class PPORayActorGroup:
         self._actor_handlers = [master_actor]
 
         if world_size > 1:
-            master_addr, master_port = ray.get(master_actor.get_master_addr_port.remote())
+            # Create the remaining ranks right away rather than after rank 0 has finished
+            # constructing (uv re-exec + backend imports, ~25s on H100), so the two waves
+            # overlap; rank 0's address is pushed to them below, once it is up.
             for rank in range(1, world_size):
                 local_rank = rank % self._num_gpus_per_node
 
@@ -867,12 +890,15 @@ class PPORayActorGroup:
                     world_size=world_size,
                     rank=rank,
                     local_rank=local_rank,
-                    master_addr=master_addr,
-                    master_port=master_port,
+                    master_addr=None,
+                    master_port=None,
                     sequence_parallel_size=self.sequence_parallel_size,
                     record_memory=self.record_memory,
                 )
                 self._actor_handlers.append(worker_actor)
+
+            master_addr, master_port = ray.get(master_actor.get_master_addr_port.remote())
+            ray.get([actor.set_master_addr_port.remote(master_addr, master_port) for actor in self._actor_handlers[1:]])
 
         # Initialize process group
         logger.info("Initializing process group for RayActorGroup")
