@@ -1,10 +1,12 @@
 import math
 import os
 import shutil
+import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import ray
@@ -135,6 +137,14 @@ class RayPPOTrainer:
         self.all_metrics = {}
         self.all_timings = {}
         self.global_step = 0
+
+        # One-off startup phase durations (inference engine startup, model build,
+        # initial weight sync, ...). Populated by the entrypoint and by ``train()``,
+        # then logged once as ``timing/startup/*`` before the first training step.
+        self.startup_timings: Dict[str, float] = {}
+        # Wall-clock start of the run, set by the entrypoint so ``startup/total``
+        # covers dataset/tokenizer loading and everything else before ``train()``.
+        self.startup_start_time: Optional[float] = None
 
         self._vllm_metrics_scraper: Optional[VLLMMetricsScraper] = (
             VLLMMetricsScraper() if cfg.generator.inference_engine.enable_ray_prometheus_stats else None
@@ -276,17 +286,19 @@ class RayPPOTrainer:
             self._ray_gpu_monitor.start()
 
         # Initialize weight sync state between policy model and inference engines.
-        with Timer("init_weight_sync_state"):
+        with Timer("startup/init_weight_sync_state", self.startup_timings):
             self.init_weight_sync_state()
 
         # Load checkpoint state if resumption is enabled.
         if self.resume_mode != ResumeMode.NONE:
-            with Timer("load_checkpoints"):
+            with Timer("startup/load_checkpoints", self.startup_timings):
                 self.global_step, _ = self.load_checkpoints()
 
         # Prepare weights for sampling
-        with Timer("sync_weights"):
-            await self.dispatch.save_weights_for_sampler()
+        with Timer("startup/sync_weights", self.startup_timings):
+            await self._initial_weight_sync()
+
+        self.log_startup_timings()
 
         # Compute start_epoch up-front so callback metadata is ready before
         # any event fires (including the baseline eval below).
@@ -661,13 +673,24 @@ class RayPPOTrainer:
         return entries[:kept_prompts]
 
     def build_models(self, PolicyWorker, CriticWorker, RefWorker):
-        """
-        Initialize the actors for training, and handle colocation logic
+        """Spawn the training actors and load their models (``create_actor_groups`` + ``init_models``)."""
+        self.create_actor_groups(PolicyWorker, CriticWorker, RefWorker)
+        self.init_models()
+
+    def create_actor_groups(self, PolicyWorker, CriticWorker, RefWorker):
+        """Spawn the policy/ref/critic Ray actor groups without loading any model.
+
+        Actor creation is where each worker process starts, re-execs through the uv
+        runtime env, imports the backend (tens of seconds for Megatron + TransformerEngine)
+        and joins its process group; it takes no GPU memory beyond a CUDA context. The
+        groups are created concurrently, and the entrypoint runs this while the inference
+        engines are still starting. ``init_models`` then loads the models.
         """
         cfg = self.cfg
         pg = None
 
         use_ref_model = cfg.trainer.algorithm.use_kl_loss or cfg.trainer.algorithm.use_kl_in_reward
+        factories: Dict[str, Callable[[], PPORayActorGroup]] = {}
 
         if cfg.trainer.placement.colocate_all:
             num_policy_gpus = cfg.trainer.placement.policy_num_gpus_per_node * cfg.trainer.placement.policy_num_nodes
@@ -685,7 +708,7 @@ class RayPPOTrainer:
             ), "num_policy_gpus and num_rollout_gpus must be the same when colocating all models"
             pg = self.colocate_pg
 
-            policy_model = PPORayActorGroup(
+            factories["policy"] = lambda: PPORayActorGroup(
                 cfg.trainer,
                 cfg.trainer.placement.policy_num_nodes,
                 cfg.trainer.placement.policy_num_gpus_per_node,
@@ -700,7 +723,7 @@ class RayPPOTrainer:
                 assert (
                     num_policy_gpus == num_ref_gpus
                 ), "num_policy_gpus and num_ref_gpus must be the same when colocating policy and ref model"
-                ref_model = PPORayActorGroup(
+                factories["ref"] = lambda: PPORayActorGroup(
                     cfg.trainer,
                     cfg.trainer.placement.ref_num_nodes,
                     cfg.trainer.placement.ref_num_gpus_per_node,
@@ -710,14 +733,11 @@ class RayPPOTrainer:
                     colocate_all=True,
                     sequence_parallel_size=cfg.trainer.ref.sequence_parallel_size,
                 )
-            else:
-                ref_model = None
-
             if cfg.trainer.critic.model.path:
                 assert (
                     num_policy_gpus == num_critic_gpus
                 ), "num_policy_gpus and num_critic_gpus must be the same when colocating policy and critic model"
-                critic_model = PPORayActorGroup(
+                factories["critic"] = lambda: PPORayActorGroup(
                     cfg.trainer,
                     cfg.trainer.placement.critic_num_nodes,
                     cfg.trainer.placement.critic_num_gpus_per_node,
@@ -727,9 +747,6 @@ class RayPPOTrainer:
                     colocate_all=True,
                     sequence_parallel_size=cfg.trainer.critic.sequence_parallel_size,
                 )
-            else:
-                critic_model = None
-
         else:
             if cfg.trainer.placement.colocate_policy_ref and use_ref_model:
                 assert (
@@ -747,8 +764,13 @@ class RayPPOTrainer:
                 raw_pg = placement_group(bundles, strategy="PACK")
                 get_ray_pg_ready_with_timeout(raw_pg, timeout=SKYRL_RAY_PG_TIMEOUT_IN_S)
                 pg = ResolvedPlacementGroup(raw_pg)
+                # The shared policy/ref placement group `pg` is set only when colocate_policy_ref is enabled
+                logger.info(
+                    "Colocating policy and ref on the same GPUs across "
+                    f"{cfg.trainer.placement.policy_num_nodes} node(s)."
+                )
 
-            policy_model = PPORayActorGroup(
+            factories["policy"] = lambda: PPORayActorGroup(
                 cfg.trainer,
                 cfg.trainer.placement.policy_num_nodes,
                 cfg.trainer.placement.policy_num_gpus_per_node,
@@ -759,7 +781,7 @@ class RayPPOTrainer:
                 sequence_parallel_size=cfg.trainer.policy.sequence_parallel_size,
             )
             if use_ref_model:
-                ref_model = PPORayActorGroup(
+                factories["ref"] = lambda: PPORayActorGroup(
                     cfg.trainer,
                     cfg.trainer.placement.ref_num_nodes,
                     cfg.trainer.placement.ref_num_gpus_per_node,
@@ -769,17 +791,8 @@ class RayPPOTrainer:
                     colocate_all=False,
                     sequence_parallel_size=cfg.trainer.ref.sequence_parallel_size,
                 )
-                if pg is not None:
-                    # The shared policy/ref placement group `pg` is set only when colocate_policy_ref is enabled
-                    logger.info(
-                        "Colocating policy and ref on the same GPUs across "
-                        f"{cfg.trainer.placement.policy_num_nodes} node(s)."
-                    )
-            else:
-                ref_model = None
-
             if cfg.trainer.critic.model.path:
-                critic_model = PPORayActorGroup(
+                factories["critic"] = lambda: PPORayActorGroup(
                     cfg.trainer,
                     cfg.trainer.placement.critic_num_nodes,
                     cfg.trainer.placement.critic_num_gpus_per_node,
@@ -788,8 +801,25 @@ class RayPPOTrainer:
                     colocate_all=False,
                     sequence_parallel_size=cfg.trainer.critic.sequence_parallel_size,
                 )
-            else:
-                critic_model = None
+
+        # Each group blocks on its own actors coming up (process start, imports, process
+        # group init); creating them concurrently overlaps those waits.
+        with ThreadPoolExecutor(max_workers=len(factories)) as pool:
+            futures = {name: pool.submit(factory) for name, factory in factories.items()}
+            groups = {name: future.result() for name, future in futures.items()}
+        self.policy_model: PPORayActorGroup = groups["policy"]
+        self.ref_model: Optional[PPORayActorGroup] = groups.get("ref")
+        self.critic_model: Optional[PPORayActorGroup] = groups.get("critic")
+        logger.info(f"spawned actor groups: {sorted(groups)}")
+
+    def init_models(self):
+        """Load the models on the spawned actor groups and build the worker dispatch.
+
+        Colocated groups load one at a time and offload to CPU so they fit alongside each
+        other; non-colocated groups load concurrently.
+        """
+        cfg = self.cfg
+        policy_model, ref_model, critic_model = self.policy_model, self.ref_model, self.critic_model
 
         policy_steps_per_train_batch = (
             cfg.trainer.train_batch_size // cfg.trainer.policy_mini_batch_size * cfg.trainer.update_epochs_per_batch
@@ -845,10 +875,6 @@ class RayPPOTrainer:
                 )
                 critic_model.offload_to_cpu()
 
-        self.policy_model: PPORayActorGroup = policy_model
-        self.critic_model: Optional[PPORayActorGroup] = critic_model
-        self.ref_model: Optional[PPORayActorGroup] = ref_model
-
         # Create unified dispatch that manages all actor groups
         self.dispatch = WorkerDispatch(
             cfg=self.cfg,
@@ -870,6 +896,39 @@ class RayPPOTrainer:
         """
         self.dispatch.init_weight_sync_state(self.inference_engine_client)
         logger.info("Initialized weight sync state for policy model and inference engines.")
+
+    async def _initial_weight_sync(self) -> None:
+        """Sync trainer weights into the engines before the first step.
+
+        With ``trainer.skip_initial_weight_sync`` on a fresh non-colocated run both sides
+        already hold the same checkpoint and the engines were never slept, so the sync
+        would only rewrite identical weights. (Colocated engines are slept at level 2
+        after startup, which discards their weights; validation rejects the flag there.)
+        """
+        if self.cfg.trainer.skip_initial_weight_sync and self.resume_mode == ResumeMode.NONE:
+            logger.info("skip_initial_weight_sync=True: engines keep their loaded weights for the first step")
+            return
+        await self.dispatch.save_weights_for_sampler()
+
+    def log_startup_timings(self) -> None:
+        """Log the recorded startup phase durations once as ``timing/startup/*``.
+
+        Adds ``startup/total`` (wall clock since the entrypoint started) when the
+        entrypoint set ``startup_start_time``. Logged at the current ``global_step``
+        without committing, so the row is merged with the baseline eval / first
+        step and never creates an out-of-order step for the tracker backend.
+        """
+        if self.startup_start_time is not None:
+            self.startup_timings["startup/total"] = time.time() - self.startup_start_time
+        if not self.startup_timings:
+            return
+        summary = ", ".join(f"{k}={v:.2f}s" for k, v in self.startup_timings.items())
+        logger.info(f"Startup timings: {summary}")
+        self.tracker.log(
+            {f"timing/{k}": v for k, v in self.startup_timings.items()},
+            step=self.global_step,
+            commit=False,
+        )
 
     def convert_to_training_input(self, generator_output: GeneratorOutput, uids: List[str]) -> TrainingInputBatch:
         """Converts lists to a padded batch of tensors for training

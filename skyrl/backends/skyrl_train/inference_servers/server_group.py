@@ -97,6 +97,8 @@ class ServerGroup:
         self._nixl_side_channel_base = nixl_side_channel_base
         self._mooncake_bootstrap_base_port = mooncake_bootstrap_base_port
         self._pool: Optional[ServerActorPool] = None
+        # Constructor-time server infos captured by start(blocking=False).
+        self._nowait_infos: Optional[List[ServerInfo]] = None
         self._internal_pg: Optional[PlacementGroup] = None
         self._server_actor_kwargs = server_actor_kwargs
         self._use_expandable_segments = use_expandable_segments
@@ -241,7 +243,12 @@ class ServerGroup:
                 logger.info(f"Server {i}: {info.url}")
             return server_infos
 
-        return self._pool.start(blocking=False)
+        # Submit the info RPCs before ``start`` so they execute ahead of it on each
+        # actor; engine startup can hold the actor's event loop for a long time.
+        info_refs = [actor.get_server_info.remote() for actor in actors]
+        start_refs = self._pool.start(blocking=False)
+        self._nowait_infos = ray.get(info_refs)
+        return start_refs
 
     @property
     def server_infos(self) -> List[ServerInfo]:
@@ -249,6 +256,17 @@ class ServerGroup:
         if self._pool is None:
             return []
         return self._pool.server_infos
+
+    def get_server_infos_nowait(self) -> List[ServerInfo]:
+        """Server infos without waiting for the servers to become healthy.
+
+        IP, port and bootstrap ports are fixed in the actor constructor and
+        collected by ``start(blocking=False)`` before the engines launch.
+        Falls back to the resolved infos after a blocking start.
+        """
+        if self._nowait_infos is not None:
+            return self._nowait_infos
+        return self.server_infos
 
     def get_pool(self) -> Optional[ServerActorPool]:
         """Get the underlying actor pool."""
