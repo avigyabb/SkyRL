@@ -7,8 +7,9 @@ import multiprocessing as mp
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import ray
 from loguru import logger
@@ -20,7 +21,7 @@ from skyrl.env_vars import SKYRL_RAY_PG_TIMEOUT_IN_S
 from skyrl.train.config import SkyRLTrainConfig, get_config_as_yaml_str
 from skyrl.train.dataset import PromptDataset
 from skyrl.train.generators.base import GeneratorInterface
-from skyrl.train.trainer import RayPPOTrainer
+from skyrl.train.trainer import RayPPOTrainer, spawn_actor_groups
 from skyrl.train.utils import validate_cfg
 from skyrl.train.utils.tracking import Tracking
 from skyrl.train.utils.trajectory_logging import TrajectoryLogger
@@ -42,6 +43,9 @@ config_dir = str(Path(__file__).parent.parent / "config")
 __all__ = ["BasePPOExp", "config_dir"]
 
 
+_UNSET = object()  # sentinel for the lazily built datasets (``None`` is a valid eval dataset)
+
+
 class BasePPOExp:
     def __init__(self, cfg: SkyRLTrainConfig):
         """
@@ -61,8 +65,11 @@ class BasePPOExp:
             use_fast=not self.cfg.trainer.disable_fast_tokenizer,
             padding_side="left",
         )
-        self.train_dataset = self.get_train_dataset()
-        self.eval_dataset = self.get_eval_dataset()
+        # Datasets are built lazily (``train_dataset`` / ``eval_dataset`` properties) so
+        # ``_setup_trainer`` can launch the inference engines first and tokenize the
+        # prompts while the engines load and compile.
+        self._train_dataset: Any = _UNSET
+        self._eval_dataset: Any = _UNSET
         self.colocate_pg = self.get_colocate_pg()
 
         # Inference resources (created lazily in _get_new_inference_client)
@@ -81,6 +88,28 @@ class BasePPOExp:
     @staticmethod
     def get_cfg_as_str(cfg: SkyRLTrainConfig) -> str:
         return get_config_as_yaml_str(cfg)
+
+    @property
+    def train_dataset(self) -> Optional[PromptDataset]:
+        """Training prompts, built on first access via ``get_train_dataset``."""
+        if self._train_dataset is _UNSET:
+            self._train_dataset = self.get_train_dataset()
+        return self._train_dataset
+
+    @train_dataset.setter
+    def train_dataset(self, value: Optional[PromptDataset]) -> None:
+        self._train_dataset = value
+
+    @property
+    def eval_dataset(self) -> Optional[PromptDataset]:
+        """Evaluation prompts, built on first access via ``get_eval_dataset`` (may be ``None``)."""
+        if self._eval_dataset is _UNSET:
+            self._eval_dataset = self.get_eval_dataset()
+        return self._eval_dataset
+
+    @eval_dataset.setter
+    def eval_dataset(self, value: Optional[PromptDataset]) -> None:
+        self._eval_dataset = value
 
     def get_train_dataset(self) -> PromptDataset:
         """Initializes the training dataset.
@@ -301,9 +330,14 @@ class BasePPOExp:
         Returns:
             The trainer.
         """
-        logger.info(self.get_cfg_as_str(self.cfg))
-        os.makedirs(self.cfg.trainer.export_path, exist_ok=True)
-        os.makedirs(self.cfg.trainer.ckpt_path, exist_ok=True)
+        # Launch the engines before anything else on the driver: with a deferred wait
+        # (below) everything that follows -- prompt tokenization, the backend imports,
+        # the tracker, the worker spawn -- runs while they load and compile.
+        # Non-colocated: everything overlaps, the workers have their own GPUs.
+        # Colocated: only the actor spawn; the engines must be healthy and slept before
+        # the training workers load models.
+        placement = self.cfg.trainer.placement
+        self._wait_for_inference_ready = placement.colocate_all and not placement.overlap_worker_spawn
 
         if self.cfg.trainer.strategy == "fsdp":
             from skyrl.backends.skyrl_train.workers.fsdp.fsdp_worker import (
@@ -320,18 +354,35 @@ class BasePPOExp:
         else:
             raise ValueError(f"Unknown strategy type: {self.cfg.trainer.strategy}")
 
+        # Build the models — skipped in simulated-trainer mode (no policy/critic/ref components).
+        # See FullyAsyncConfig.simulate_training / FullyAsyncTrainerSim: steps are simulated
+        # (sleep + pause/resume, no broadcast), typically against external served endpoints.
+        # TODO: we should make a top level TrainerConfig.simulate_training flag to provide a consistent way
+        # for simulating training steps
+        simulate_training = self.cfg.trainer.fully_async.simulate_training
+        spawn_pool = spawn_future = None
+        if not simulate_training and placement.overlap_worker_spawn:
+            # The training actors (process start, uv re-exec, backend imports, process groups) need
+            # neither the engines nor their URLs, so they come up in a thread from here on: behind
+            # the engine launch, the prompt tokenization and the trainer construction below.
+            # ``startup/spawn_workers`` is the residual wait once the trainer exists.
+            spawn_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="spawn_actor_groups")
+            spawn_future = spawn_pool.submit(
+                spawn_actor_groups, self.cfg, self.colocate_pg, PolicyWorker, CriticWorker, RefWorker
+            )
+
+        with Timer("startup/inference_engines", self.startup_timings):
+            inference_engine_client = self.get_inference_client()
+        with Timer("startup/datasets", self.startup_timings):
+            train_dataset, eval_dataset = self.train_dataset, self.eval_dataset
+
+        logger.info(self.get_cfg_as_str(self.cfg))
+        os.makedirs(self.cfg.trainer.export_path, exist_ok=True)
+        os.makedirs(self.cfg.trainer.ckpt_path, exist_ok=True)
+
         # NOTE (sumanthrh): Instantiate tracker before trainer init.
         # We have custom validation before this step to give better error messages.
         tracker = self.get_tracker()
-
-        # Engine startup (weight load, torch.compile, CUDA graph capture) overlaps the
-        # training-side work below. Non-colocated: everything, the workers have their own
-        # GPUs. Colocated: only the actor spawn (process start, imports, process groups);
-        # the engines must be healthy and slept before the training workers load models.
-        placement = self.cfg.trainer.placement
-        self._wait_for_inference_ready = placement.colocate_all and not placement.overlap_worker_spawn
-        with Timer("startup/inference_engines", self.startup_timings):
-            inference_engine_client = self.get_inference_client()
 
         generator: GeneratorInterface = self.get_generator(self.cfg, self.tokenizer, inference_engine_client)
 
@@ -339,8 +390,8 @@ class BasePPOExp:
             cfg=self.cfg,
             tracker=tracker,
             tokenizer=self.tokenizer,
-            train_dataset=self.train_dataset,
-            eval_dataset=self.eval_dataset,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             inference_engine_client=inference_engine_client,
             generator=generator,
             colocate_pg=self.colocate_pg,
@@ -353,12 +404,6 @@ class BasePPOExp:
         trainer.startup_start_time = self._startup_start_time
         trainer.startup_timings.update(self.startup_timings)
 
-        # Build the models — skipped in simulated-trainer mode (no policy/critic/ref components).
-        # See FullyAsyncConfig.simulate_training / FullyAsyncTrainerSim: steps are simulated
-        # (sleep + pause/resume, no broadcast), typically against external served endpoints.
-        # TODO: we should make a top level TrainerConfig.simulate_training flag to provide a consistent way
-        # for simulating training steps
-        simulate_training = self.cfg.trainer.fully_async.simulate_training
         if simulate_training:
             logger.info(
                 "fully_async.simulate_training=True: skipping build_models() — no policy/critic/ref "
@@ -366,7 +411,12 @@ class BasePPOExp:
             )
         else:
             with Timer("startup/spawn_workers", trainer.startup_timings):
-                trainer.create_actor_groups(PolicyWorker, CriticWorker, RefWorker)
+                if spawn_future is not None:
+                    trainer.set_actor_groups(spawn_future.result())
+                    spawn_pool.shutdown(wait=False)
+                else:
+                    # overlap_worker_spawn=false: the sequential order, engines healthy first.
+                    trainer.create_actor_groups(PolicyWorker, CriticWorker, RefWorker)
             if not placement.colocate_all:
                 # Own GPUs: load the models while the engines are still coming up.
                 with Timer("startup/init_models", trainer.startup_timings):
