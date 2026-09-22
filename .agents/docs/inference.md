@@ -93,6 +93,26 @@ cache-key writeup on #2167 for what invalidates each of the two cache trees; the
 absolute source paths and so misses on every `uv run --isolated` re-exec. CUDA graph capture is not cacheable by
 vLLM and always runs when `enforce_eager=false`.
 
+**sonicloader mirror (`generator.inference_engine.sonic_mirror`).** Optional integration with
+[anyscale/sonicloader](https://github.com/anyscale/sonicloader), which keeps a per-model "mirror" in S3 with two
+independently addressed parts: pre-sharded per-rank weights (streamed S3 -> GPU at ~26-30 GB/s on multi-ENI
+hosts) and a tar of the compile caches (`VLLM_CACHE_ROOT` incl. Inductor + Triton, and FlashInfer's JIT dir).
+Their measurements on 8xH100 put the cache at 57-91% of the boot-time saving: CUDA graph capture re-JITs Triton
+kernels per capture shape, so a restored Triton cache turns capture into pure graph recording. With the knob set,
+`build_vllm_cli_args` passes `load_format=sonic` + `model_loader_extra_config={mirror, capture}`; the sonic vLLM
+plugin (entry point `vllm.general_plugins`, auto-registered when `sonic-loader` is installed) restores the cache
+before compiling, streams weights if published, else loads from HF and stages shards. After the engines are
+healthy the entrypoint calls `push_artifacts` on every server (`RemoteInferenceClient.push_sonic_artifacts` ->
+`/collective_rpc`; the method lives on `NewInferenceWorkerWrap` and delegates to `SonicWorkerExtension`, because
+vLLM accepts one `--worker-extension-cls`). Publishing is digest-keyed and idempotent; `sonic_publish_on_startup=false`
+consumes only. By default only the compile cache is published (`capture=false`): the cache path is pure
+Python (boto3 + tar) and works from a source checkout, while weight streaming (`sonic_stream_weights=true`) needs
+the Rust engine `libsonicgpu.so` and, once weights are published under a digest, every boot with that engine
+config takes the stream path and fails without it. Constraints: S3 only; `sonic-loader` must be in the engine env; incompatible with
+`fp8_weight_sync_mode` (both set `load_format`); the cache digest folds in `VllmConfig.compute_hash()` + tp/pp/dp/ep,
+gpu arch, torch and cuda, so any engine-config change misses cleanly. The #2183 device-index AOT dirs are per GPU
+index, so publish from a node where every engine has started so the tar carries every `rank_*_dev*` directory.
+
 **Skipping the step-0 sync (`trainer.skip_initial_weight_sync`).** vLLM loads the checkpoint and
 the trainer then overwrites every weight in the step-0 sync, so one of the two loads is redundant.
 `trainer.skip_initial_weight_sync=true` drops the sync on a fresh **non-colocated** run whose engines

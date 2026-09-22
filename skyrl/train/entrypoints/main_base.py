@@ -71,6 +71,7 @@ class BasePPOExp:
         self._decode_server_groups = None
         self._inference_router = None
         self._server_setup = None
+        self._sonic_published = False
         self._engines_slept = False
         # When False, ``_get_new_inference_client`` launches the engines without
         # waiting for them to become healthy; ``_setup_trainer`` waits after the
@@ -256,6 +257,11 @@ class BasePPOExp:
         self._prefill_server_groups = server_setup.prefill_server_groups
         self._decode_server_groups = server_setup.decode_server_groups
 
+        if not server_setup.pending_start_refs:
+            # Engines are healthy: publish now. The deferred path publishes from
+            # _setup_trainer once wait_until_ready() has returned.
+            self._publish_sonic_artifacts(client)
+
         if is_colocated and not server_setup.pending_start_refs:
             self._sleep_colocated_engines(client)
 
@@ -269,6 +275,23 @@ class BasePPOExp:
         asyncio.run(client.sleep())
         self._engines_slept = True
         logger.info("HTTP Inference: Colocated mode - slept inference engines after startup")
+
+    def _publish_sonic_artifacts(self, client: InferenceEngineInterface) -> None:
+        """Publish weights + compile cache to the configured sonicloader mirror, once.
+
+        Runs against healthy, awake engines (before a colocated sleep). Idempotent on the
+        mirror side, so a warm start only re-uploads parts that are missing.
+        """
+        ie_cfg = self.cfg.generator.inference_engine
+        if self._sonic_published or ie_cfg.sonic_mirror is None or not ie_cfg.sonic_publish_on_startup:
+            return
+        if self._server_setup is None or not self._server_setup.server_groups:
+            # External engines: SkyRL does not own their worker extension.
+            return
+        self._sonic_published = True
+        with Timer("startup/publish_sonic_artifacts", self.startup_timings):
+            summaries = asyncio.run(client.push_sonic_artifacts(ie_cfg.sonic_mirror))
+        logger.info(f"sonic: published artifacts to {ie_cfg.sonic_mirror}: {summaries}")
 
     def _setup_trainer(self) -> RayPPOTrainer:
         """Setup and return the trainer.
@@ -354,6 +377,7 @@ class BasePPOExp:
         if self._server_setup is not None:
             with Timer("startup/inference_engines_ready_wait", trainer.startup_timings):
                 self._server_setup.wait_until_ready()
+            self._publish_sonic_artifacts(inference_engine_client)
             if placement.colocate_all:
                 self._sleep_colocated_engines(inference_engine_client)
             trainer.startup_timings.update(self.startup_timings)
