@@ -439,7 +439,7 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
 
         # Load checkpoint state if resumption is enabled. Also load the data UIDs that are already trained on.
         if self.resume_mode != ResumeMode.NONE:
-            with Timer("load_checkpoints"):
+            with Timer("startup/load_checkpoints", self.startup_timings):
                 (
                     self.global_step,
                     _,
@@ -470,12 +470,14 @@ class FullyAsyncRayPPOTrainer(RayPPOTrainer):
                     )
 
         # Initialize weight sync state
-        with Timer("init_weight_sync_state"):
+        with Timer("startup/init_weight_sync_state", self.startup_timings):
             self.init_weight_sync_state()
 
         # sync weights to inference engines
-        with Timer("sync_weights_to_inference_engines"):
-            await self.dispatch.save_weights_for_sampler()
+        with Timer("startup/sync_weights", self.startup_timings):
+            await self._initial_weight_sync()
+
+        self.log_startup_timings()
 
         # Per-step GPU utilization to the tracker. The base loop starts, flushes, and stops the
         # monitor itself. The async loop overrides train() and must wire it here.

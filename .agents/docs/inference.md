@@ -52,7 +52,7 @@ Prefill-Decode disaggregation:
 ## Key Config Knobs
 
 All under `generator.inference_engine.*`:
-- `enforce_eager` (bool, default true): With `enforce_eager=false`, there can be more mismatch between inference logprobs and trainer logprobs. It is recommended to use off policy correction methods like Truncated Importance Sampling (see `docs/content/docs/algorithms/off_policy_correction.mdx` for details) to prevent logprobs drift. 
+- `enforce_eager` (bool, default false): With `enforce_eager=false`, there can be more mismatch between inference logprobs and trainer logprobs. It is recommended to use off policy correction methods like Truncated Importance Sampling (see `docs/content/docs/algorithms/off_policy_correction.mdx` for details) to prevent logprobs drift. With `enforce_eager=false` every engine start runs torch.compile + CUDA graph capture; see "Startup / JIT caches" below.
 - `gpu_memory_utilization` (float, default 0.8)
 - `max_num_batched_tokens` (int, default 8192)
 - `max_num_seqs` (int, default 1024)
@@ -60,6 +60,47 @@ All under `generator.inference_engine.*`:
 - `enable_chunked_prefill` (bool, default true)
 - `distributed_executor_backend` ("ray" or "mp")
 - `engine_init_kwargs` (dict, pass-through to vLLM EngineArgs)
+
+## Startup / JIT caches
+
+Startup phases are timed and logged once as `timing/startup/*` (inference engine launch, `spawn_workers`,
+`init_models`, the residual `inference_engines_ready_wait`, `init_weight_sync_state`, the initial `sync_weights`,
+and `startup/total` wall clock since the entrypoint started). Look there first before optimizing cold start.
+
+**Where the fixed cost is (L4, Qwen2.5-0.5B, colocated, warm caches).** Every Ray worker pays the uv runtime-env
+re-exec (~5s) plus the backend imports (~25s for the Megatron worker module with TransformerEngine, ~14s for the
+vLLM server actor) before it does anything; the HF -> Megatron import of a 0.5B model is <1s and vLLM's engine
+init is ~7s. So `RayPPOTrainer.build_models` is split into `create_actor_groups` (spawns the policy/ref/critic
+groups concurrently in threads, each blocking only on its own actors) and `init_models`; the entrypoint runs the
+spawn while the engines start in both placements, and in colocated mode waits for the engines, sleeps them, then
+loads the models (`placement.overlap_worker_spawn=false` restores the sequential order).
+
+**Overlapped init (non-colocated).** `_setup_trainer` builds the inference client with `wait_for_ready=False`:
+`create_inference_servers` launches the engines, reads their URLs from the actors' constructor state
+(`ServerGroup.get_server_infos_nowait`), and constructs but does not start the router (the router waits for
+its backends to pass health checks, so it can only start once they are up; its port is reserved in
+`__init__`, so the proxy URL is known before then). The training workers are then built while the engines
+load and compile, and `InferenceServerSetup.wait_until_ready()` resolves the start refs and starts the router
+before `train()`. Colocated runs keep the old order because the engines must be healthy to be slept before
+the training workers load. Entrypoints that call `get_inference_client()` directly (`serve`, `main_generate`)
+still get fully-ready engines.
+
+vLLM's torch.compile cache (`~/.cache/vllm/torch_compile_cache`) is **enabled** by default (#2167) so warm starts
+skip Inductor compilation; `prepare_runtime_environment` forwards a driver-side `VLLM_DISABLE_COMPILE_CACHE` to the
+workers for debugging cold compiles. The AOT artifact directory is patched to include the device index
+(`patches/vllm/patch_compile_cache_device_path.py`, #2183) so engines on different GPUs never share kernels. See the
+cache-key writeup on #2167 for what invalidates each of the two cache trees; the Dynamo/backend tree keys on
+absolute source paths and so misses on every `uv run --isolated` re-exec. CUDA graph capture is not cacheable by
+vLLM and always runs when `enforce_eager=false`.
+
+**Skipping the step-0 sync (`trainer.skip_initial_weight_sync`).** vLLM loads the checkpoint and
+the trainer then overwrites every weight in the step-0 sync, so one of the two loads is redundant.
+`trainer.skip_initial_weight_sync=true` drops the sync on a fresh **non-colocated** run whose engines
+loaded the same checkpoint (`RayPPOTrainer._initial_weight_sync`). Colocated is rejected: those engines
+are slept at level 2 right after startup, which discards their weights, and the first sync is what
+restores them (measured: skipping it left a rollout-vs-trainer logprob gap of 17 max / 2.5 mean instead
+of 0.5 / ~0). Validated in `validate_inference_engine_cfg`. Skipping the sync assumes the vLLM loader and
+the trainer export agree byte-for-byte, which quantized or fused layers may not.
 
 ## Placement
 - Colocated: vLLM and training workers (FSDP/Megatron) are placed on the same set of GPUs. We offload/backload each component as needed. During weight syncing, model weights from vLLM as well as model weights from the training workers remain on GPU

@@ -649,6 +649,13 @@ class PlacementConfig(BaseConfig):
 
     colocate_all: bool = True
     """When True, training and inference share the same GPUs."""
+    overlap_worker_spawn: bool = True
+    """Spawn the policy/ref/critic Ray actors (process start, backend imports, process groups)
+    while the inference engines are still starting, instead of after they are healthy. Model
+    loading still waits for the engines when colocated. The trainer processes then hold a CUDA
+    context on the shared GPUs during vLLM's memory profiling, which shrinks the KV cache by that
+    much; set to ``False`` to restore the fully sequential startup if ``gpu_memory_utilization``
+    is pushed to the limit."""
     colocate_policy_ref: bool = True
     """When colocate_all is False, True (default) still colocates policy and ref
     on the same GPUs (one shared placement group). Set this item to False to place
@@ -1527,6 +1534,13 @@ class TrainerConfig(BaseConfig):
     """Batch size for evaluation."""
     eval_before_train: bool = True
     """Evaluate the model once before training starts."""
+    skip_initial_weight_sync: bool = False
+    """Skip the weight sync that normally runs before the first step. Only valid for a fresh
+    (``resume_mode=none``), non-colocated run where the inference engines loaded the same checkpoint
+    as the trainer, so the sync would rewrite identical weights. Colocated engines are slept at
+    level 2 after startup, which discards their weights, so there the first sync is what restores
+    them. Also rejected with ``fp8_weight_sync_mode``, LoRA adapter sync, and the ``delta`` backend,
+    which all rely on that first sync to supply real weights."""
     eval_interval: int = 5
     """Evaluate against the validation dataset every N steps. ``-1`` to disable evaluation."""
     max_prompt_length: int = 512

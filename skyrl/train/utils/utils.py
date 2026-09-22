@@ -587,7 +587,30 @@ def validate_inference_engine_cfg(cfg: SkyRLTrainConfig):
     Raises:
         ValueError / NotImplementedError / AssertionError: on invalid combinations.
     """
+    # Local import: inference_servers.utils pulls in the vLLM worker extension module.
+    from skyrl.backends.skyrl_train.inference_servers.utils import (
+        _uses_lora_weight_sync,
+    )
+
     ie_cfg = cfg.generator.inference_engine
+
+    if cfg.trainer.skip_initial_weight_sync:
+        if cfg.trainer.placement.colocate_all:
+            raise ValueError(
+                "trainer.skip_initial_weight_sync requires placement.colocate_all=false: colocated engines are "
+                "slept at level 2 after startup, which discards their weights, so the first sync must restore them"
+            )
+        if ie_cfg.fp8_weight_sync_mode is not None:
+            raise ValueError(
+                "trainer.skip_initial_weight_sync cannot be combined with fp8_weight_sync_mode: "
+                "the engines start without real weights"
+            )
+        if _uses_lora_weight_sync(cfg):
+            raise ValueError("trainer.skip_initial_weight_sync is not supported with LoRA adapter sync")
+        if ie_cfg.weight_sync_backend == "delta":
+            raise ValueError("trainer.skip_initial_weight_sync is not supported with weight_sync_backend='delta'")
+        if cfg.trainer.resume_mode not in (None, "none"):
+            raise ValueError("trainer.skip_initial_weight_sync requires resume_mode='none'; a resumed run must sync")
 
     if ie_cfg.fp8_weight_sync_mode not in (None, BLOCKWISE_FP8):
         raise ValueError(
@@ -867,6 +890,13 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
                 f"Exporting `RAY_CGRAPH_get_timeout` to ray runtime env: {os.environ['RAY_CGRAPH_get_timeout']}"
             )
             env_vars["RAY_CGRAPH_get_timeout"] = os.environ["RAY_CGRAPH_get_timeout"]
+
+    # JIT cache locations set on the driver reach the trainer and engine workers so a
+    # pre-seeded or shared cache directory is used instead of each node's default.
+    for cache_var in ("TRITON_CACHE_DIR", "VLLM_CACHE_ROOT"):
+        if os.environ.get(cache_var):
+            logger.info(f"Exporting `{cache_var}` to ray runtime env: {os.environ[cache_var]}")
+            env_vars[cache_var] = os.environ[cache_var]
 
     # Use max of available GPU counts, defaulting to 1 if none found
     gpu_counts = []
