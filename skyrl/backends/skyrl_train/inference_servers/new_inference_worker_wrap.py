@@ -51,6 +51,9 @@ if TYPE_CHECKING:
 # before model init, which is what guarantees it. Each is guarded because this
 # module is also imported from processes without the optional deps.
 try:
+    # Colocated overlap of the trainer's model build with the engine boot: hold init_device
+    # until the entrypoint has offloaded the models (no-op when the job has no barrier).
+    import skyrl.backends.skyrl_train.patches.vllm.patch_startup_barrier  # noqa: F401
     from skyrl.backends.skyrl_train.patches.vllm.patch_model_runner_registry import (
         apply_model_runner_registry_patch,
     )
