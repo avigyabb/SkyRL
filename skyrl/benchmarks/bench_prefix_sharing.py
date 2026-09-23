@@ -279,9 +279,14 @@ def main():
                 gn0b = optim_step(group)
             else:
                 met0b, gn0b = met0, gn0
+            # each mode uses its own recomputed old log-probs, as recompute_old_logprobs_per_minibatch does
+            batch["action_log_probs"] = lp1.clone()
+            batch["rollout_logprobs"] = lp1.clone()
             set_mode(group, True, args.min_shared)
             met1 = run_forward_backward(group, batch, shared_rows)
             gn1 = optim_step(group)
+            batch["action_log_probs"] = lp0.clone()
+            batch["rollout_logprobs"] = lp0.clone()
             emit(
                 dict(
                     kind="check_grads",
