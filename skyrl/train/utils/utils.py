@@ -269,6 +269,17 @@ def validate_megatron_cfg(cfg: SkyRLTrainConfig):
             assert (
                 cfg.trainer.remove_microbatch_padding
             ), "context parallel is only supported with remove_microbatch_padding"
+        if cfg.trainer.prefix_sharing:
+            assert (
+                cfg.trainer.remove_microbatch_padding
+            ), "trainer.prefix_sharing requires remove_microbatch_padding=True"
+            assert (
+                config.megatron_config.context_parallel_size == 1
+            ), f"{worker_type}: trainer.prefix_sharing requires context_parallel_size=1"
+            assert not config.megatron_config.moe_enable_routing_replay, (
+                f"{worker_type}: trainer.prefix_sharing is incompatible with moe_enable_routing_replay "
+                "(the replayed routing is laid out per replica, not per shared prefix)"
+            )
         # check that sequence parallel is not configured outside of megatron
         assert config.sequence_parallel_size == 1, (
             f"found {worker_type}.sequence_parallel_size={config.sequence_parallel_size}, ulysses style sequence "
@@ -318,6 +329,10 @@ def _apply_mtp_config(cfg: SkyRLTrainConfig):
 
 
 def validate_cfg(cfg: SkyRLTrainConfig):
+    if cfg.trainer.prefix_sharing:
+        assert (
+            cfg.trainer.strategy == "megatron"
+        ), "trainer.prefix_sharing is only implemented for the megatron strategy"
     if cfg.trainer.strategy == "fsdp2":
         import warnings
 

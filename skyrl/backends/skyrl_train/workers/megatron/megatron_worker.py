@@ -1178,6 +1178,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
 
         return WorkerOutput(loss_fn_outputs=all_loss_fn_outputs, metrics=status)
 
+    def set_prefix_sharing(self, enabled: bool, min_shared_tokens: Optional[int] = None) -> None:
+        """Toggle ``trainer.prefix_sharing`` on the loaded model (see MegatronModelWrapper)."""
+        self.model.set_prefix_sharing(enabled, min_shared_tokens)
+
     def optim_step(self) -> Optional[float]:
         """
         Perform optimizer step.
