@@ -220,10 +220,16 @@ def main():
         shared_tokens_est = args.groups * (P - 1) + int(batch["response_mask"].sum()) + args.groups * G
         ratio = shared_tokens_est / row_tokens
         shared_rows = G if args.shared_rows == "G" else int(args.shared_rows)
+        B_rows = int(batch["sequences"].shape[0])
         if args.baseline_rows == "auto":
             baseline_rows = max(1, int(round(shared_rows * ratio)))
+        elif args.baseline_rows.startswith("tokens:"):
+            # largest row chunk within a token budget (rows are P+R tokens each), capped at the mini-batch
+            budget = int(args.baseline_rows.split(":")[1])
+            baseline_rows = max(1, min(B_rows, budget // (P + R)))
         else:
             baseline_rows = int(args.baseline_rows)
+        repack_rows = min(B_rows, 2 * baseline_rows)  # a different unshared packing for the noise-floor control
         info = dict(
             P=P,
             R=R,
@@ -253,7 +259,7 @@ def main():
             set_mode(group, False, args.min_shared)
             lp0 = run_forward(group, batch, baseline_rows)
             lp0b = (
-                run_forward(group, batch, shared_rows) if shared_rows != baseline_rows else lp0
+                run_forward(group, batch, repack_rows) if repack_rows != baseline_rows else lp0
             )  # same math, other packing
             set_mode(group, True, args.min_shared)
             lp1 = run_forward(group, batch, shared_rows)
@@ -274,8 +280,8 @@ def main():
             set_mode(group, False, args.min_shared)
             met0 = run_forward_backward(group, batch, baseline_rows)
             gn0 = optim_step(group)
-            if shared_rows != baseline_rows:
-                met0b = run_forward_backward(group, batch, shared_rows)
+            if repack_rows != baseline_rows:
+                met0b = run_forward_backward(group, batch, repack_rows)
                 gn0b = optim_step(group)
             else:
                 met0b, gn0b = met0, gn0
