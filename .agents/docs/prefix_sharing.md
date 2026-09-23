@@ -41,10 +41,11 @@ Rows only share inside a micro-batch, so `micro_train_batch_size_per_gpu` and
 
 * Everything outside attention is the same per-token computation as unshared THD packing.
 * Branch tokens' attention output is the fp32 LSE-weighted merge of two bf16 flash-attn partial
-  results, rounded once to bf16, instead of one flash-attn result. Measured on Qwen2.5-1.5B and
-  Qwen3-30B-A3B with random tokens (`|logprob| ~ 12`): mean |delta logprob| ~ 0.02, p99 ~ 0.08,
-  max ~ 0.2 (about 1 bf16 ulp of the logits); repacking the same rows into different micro-batches
-  gives 0. Gradient norms agree to about 1 percent at these batch sizes. Kernel-level parity tests
+  results, rounded once to bf16, instead of one flash-attn result. Measured deviation from the
+  unshared path is at kernel-choice noise: on dense Qwen2.5-1.5B (random tokens, `|logprob| ~ 12`)
+  mean |delta logprob| 0.021 vs 0.022 for switching the baseline attention kernel (flash-attn ->
+  cuDNN), grad norms within 0.016 percent; on Qwen3-30B-A3B the deviation equals the MoE's own
+  repacking noise (see Results). Kernel-level parity tests
   (`tests/backends/skyrl_train/gpu/gpu_ci/test_prefix_sharing.py`) compare forward and backward
   against flash-attn on the replicated rows.
 * Training/inference log-prob matching therefore inherits this bf16-level deviation on top of the
