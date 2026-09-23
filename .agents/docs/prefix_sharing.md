@@ -63,3 +63,27 @@ Rows only share inside a micro-batch, so `micro_train_batch_size_per_gpu` and
 * `skyrl/benchmarks/bench_prefix_sharing.py`: Ray + Megatron worker A/B on one loaded model
   (`--check` compares log-probs and grad norms with `lr=0`; timing of `forward_backward` and
   `forward`). Results for Qwen3-30B-A3B are in the PR / X-post write-up.
+
+## Results (2026-09-23, Qwen3-30B-A3B-Base, 8xH100 80GB, TP=8 / EP=8 / ETP=1, bf16, full recompute)
+
+One mini-batch of 2 prompts x G samples, synthetic random-token rows with P prompt and R response
+tokens. Baseline: unshared THD packing with the largest micro-batch within 64k tokens. Shared: two
+prompt groups per micro-batch for G=8, one for G=16. Best of 3 after warmup; optimizer step excluded.
+
+| P / R / G | rows | trunk tokens unshared -> shared | fwd+bwd baseline | fwd+bwd shared | speedup | fwd baseline | fwd shared | speedup |
+|---|---|---|---|---|---|---|---|---|
+| 1024 / 2048 / 8 | 16 | 49,152 -> 34,830 (0.71x) | 2.75 s | 2.08 s | 1.32x | 0.84 s | 0.67 s | 1.26x |
+| 4096 / 1024 / 8 | 16 | 81,920 -> 24,590 (0.30x) | 5.26 s | 1.58 s | 3.33x | 1.49 s | 0.51 s | 2.90x |
+| 4096 / 2048 / 16 | 32 | 196,608 -> 73,758 (0.38x) | 13.66 s | 5.27 s | 2.59x | 2.89 s | 1.23 s | 2.36x |
+| 8192 / 1024 / 16 | 32 | 294,912 -> 49,182 (0.17x) | 20.38 s | 3.79 s | 5.38x | 3.97 s | 0.94 s | 4.20x |
+| 16384 / 512 / 16 | 32 | 540,672 -> 49,182 (0.09x) | 43.02 s | 4.68 s | 9.20x | 7.45 s | 1.03 s | 7.24x |
+
+Numerics on the same weights (lr=0): shared-vs-unshared per-token log-prob deviation mean 0.05 /
+p99 0.25 on |logprob| ~ 12, identical to re-running the unshared path with a different micro-batch
+split on this MoE (routing shifts with the token set). Grad norms agree to 0.01-2.7 percent, within
+the same repacking control. On dense Qwen2.5-1.5B (repacking is exactly deterministic) the shared
+path deviates by 0.021 mean, the same as switching the baseline attention kernel from flash-attn
+to cuDNN (0.022), and grad norms agree to 0.016 percent.
+
+Attention op alone (1 H100, Qwen3-30B-A3B TP=8 head shard, fwd+bwd vs flash-attn on replicated
+rows): 0.74x at 1k/2k/8, 1.36x at 4k/1k/8, 1.27x at 4k/2k/16, 2.49x at 8k/1k/16, 5.35x at 16k/512/16.
