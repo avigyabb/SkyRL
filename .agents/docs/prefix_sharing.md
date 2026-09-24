@@ -88,3 +88,30 @@ to cuDNN (0.022), and grad norms agree to 0.016 percent.
 
 Attention op alone (1 H100, Qwen3-30B-A3B TP=8 head shard, fwd+bwd vs flash-attn on replicated
 rows): 0.74x at 1k/2k/8, 1.36x at 4k/1k/8, 1.27x at 4k/2k/16, 2.49x at 8k/1k/16, 5.35x at 16k/512/16.
+
+## End-to-end training A/B (2026-09-23, step-wise multi-turn GRPO on SkyRL-SQL-653)
+
+Qwen3-30B-A3B (hybrid thinking), 8xH100, TP=8 / EP=8 / ETP=1, CPU-offloaded optimizer, 4 colocated
+vLLM engines (TP=2). 16 prompts x 8 samples per step, up to 5 turns (measured 2.3-3.3 turns per
+trajectory), `max_generate_length=3000`, `max_input_length=16000`, `step_wise_trajectories=true`,
+same data and seed in every run. First-turn prompts average 1.9k tokens (565 shared system prompt +
+1.3k schema); responses average ~1.3k tokens. Steps 2+ only (step 1 carries warmup); throughput in
+unshared row tokens per second so every row measures the same work.
+
+| run | steps | trunk tokens | policy_train mean / row-tok/s | speedup | log-prob recompute mean / row-tok/s | speedup | step mean | mean reward |
+|---|---|---|---|---|---|---|---|---|
+| baseline, unshared THD packing, 64k-token micro-batches | 8 | 100% | 68.4 s / 21.7k | 1.00x | 18.6 s / 79.8k | 1.00x | 202 s | 0.460 |
+| prefix-shared, 16-row micro-batches | 8 | 41% | 49.1 s / 30.4k | 1.40x | 12.8 s / 116k | 1.46x | 173 s | 0.494 |
+| prefix-shared, 32-row micro-batches | 6 | 39% | 39.7 s / 37.0k | 1.70x | 11.1 s / 133k | 1.67x | 166 s | 0.503 |
+| prefix-shared, 64-row micro-batches | 6 | 37% | 38.5 s / 40.5k | 1.86x | 11.5 s / 135k | 1.70x | 168 s | 0.501 |
+
+Rewards track the baseline step by step (e.g. 0.73 / 0.70 and 0.34 / 0.35 on the same prompt
+batches). Generation (~99 s per step) is untouched, so the whole-step gain is ~1.2x on this task.
+What keeps the update below the ~2.5x the token ratio would allow: ~20 s of each `policy_train` is
+the CPU-offloaded Adam step (needed at DP=1 on one node; two nodes with DP=2 remove it), and the
+task's prompts are short relative to its responses, the low end of the synthetic sweep above.
+Micro-batch size matters: the shared micro-batch holds few tokens, so give it whole prompt groups
+(here 32-64 rows) rather than the row count that fits the unshared path.
+
+Reproduce: `/home/ray/default/prefix-sharing/e2e/run_sql.sh` (MODE=baseline|shared) in the
+author's workspace; the corresponding flags are in the table's row labels plus the settings above.
