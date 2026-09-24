@@ -32,6 +32,17 @@ from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
     vocab_parallel_entropy,
     vocab_parallel_entropy_packed_sequences,
 )
+from skyrl.backends.skyrl_train.distributed.megatron.packing_utils import (
+    get_packed_seq_align_size,
+)
+from skyrl.backends.skyrl_train.distributed.megatron.prefix_sharing import (
+    build_prefix_shared_layout,
+    install_prefix_sharing_patches,
+    prefix_shared_entropy_from_hidden,
+    prefix_shared_entropy_from_logits,
+    prefix_shared_logprobs_from_hidden,
+    prefix_shared_logprobs_from_logits,
+)
 from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     is_fp8_enabled,
 )
@@ -173,6 +184,13 @@ class MegatronModelWrapper:
         # [B, S, vocab//TP] logits + its fp32 grad). See model_utils.
         self._fused_lm_head = bool(getattr(self.cfg, "fused_lm_head_logprob", False))
         self._fused_lm_head_backend = getattr(self.cfg, "fused_lm_head_logprob_backend", "torch")
+        # Prefix sharing: fold identical token prefixes of a micro-batch (GRPO groups, multi-turn
+        # histories) into one packed segment tree and run the trunk once per shared prefix. See
+        # distributed/megatron/prefix_sharing.py for the layout, attention and numerics contract.
+        self._prefix_sharing = bool(getattr(self.cfg, "prefix_sharing", False)) and self.remove_microbatch_padding
+        self._prefix_sharing_min_shared = int(getattr(self.cfg, "prefix_sharing_min_shared_tokens", 64))
+        if self._prefix_sharing:
+            install_prefix_sharing_patches()
         # Some models (e.g. Qwen3.5 via the VL bridge -> Qwen3VLModel) pack
         # sequences inside their own forward; SkyRL sample packing would then
         # double-pack and corrupt the GDN cu_seqlens, so refuse it. For Qwen3.5,
@@ -237,6 +255,45 @@ class MegatronModelWrapper:
         pending = self._pending_grad_sync
         self._pending_grad_sync = None
         finalize_model_grads(self.actor_module, pending["num_tokens"] if pending else None)
+
+    def set_prefix_sharing(self, enabled: bool, min_shared_tokens: Optional[int] = None) -> None:
+        """Toggle prefix sharing at runtime (A/B comparisons and benchmarks on one loaded model)."""
+        self._prefix_sharing = bool(enabled) and self.remove_microbatch_padding
+        if min_shared_tokens is not None:
+            self._prefix_sharing_min_shared = int(min_shared_tokens)
+        if self._prefix_sharing:
+            install_prefix_sharing_patches()
+
+    def _maybe_prefix_shared_layout(
+        self,
+        batch: Dict[str, Any],
+        sub_seq_lengths,
+        rollout_expert_indices,
+        fp8_enabled: bool,
+        fp8_recipe,
+        mtp_enabled: bool = False,
+    ):
+        """Build the prefix-shared layout for this micro-batch, or None to use plain THD packing.
+
+        Sharing is skipped (not an error) for inputs the layout does not model: controller-side
+        sub-sequence packing, router replay, MTP draft training, VLM inputs and context parallelism.
+        """
+        if not self._prefix_sharing:
+            return None
+        if sub_seq_lengths is not None or rollout_expert_indices is not None or self.is_vlm or mtp_enabled:
+            return None
+        if mpu.get_context_parallel_world_size() != 1:
+            return None
+        align_size = get_packed_seq_align_size(
+            mpu.get_tensor_model_parallel_world_size(), 1, fp8_enabled=fp8_enabled, fp8_recipe=fp8_recipe
+        )
+        layout = build_prefix_shared_layout(
+            batch["sequences"],
+            batch["attention_mask"],
+            align_size=align_size,
+            min_shared_tokens=self._prefix_sharing_min_shared,
+        )
+        return layout.to(torch.cuda.current_device())
 
     def train(self):
         [module.train() for module in self.actor_module]
@@ -304,7 +361,31 @@ class MegatronModelWrapper:
             if temperature != 1.0 and not fused_lm_head:
                 logits.div_(temperature)
 
-            if fused_lm_head and packed_seq_params is not None and packed_targets is not None:
+            prefix_layout = data.get("prefix_layout")
+            if prefix_layout is not None and fused_lm_head:
+                token_logprobs = prefix_shared_logprobs_from_hidden(
+                    logits,  # decoder hidden states [1, T, H]
+                    lm_head_weight,
+                    prefix_layout,
+                    fused_vocab_start,
+                    fused_vocab_end,
+                    tp_grp,
+                    inference_only=True,
+                    chunk_size=self.cfg.logprobs_chunk_size,
+                    temperature=temperature,
+                    fused_backend=self._fused_lm_head_backend,
+                )
+            elif prefix_layout is not None:
+                token_logprobs = prefix_shared_logprobs_from_logits(
+                    logits,
+                    prefix_layout,
+                    tp_rank * logits.shape[-1],
+                    (tp_rank + 1) * logits.shape[-1],
+                    tp_grp,
+                    inference_only=True,
+                    chunk_size=self.cfg.logprobs_chunk_size,
+                )
+            elif fused_lm_head and packed_seq_params is not None and packed_targets is not None:
                 token_logprobs = from_parallel_hidden_to_logprobs_packed_sequences(
                     logits,  # decoder hidden states [1, T, H]
                     lm_head_weight,
@@ -389,7 +470,20 @@ class MegatronModelWrapper:
             if batch.get("image_grid_thw") is not None:
                 vlm_inputs["image_grid_thw"] = torch.cat(batch["image_grid_thw"].tensors, dim=0)
 
+            prefix_layout = None
             if self.remove_microbatch_padding:
+                prefix_layout = self._maybe_prefix_shared_layout(
+                    batch, sub_seq_lengths, rollout_expert_indices, fp8_enabled, fp8_recipe
+                )
+            if prefix_layout is not None:
+                packed_seq_params = prefix_layout.packed_seq_params()
+                new_sequences = prefix_layout.tokens.unsqueeze(0)
+                batch["packed_seq_params"] = packed_seq_params
+                batch["packed_targets"] = prefix_layout.packed_targets.unsqueeze(0)
+                batch["prefix_layout"] = prefix_layout
+                new_attention_mask = None
+                new_position_ids = None
+            elif self.remove_microbatch_padding:
                 new_sequences, packed_seq_params = preprocess_packed_seqs(
                     sequences,
                     attention_mask,
@@ -627,7 +721,31 @@ class MegatronModelWrapper:
             if temperature != 1.0 and not fused_lm_head:
                 logits.div_(temperature)
 
-            if fused_lm_head and packed_seq_params is not None and packed_targets is not None:
+            prefix_layout = data.get("prefix_layout")
+            if prefix_layout is not None and fused_lm_head:
+                token_logprobs = prefix_shared_logprobs_from_hidden(
+                    logits,  # decoder hidden states [1, T, H]
+                    lm_head_weight,
+                    prefix_layout,
+                    fused_vocab_start,
+                    fused_vocab_end,
+                    tp_grp,
+                    inference_only=False,
+                    chunk_size=self.cfg.logprobs_chunk_size,
+                    temperature=temperature,
+                    fused_backend=self._fused_lm_head_backend,
+                )
+            elif prefix_layout is not None:
+                token_logprobs = prefix_shared_logprobs_from_logits(
+                    logits,
+                    prefix_layout,
+                    tp_rank * logits.shape[-1],
+                    (tp_rank + 1) * logits.shape[-1],
+                    tp_grp,
+                    inference_only=False,
+                    chunk_size=self.cfg.logprobs_chunk_size,
+                )
+            elif fused_lm_head and packed_seq_params is not None and packed_targets is not None:
                 token_logprobs = from_parallel_hidden_to_logprobs_packed_sequences(
                     logits,  # decoder hidden states [1, T, H]
                     lm_head_weight,
@@ -832,7 +950,27 @@ class MegatronModelWrapper:
 
             # RL path: add optional KL/entropy terms
             with torch.set_grad_enabled(loss_config.use_entropy_loss):
-                if fused_lm_head and packed_seq_params is not None and packed_targets is not None:
+                if prefix_layout is not None and fused_lm_head:
+                    entropy, entropy_for_loss = prefix_shared_entropy_from_hidden(
+                        logits,  # decoder hidden states [1, T, H]
+                        lm_head_weight,
+                        prefix_layout,
+                        num_actions,
+                        loss_mask,
+                        tp_grp,
+                        chunk_size=self.cfg.logprobs_chunk_size,
+                        temperature=temperature,
+                    )
+                elif prefix_layout is not None:
+                    entropy, entropy_for_loss = prefix_shared_entropy_from_logits(
+                        logits,
+                        prefix_layout,
+                        num_actions,
+                        loss_mask,
+                        chunk_size=self.cfg.vocab_entropy_chunk_size,
+                        chunk_memory_mb=self.cfg.vocab_entropy_chunk_memory_mb,
+                    )
+                elif fused_lm_head and packed_seq_params is not None and packed_targets is not None:
                     entropy, entropy_for_loss = from_parallel_hidden_to_entropy_packed_sequences(
                         logits,  # decoder hidden states [1, T, H]
                         lm_head_weight,
@@ -959,6 +1097,10 @@ class MegatronModelWrapper:
             }
             if draft_loss is not None:
                 metrics["mtp_loss"] = draft_loss.detach().item()
+            if prefix_layout is not None:
+                # Fraction of the unshared packed token count the trunk actually processed.
+                metrics["prefix_sharing/token_ratio"] = prefix_layout.real_tokens / max(1, prefix_layout.row_tokens)
+                metrics["prefix_sharing/branches"] = float(prefix_layout.stats.get("branches", 0))
             for k, v in loss_metrics.items():
                 metrics["loss_metrics/" + k] = v
             metrics.update(
@@ -1003,7 +1145,20 @@ class MegatronModelWrapper:
             if batch.get("image_grid_thw") is not None:
                 vlm_inputs["image_grid_thw"] = torch.cat(batch["image_grid_thw"].tensors, dim=0)
 
+            prefix_layout = None
             if self.remove_microbatch_padding:
+                prefix_layout = self._maybe_prefix_shared_layout(
+                    batch, sub_seq_lengths, rollout_expert_indices, fp8_enabled, fp8_recipe, mtp_enabled=mtp_enabled
+                )
+            if prefix_layout is not None:
+                packed_seq_params = prefix_layout.packed_seq_params()
+                new_sequences = prefix_layout.tokens.unsqueeze(0)
+                batch["packed_seq_params"] = packed_seq_params
+                batch["packed_targets"] = prefix_layout.packed_targets.unsqueeze(0)
+                batch["prefix_layout"] = prefix_layout
+                new_attention_mask = None
+                new_position_ids = None
+            elif self.remove_microbatch_padding:
                 new_sequences, packed_seq_params = preprocess_packed_seqs(
                     sequences,
                     attention_mask,

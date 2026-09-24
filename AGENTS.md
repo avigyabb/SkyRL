@@ -49,6 +49,7 @@ When working on these areas, read the corresponding doc first:
 | FSDP backend | `.agents/docs/backends/fsdp.md` |
 | JAX/TPU backend | `.agents/docs/backends/jax.md` |
 | Weight sync | `.agents/docs/weight_sync.md` |
+| Prefix sharing (GRPO prompt sharing in the Megatron trunk) | `.agents/docs/prefix_sharing.md` |
 
 
 ## Troubleshooting

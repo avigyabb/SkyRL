@@ -1523,6 +1523,19 @@ class TrainerConfig(BaseConfig):
     remove_microbatch_padding: bool = True
     """Pack samples into the THD layout and strip intra-microbatch padding (requires flash attention).
     Common to all models."""
+    prefix_sharing: bool = False
+    """Megatron only. Fold identical token prefixes inside a micro-batch (the ``n_samples_per_prompt``
+    replicas of a GRPO prompt, or the shared history of step-wise trajectories) into one packed segment
+    tree, so the trunk runs once per shared prefix and only the branches are replicated. Attention becomes
+    a two-region flash-attention (causal within a segment + branch-to-ancestor) merged through the LSE,
+    so per-token log-probs differ from the unshared path by bf16 rounding noise. Requires
+    ``remove_microbatch_padding=True`` and ``context_parallel_size=1``; rows that share nothing are packed
+    as before. Rows of a group must land in the same micro-batch to benefit, so set
+    ``micro_train_batch_size_per_gpu`` / ``micro_forward_batch_size_per_gpu`` to a multiple of
+    ``generator.n_samples_per_prompt``."""
+    prefix_sharing_min_shared_tokens: int = 64
+    """Do not split a packed segment to share fewer than this many tokens (responses that happen to start
+    with the same few tokens are not worth a separate attention region)."""
     eval_batch_size: int = 1024
     """Batch size for evaluation."""
     eval_before_train: bool = True
