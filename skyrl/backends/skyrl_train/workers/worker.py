@@ -677,6 +677,18 @@ class Worker(DistributedTorchRayActor):
         if finalize is not None:
             finalize()
 
+    def prefetch_checkpoint(self, ckpt_dir: str) -> bool:
+        """Start staging a cloud checkpoint's shards locally, in the background.
+
+        Called after the actor group's process group is up but before the models are built, so
+        the transfer overlaps the build instead of following it. No-op for local checkpoints.
+        """
+        from skyrl.backends.skyrl_train.utils.ckpt_prefetch import (
+            start_checkpoint_prefetch,
+        )
+
+        return start_checkpoint_prefetch(ckpt_dir, self.get_node_local_rank())
+
     def load_checkpoint(self, ckpt_dir: str, load_optimizer_states: bool = True, load_lr_scheduler_states: bool = True):
         _, states = self.strategy.load_checkpoint(
             model=self.model,
