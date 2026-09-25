@@ -1527,6 +1527,10 @@ class TrainerConfig(BaseConfig):
     """Batch size for evaluation."""
     eval_before_train: bool = True
     """Evaluate the model once before training starts."""
+    prefetch_cloud_checkpoint: bool = True
+    """On a resume from a cloud (``s3://``/``gs://``) checkpoint, download the shards to node-local
+    disk while the trainer builds its models, instead of waiting until ``load_checkpoints``. Has no
+    effect on local checkpoints. Set ``False`` to download inline as before."""
     eval_interval: int = 5
     """Evaluate against the validation dataset every N steps. ``-1`` to disable evaluation."""
     max_prompt_length: int = 512

@@ -660,6 +660,46 @@ class RayPPOTrainer:
         kept_prompts = (len(entries) // stride) * stride
         return entries[:kept_prompts]
 
+    def _resume_policy_ckpt_dir(self) -> Optional[str]:
+        """Directory of the policy checkpoint a resume would load, or ``None``.
+
+        Deliberately read-only and non-raising. It runs before ``load_checkpoints``, only to
+        decide whether a prefetch is worth starting, so it must never turn a resume that would
+        have worked into a startup failure. ``load_checkpoints`` stays the single place that
+        validates the checkpoint and reports what is wrong with it.
+        """
+        if self.resume_mode == ResumeMode.NONE:
+            return None
+        try:
+            if self.resume_mode == ResumeMode.LATEST:
+                latest = os.path.join(self.cfg.trainer.ckpt_path, "latest_ckpt_global_step.txt")
+                if not io.exists(latest):
+                    return None
+                with io.open_file(latest, "r") as f:
+                    step = int(f.read().strip())
+                checkpoint_path = os.path.join(self.cfg.trainer.ckpt_path, f"{GLOBAL_STEP_PREFIX}{step}")
+            else:
+                if not self.cfg.trainer.resume_path:
+                    return None
+                checkpoint_path = str(self.cfg.trainer.resume_path)
+            policy_dir = os.path.join(checkpoint_path, "policy")
+            return policy_dir if io.exists(policy_dir) else None
+        except Exception as e:  # noqa: BLE001 - never block startup on a probe
+            logger.warning(f"Could not probe the resume checkpoint ({e}); it will be downloaded inline.")
+            return None
+
+    def _start_checkpoint_prefetch(self, policy_model) -> None:
+        """Stage a cloud resume checkpoint while the models build (see ckpt_prefetch)."""
+        if not self.cfg.trainer.prefetch_cloud_checkpoint:
+            return
+        policy_dir = self._resume_policy_ckpt_dir()
+        if policy_dir is None or not io.is_cloud_path(policy_dir):
+            return
+        try:
+            ray.get(policy_model.async_run_ray_method("pass_through", "prefetch_checkpoint", policy_dir))
+        except Exception as e:  # noqa: BLE001 - the loader downloads inline if this did not take
+            logger.warning(f"Could not start the checkpoint prefetch ({e}); it will be downloaded inline.")
+
     def build_models(self, PolicyWorker, CriticWorker, RefWorker):
         """
         Initialize the actors for training, and handle colocation logic
@@ -805,6 +845,10 @@ class RayPPOTrainer:
         critic_num_training_steps = (
             self.total_training_steps * critic_steps_per_train_batch if self.total_training_steps is not None else None
         )
+        # The actor groups exist and their process group is up, but no model is built yet:
+        # the right moment to start pulling a cloud checkpoint underneath the build.
+        self._start_checkpoint_prefetch(policy_model)
+
         if not cfg.trainer.placement.colocate_all:
             refs = []
             if ref_model is not None:

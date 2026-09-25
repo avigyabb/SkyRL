@@ -1,9 +1,7 @@
-import hashlib
 import os
 import random
 import re
 import shutil
-import tempfile
 from typing import List, Optional, Union
 
 import megatron.core.parallel_state as mpu
@@ -37,6 +35,10 @@ from skyrl.backends.skyrl_train.distributed.megatron.megatron_utils import (
 )
 from skyrl.backends.skyrl_train.distributed.strategy import DistributedStrategy
 from skyrl.backends.skyrl_train.distributed.utils import ModelOrModelOptimPair
+from skyrl.backends.skyrl_train.utils.ckpt_prefetch import (
+    local_dir_for,
+    wait_for_checkpoint_prefetch,
+)
 from skyrl.backends.skyrl_train.utils.io import io
 from skyrl.backends.skyrl_train.workers.megatron.megatron_model_wrapper import (
     MegatronModelWrapper,
@@ -533,8 +535,27 @@ class MegatronStrategy(DistributedStrategy):
         global_rank = dist.get_rank()
         node_local_rank = self.node_local_rank
 
-        dir_hash = hashlib.md5(ckpt_dir.encode()).hexdigest()[:12]
-        local_dir = os.path.join(tempfile.gettempdir(), f"skyrl_ckpt_load_{dir_hash}")
+        local_dir = local_dir_for(ckpt_dir)
+
+        # A prefetch started while the models were building has already staged these shards.
+        prefetched = wait_for_checkpoint_prefetch(ckpt_dir)
+        if prefetched is not None:
+            try:
+                dist.barrier()
+                self.print(f"Using checkpoint shards prefetched into {prefetched}")
+                load_strategy = get_default_load_sharded_strategy(prefetched)
+                load_strategy = FullyParallelLoadStrategyWrapper(
+                    load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
+                )
+                return dist_checkpointing.load(
+                    sharded_state_dict=sharded_state_dict,
+                    checkpoint_dir=prefetched,
+                    sharded_strategy=load_strategy,
+                )
+            finally:
+                dist.barrier()
+                if node_local_rank == 0:
+                    shutil.rmtree(prefetched, ignore_errors=True)
 
         try:
             all_entries = io.list_dir(ckpt_dir)
