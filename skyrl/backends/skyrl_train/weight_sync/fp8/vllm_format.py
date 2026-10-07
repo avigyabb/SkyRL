@@ -31,6 +31,7 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import (
     MXFP8,
     NVFP4,
     NVFP4_GLOBAL_SCALE_SUFFIX,
+    NVFP4_INPUT_GLOBAL_SCALE_SUFFIX,
     NVFP4_PACKED_SUFFIX,
     WIRE_FORMATS,
     WIRE_SCALE_SUFFIX,
@@ -41,6 +42,7 @@ from skyrl.backends.skyrl_train.weight_sync.fp8.quantize import (
     NVFP4_GROUP_SIZE,
     batched_blockwise_cast_to_fp8,
     batched_mx_cast_to_fp8,
+    batched_nvfp4_cast,
     blockwise_cast_to_fp8,
     mx_cast_to_fp8,
     normalize_block_size,
@@ -331,9 +333,6 @@ def _nvfp4_group_members(spec: ModelFp8Spec, name: str) -> tuple[tuple[str, str]
     return None
 
 
-NVFP4_INPUT_GLOBAL_SCALE_SUFFIX = ".input_global_scale"
-
-
 def _nvfp4_tensors_for_group(
     members: Sequence[tuple[str, torch.Tensor]],
     input_amax: float | None = None,
@@ -362,6 +361,53 @@ def _nvfp4_tensors_for_group(
         row += rows
 
 
+def iter_batched_moe_expert_nvfp4_tensors(
+    name: str,
+    tensor: torch.Tensor,
+    config: SerializedFp8Config,
+) -> Iterator[tuple[str, torch.Tensor]]:
+    """Convert a batched expert tensor to NVFP4 without expanding expert names.
+
+    Each expert is quantized on its own, as the trainer's grouped GEMM does. Gate and up share the
+    fused ``w13`` weight, and vLLM keeps one global scale per expert for it, so they are quantized
+    jointly (one amax over the row-concatenation) and split afterwards. Per-expert global scales
+    travel as ``[E, 1, 1]`` so the receiver's batched-MoE gate accepts them; the receiver loads
+    them one expert at a time. ``input_global_scale`` is always sent because vLLM's layerwise
+    reload only finalizes a layer once every parameter has been written; weight-only serving
+    ignores it, so it is 1.0 unless a static activation amax was configured.
+    """
+
+    moe_spec = config.require_spec().moe_expert_spec(name)
+    if moe_spec is None:
+        raise ValueError(f"Not a batched MoE expert tensor: {name}")
+    if tensor.ndim != 3:
+        raise ValueError(f"Batched MoE expert tensor must be 3D, got shape={tuple(tensor.shape)}")
+    num_projections = len(moe_spec.projections)
+    if moe_spec.split_dim is not None and tensor.shape[moe_spec.split_dim] % num_projections != 0:
+        raise ValueError(
+            f"Batched MoE tensor dim {moe_spec.split_dim} must split evenly across "
+            f"{num_projections} projections, got shape={tuple(tensor.shape)}"
+        )
+    packed, scales, global_scale = batched_nvfp4_cast(tensor)
+    if config.nvfp4_input_amax is not None:
+        input_scale = torch.full_like(global_scale, (448.0 * 6.0) / config.nvfp4_input_amax)
+    else:
+        input_scale = torch.ones_like(global_scale)
+
+    if moe_spec.split_dim is None:
+        packed_parts, scale_parts = (packed,), (scales,)
+    else:
+        packed_parts = torch.chunk(packed, num_projections, dim=moe_spec.split_dim)
+        scale_parts = torch.chunk(scales, num_projections, dim=moe_spec.split_dim)
+
+    for proj, proj_packed, proj_scales in zip(moe_spec.projections, packed_parts, scale_parts):
+        base = f"{SKYRL_BATCHED_MOE_FP8_PREFIX}{moe_spec.experts_base}.{proj.hf_name}"
+        yield base + NVFP4_PACKED_SUFFIX, proj_packed.contiguous()
+        yield base + WIRE_SCALE_SUFFIX[NVFP4], proj_scales.contiguous()
+        yield base + NVFP4_GLOBAL_SCALE_SUFFIX, global_scale.clone()
+        yield base + NVFP4_INPUT_GLOBAL_SCALE_SUFFIX, input_scale.clone()
+
+
 def iter_serialized_nvfp4_tensors(
     stream: Iterator[tuple[str, torch.Tensor]],
     config: SerializedFp8Config,
@@ -377,10 +423,8 @@ def iter_serialized_nvfp4_tensors(
     pending: dict[tuple[str, str], dict[str, torch.Tensor]] = {}
     for name, tensor in stream:
         if spec.moe_expert_spec(name) is not None:
-            raise NotImplementedError(
-                "The NVFP4 wire does not support batched MoE expert tensors yet "
-                f"({name!r}); use fp8_weight_sync_mode='mxfp8' for MoE models."
-            )
+            yield from iter_batched_moe_expert_nvfp4_tensors(name, tensor, config)
+            continue
         if not (tensor.ndim == 2 and spec.should_quantize(name, tuple(tensor.shape), NVFP4)):
             yield name, tensor
             continue

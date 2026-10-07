@@ -1,5 +1,7 @@
 """NVFP4 wire: fusion-group buffering, tensor naming, engine config. TE's cast is stubbed (CPU)."""
 
+import dataclasses
+
 import pytest
 import torch
 
@@ -85,14 +87,66 @@ def test_incomplete_group_is_an_error(config):
         list(iter_serialized_nvfp4_tensors(iter(stream), config))
 
 
-def test_moe_experts_rejected(config):
+def _fake_batched_cast(w, two_d=None):
+    experts, rows, cols = w.shape
+    return (
+        torch.zeros(experts, rows, cols // 2, dtype=torch.uint8),
+        torch.zeros(experts, rows, cols // 16, dtype=torch.float8_e4m3fn),
+        torch.arange(1, experts + 1, dtype=torch.float32).view(experts, 1, 1),
+    )
+
+
+def test_moe_gate_up_shares_one_global_scale_and_splits(monkeypatch, config):
     config, _ = config
-    with pytest.raises(NotImplementedError, match="MoE"):
-        list(
-            iter_serialized_nvfp4_tensors(
-                iter([("model.layers.0.mlp.experts.down_proj", torch.zeros(2, 4, 4))]), config
-            )
+    monkeypatch.setattr(vllm_format, "batched_nvfp4_cast", _fake_batched_cast)
+    prefix = vllm_format.SKYRL_BATCHED_MOE_FP8_PREFIX
+    out = dict(
+        iter_serialized_nvfp4_tensors(
+            iter([("model.layers.0.mlp.experts.gate_up_proj", torch.zeros(3, 64, 256, dtype=torch.bfloat16))]), config
         )
+    )
+    base = f"{prefix}model.layers.0.mlp.experts"
+    assert set(out) == {
+        f"{base}.{proj}.{leaf}"
+        for proj in ("gate_proj", "up_proj")
+        for leaf in ("weight_packed", "weight_scale", "weight_global_scale", "input_global_scale")
+    }
+    # The fused [2I, H] weight is quantized once; gate and up are halves of it.
+    assert out[f"{base}.gate_proj.weight_packed"].shape == (3, 32, 128)
+    assert out[f"{base}.up_proj.weight_scale"].shape == (3, 32, 16)
+    assert torch.equal(out[f"{base}.gate_proj.weight_global_scale"], out[f"{base}.up_proj.weight_global_scale"])
+    assert out[f"{base}.gate_proj.weight_global_scale"].shape == (3, 1, 1)
+    # Weight-only serving: input scales are placeholders of 1.0.
+    assert torch.all(out[f"{base}.gate_proj.input_global_scale"] == 1.0)
+
+
+def test_moe_down_proj_and_static_input_scale(monkeypatch, config):
+    config, _ = config
+    monkeypatch.setattr(vllm_format, "batched_nvfp4_cast", _fake_batched_cast)
+    config = dataclasses.replace(config, nvfp4_input_amax=64.0)
+    prefix = vllm_format.SKYRL_BATCHED_MOE_FP8_PREFIX
+    out = dict(
+        iter_serialized_nvfp4_tensors(
+            iter([("model.layers.1.mlp.experts.down_proj", torch.zeros(2, 128, 256, dtype=torch.bfloat16))]), config
+        )
+    )
+    base = f"{prefix}model.layers.1.mlp.experts.down_proj"
+    assert out[f"{base}.weight_packed"].shape == (2, 128, 128)
+    assert torch.allclose(out[f"{base}.input_global_scale"], torch.full((2, 1, 1), 448.0 * 6.0 / 64.0))
+
+
+def test_moe_wire_targets_cover_nvfp4_tensors():
+    from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import (
+        batched_moe_wire_targets,
+    )
+
+    targets = batched_moe_wire_targets()
+    assert targets[".experts.gate_proj.weight_packed"] == (".experts.w13_weight_packed", "w1")
+    assert targets[".experts.up_proj.weight_scale"] == (".experts.w13_weight_scale", "w3")
+    assert targets[".experts.up_proj.weight_global_scale"] == (".experts.w13_weight_global_scale", "w3")
+    assert targets[".experts.gate_proj.input_global_scale"] == (".experts.w13_input_global_scale", "w1")
+    assert targets[".experts.down_proj.weight_packed"] == (".experts.w2_weight_packed", "w2")
+    assert targets[".experts.down_proj.weight_global_scale"] == (".experts.w2_weight_global_scale", "w2")
 
 
 def test_unaligned_weight_stays_bf16(config):

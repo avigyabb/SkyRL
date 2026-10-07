@@ -215,7 +215,11 @@ def _load_batched_moe_fp8_tensor(
     if weight_loader is None or not getattr(weight_loader, "supports_moe_loading", False):
         raise ValueError(f"Parameter {target_name!r} does not expose a FusedMoE weight loader")
 
-    if param.shape[0] == loaded_weight.shape[0]:
+    # vLLM's per-tensor scale loader writes one scalar into one expert's slot, so NVFP4 global
+    # scales ([E, 1, 1] on the wire) must go through the per-expert path even when the whole
+    # expert dimension is local.
+    is_per_expert_scalar = target_name.endswith("_global_scale")
+    if param.shape[0] == loaded_weight.shape[0] and not is_per_expert_scalar:
         success = weight_loader(
             param,
             loaded_weight,

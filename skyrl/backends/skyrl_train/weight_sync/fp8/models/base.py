@@ -36,6 +36,7 @@ WIRE_SCALE_SUFFIX = {
 # NVFP4 renames the quantized tensor itself and adds a per-module global scale.
 NVFP4_PACKED_SUFFIX = ".weight_packed"
 NVFP4_GLOBAL_SCALE_SUFFIX = ".weight_global_scale"
+NVFP4_INPUT_GLOBAL_SCALE_SUFFIX = ".input_global_scale"
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,18 @@ def batched_moe_wire_targets() -> dict[str, tuple[str, str]]:
             ):
                 key = f".{spec.moe_module}.{proj.hf_name}{weight_suffix}"
                 value = (f".{spec.moe_module}.{proj.vllm_param}{param_suffix}", proj.shard_id)
+                if targets.setdefault(key, value) != value:
+                    raise ValueError(f"Conflicting batched MoE wire target registered for suffix {key!r}")
+            # NVFP4 renames the packed weight and adds global scales. vLLM names them
+            # ``w13_weight_packed`` / ``w13_weight_global_scale`` / ``w13_input_global_scale``.
+            fused = proj.vllm_param.removesuffix("_weight")
+            for wire_suffix, vllm_leaf in (
+                (NVFP4_PACKED_SUFFIX, f"{fused}_weight_packed"),
+                (NVFP4_GLOBAL_SCALE_SUFFIX, f"{fused}_weight_global_scale"),
+                (NVFP4_INPUT_GLOBAL_SCALE_SUFFIX, f"{fused}_input_global_scale"),
+            ):
+                key = f".{spec.moe_module}.{proj.hf_name}{wire_suffix}"
+                value = (f".{spec.moe_module}.{vllm_leaf}", proj.shard_id)
                 if targets.setdefault(key, value) != value:
                     raise ValueError(f"Conflicting batched MoE wire target registered for suffix {key!r}")
     return targets

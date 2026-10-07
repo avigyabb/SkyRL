@@ -52,7 +52,10 @@ the gap. 35B-A3B (TP=1, EP=8): NVFP4 `policy_train` ~38-70 s vs MXFP8 ~39-50 s, 
 
 Serves the rollout from the trainer's own NVFP4 weights (vLLM compressed-tensors, weight-only W4A16), quantized with
 TE's quantizer so rollout weights equal the trainer's GEMM operands. Fused projections (q/k/v, gate/up, the GDN
-in-projections) share one global scale, as vLLM requires. Dense Qwen3.5 only; MoE experts raise `NotImplementedError`.
+in-projections) share one global scale, as vLLM requires. Routed experts are quantized per expert (gate and up
+jointly, since vLLM keeps one global scale per expert for the fused `w13`) and shipped batched over the expert
+dimension; the per-expert global scales are loaded one expert at a time because vLLM's per-tensor scale loader
+indexes a single expert. Qwen3.5 dense and MoE.
 
 * It halves the gap (0.065 -> 0.035) but the rollout policy is the quantized model, so rewards start lower
   (about -0.8 vs -0.6 at step 1).
@@ -62,7 +65,46 @@ in-projections) share one global scale, as vLLM requires. Dense Qwen3.5 only; Mo
   ~10% faster than BF16 (44-57 s) with the same gap, but the value is not calibrated: `64` and `256` behave alike,
   `16` overflows (gap 0.15, reward -1.7). Do not use it without calibrating per model.
 
+### 35B-A3B (MoE), TP=1, EP=8, 4 steps, one seed
+
+NVFP4 trainer, BF16 rollout vs NVFP4 wire (steady-state steps 2-4):
+
+| rollout | logprob gap | `generate` (s) | `sync_weights` (s) | reward s1-s4 |
+| --- | --- | --- | --- | --- |
+| BF16 | 0.062-0.076 | 89-101 | ~17 | -0.446 -0.690 -0.702 -0.385 |
+| NVFP4 wire | 0.037-0.049 | 75-86 | ~29 | -0.461 -0.611 -0.723 -0.432 |
+
+Generation is ~15% faster and the gap is about halved, but the sync costs ~12 s more per step, so a step is not
+faster overall. The per-expert TE casts account for only ~3 s of that; I did not profile the rest. A vectorized torch cast was tried and dropped: it differs from TE on ~0.1% of codes and scales
+and saved almost nothing.
+
+### Disaggregated: 8 training GPUs + 4 rollout GPUs (35B-A3B, 4 steps, one seed)
+
+`COLOCATE_ALL=false`, EP=8 on the trainer, `num_engines=4`. Here generation is the bottleneck, so the faster NVFP4
+decode outweighs the extra sync. Steady state (steps 3-4):
+
+| rollout | `generate` (s) | `sync_weights` (s) | `step` (s) | logprob gap |
+| --- | --- | --- | --- | --- |
+| BF16 | 118-119 | 6.4-7.7 | 174-175 | 0.052-0.065 |
+| NVFP4 wire | 98 | 16.3-16.9 | 162-164 | 0.038-0.044 |
+
+About 7% faster per step. Trainer memory is unchanged (peak ~130 GB), and squeezing the 35B trainer onto 4 GPUs
+(EP=4) ran out of memory in `optim_step` (165 GB): NVFP4 does not shrink training state, so the trainer GPU count
+is set by the BF16 weights and optimizer, not by the rollout format.
+
+### Rollout engine capacity
+
+vLLM engine on one B200, Qwen3.5-35B-A3B-Base, `gpu_memory_utilization=0.9`, 8k context (dummy weights; only the
+footprint matters):
+
+| rollout weights | weight memory | KV cache | KV tokens |
+| --- | --- | --- | --- |
+| BF16 | 64.7 GiB | 94 GiB | 2.74M |
+| NVFP4 | 19.7 GiB (3.3x smaller) | 138 GiB | 4.0M (+47%) |
+
+The training side gets no such saving: primary weights, FP32 masters and optimizer state stay as they were.
+
 ## Not covered
 
-No NVFP4 parameter storage (`fp4_param`), no NVFP4 MoE weight sync, no activation calibration, no run longer than
+No NVFP4 parameter storage (`fp4_param`), no activation calibration, only 4 steps of any 35B run, no run longer than
 40 steps, one seed per row.

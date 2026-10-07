@@ -384,3 +384,31 @@ def nvfp4_cast(weight: torch.Tensor, two_d: bool | None = None) -> tuple[torch.T
     # An all-zero tensor has no scale; any positive amax keeps the (all-zero) codes zero.
     global_scale = (448.0 * 6.0) / amax.clamp(min=1e-30)
     return packed, scales, global_scale.contiguous()
+
+
+def batched_nvfp4_cast(
+    weight: torch.Tensor, two_d: bool | None = None
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Quantize ``[experts, rows, cols]`` with one global scale per expert.
+
+    The trainer's grouped GEMM quantizes each expert's weight on its own (own amax), so this runs
+    ``nvfp4_cast`` per expert rather than treating the stack as one tensor. Returns
+    ``(packed [E, rows, cols // 2], scales [E, rows, cols // 16], global_scale [E, 1, 1])``.
+
+    A vectorized torch version was measured against this and rejected: ~0.1% of codes and scales
+    differ from TE, and the per-expert loop costs only ~36 ms for a 256-expert ``[1024, 2048]``
+    gate/up tensor, so there is nothing to gain from drifting from the trainer's quantizer.
+    """
+
+    if weight.ndim != 3:
+        raise ValueError(f"Batched NVFP4 expects a 3D tensor, got shape={tuple(weight.shape)}")
+    num_experts, rows, cols = weight.shape
+    packed = torch.empty((num_experts, rows, cols // 2), dtype=torch.uint8, device=weight.device)
+    scales = torch.empty((num_experts, rows, cols // NVFP4_GROUP_SIZE), dtype=torch.float8_e4m3fn, device=weight.device)
+    global_scale = torch.empty((num_experts, 1, 1), dtype=torch.float32, device=weight.device)
+    for expert in range(num_experts):
+        expert_packed, expert_scales, expert_global = nvfp4_cast(weight[expert], two_d)
+        packed[expert].copy_(expert_packed)
+        scales[expert].copy_(expert_scales)
+        global_scale[expert].copy_(expert_global.view(1, 1))
+    return packed, scales, global_scale

@@ -1209,7 +1209,7 @@ class InferenceEngineConfig(BaseConfig):
     block; ``"mxfp8"`` ships one E8M0 exponent per 32-element group, matching the recipe Transformer
     Engine trains with on Blackwell. ``"nvfp4"`` ships weight-only NVFP4 (packed E2M1 codes, one E4M3
     scale per 16 elements, one global scale per fused module), produced with Transformer Engine's
-    own NVFP4 weight quantizer; vLLM serves it W4A16. It currently supports dense Qwen3.5 only.
+    own NVFP4 weight quantizer; vLLM serves it W4A16. It supports Qwen3.5 dense and MoE (routed experts are quantized per expert).
 
     ``"auto"`` selects the format matching the policy's resolved ``fp8_recipe`` (or ``"nvfp4"`` when
     ``fp4`` is enabled) -- so trainer and rollout quantize identically. It follows the *recipe*, not the architecture: an explicit
