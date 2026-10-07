@@ -318,3 +318,69 @@ def batched_mx_cast_to_fp8(
         scales[start:end].copy_(batch_scales.view(end - start, rows, num_groups))
 
     return codes, scales
+
+
+# --------------------------------------------------------------------------
+# NVFP4 wire: packed E2M1 codes, one E4M3 scale per 16 columns, one FP32 global scale per tensor.
+# Transformer Engine's NVFP4 weight quantizer is the only implementation: it is the trainer's own
+# GEMM operand quantizer, so quantizing with it makes the rollout weights identical to what the
+# trainer computes with. There is deliberately no torch fallback to drift from it.
+# --------------------------------------------------------------------------
+
+NVFP4_GROUP_SIZE = 16
+_NVFP4_QUANTIZERS: dict[bool, Any] = {}
+
+
+def nvfp4_use_2d_quantization() -> bool:
+    """Whether the trainer quantizes weights in 2D 16x16 blocks (TE's default).
+
+    Mirrors ``NVTE_NVFP4_DISABLE_2D_QUANTIZATION``, which both the trainer's recipe and this sender
+    read from the same forwarded environment, so the rollout weights use the trainer's block shape.
+    """
+
+    return os.getenv("NVTE_NVFP4_DISABLE_2D_QUANTIZATION", "0") != "1"
+
+
+def _te_nvfp4_quantizer(two_d: bool) -> Any:
+    quantizer = _NVFP4_QUANTIZERS.get(two_d)
+    if quantizer is None:
+        import transformer_engine.pytorch  # noqa: F401  (registers wheel_lib on sys.path)
+        from transformer_engine.pytorch.tensor.nvfp4_tensor import NVFP4Quantizer
+
+        # Weights take neither RHT nor stochastic rounding in the trainer's forward.
+        quantizer = NVFP4Quantizer(
+            rowwise=True,
+            columnwise=False,
+            with_2d_quantization=two_d,
+            with_rht=False,
+            stochastic_rounding=False,
+        )
+        _NVFP4_QUANTIZERS[two_d] = quantizer
+    return quantizer
+
+
+def nvfp4_cast(weight: torch.Tensor, two_d: bool | None = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Quantize a 2D CUDA tensor to the compressed-tensors NVFP4 layout.
+
+    Returns ``(packed, scales, global_scale)``: ``packed`` is ``uint8 [rows, cols // 2]`` (two E2M1
+    codes per byte), ``scales`` is ``float8_e4m3fn [rows, cols // 16]``, and ``global_scale`` is the
+    ``float32 [1]`` *divisor* ``448 * 6 / amax`` that compressed-tensors stores (vLLM inverts it).
+    Dequantized value = ``fp4 * scale / global_scale``.
+    """
+
+    if weight.ndim != 2:
+        raise ValueError(f"NVFP4 expects a 2D tensor, got shape={tuple(weight.shape)}")
+    rows, cols = weight.shape
+    if rows % NVFP4_GROUP_SIZE != 0 or cols % NVFP4_GROUP_SIZE != 0:
+        raise ValueError(f"NVFP4 requires both dims to be multiples of {NVFP4_GROUP_SIZE}, got shape={(rows, cols)}")
+    if not weight.is_cuda:
+        raise ValueError("NVFP4 quantization runs Transformer Engine's CUDA kernel; got a CPU tensor")
+    quantizer = _te_nvfp4_quantizer(nvfp4_use_2d_quantization() if two_d is None else two_d)
+    quantized = quantizer(weight.detach().to(torch.bfloat16).contiguous())
+    # TE pads the scale matrix (rows to a multiple of 128, groups to a multiple of 4).
+    packed = quantized._rowwise_data.view(torch.uint8)[:rows, : cols // 2].contiguous()
+    scales = quantized._rowwise_scale_inv.view(torch.float8_e4m3fn)[:rows, : cols // NVFP4_GROUP_SIZE].contiguous()
+    amax = quantized._amax_rowwise.flatten()[:1].to(torch.float32)
+    # An all-zero tensor has no scale; any positive amax keeps the (all-zero) codes zero.
+    global_scale = (448.0 * 6.0) / amax.clamp(min=1e-30)
+    return packed, scales, global_scale.contiguous()

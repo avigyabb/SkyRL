@@ -6,10 +6,12 @@ from skyrl.backends.skyrl_train.distributed.megatron import quantization_utils
 from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     is_fp8_enabled,
     is_mxfp8_recipe,
+    low_precision_pack_args,
     resolve_auto_fp8_recipe,
     resolve_auto_wire_format,
     resolve_text_config,
     validate_concrete_fp8_recipe,
+    validate_fp4_config,
     validate_mxfp8_gdn_tp_alignment,
     wire_to_engine_quantization,
 )
@@ -219,3 +221,37 @@ def test_mxfp8_gdn_tp_alignment_ignores_non_mxfp8_configs(kwargs):
 
 def test_mxfp8_gdn_tp_alignment_ignores_models_without_gdn():
     validate_mxfp8_gdn_tp_alignment(_MXFP8_KWARGS, SimpleNamespace(hidden_size=4096), 8)
+
+
+def test_low_precision_pack_args_reports_nvfp4_sentinel():
+    assert low_precision_pack_args({"fp4": "e2m1", "fp4_recipe": "nvfp4"}) == (True, "nvfp4")
+    assert low_precision_pack_args(SimpleNamespace(fp4="e2m1", fp8=None, fp8_recipe=None)) == (True, "nvfp4")
+    assert low_precision_pack_args({"fp8": "e4m3", "fp8_recipe": "mxfp8"}) == (True, "mxfp8")
+    assert low_precision_pack_args(SimpleNamespace(fp4=None, fp8=None, fp8_recipe="mxfp8")) == (False, "mxfp8")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"fp4": "e2m1", "fp8": "e4m3"}, "cannot be enabled together"),
+        ({"fp4": "e2m1", "fp4_recipe": "custom"}, "only 'nvfp4'"),
+        ({"fp4": "e2m1", "fp4_param": True}, "fp4_param"),
+    ],
+)
+def test_validate_fp4_config_rejects_unsupported(kwargs, match):
+    with pytest.raises(ValueError, match=match):
+        validate_fp4_config(kwargs)
+
+
+def test_validate_fp4_config_noop_without_fp4(monkeypatch):
+    validate_fp4_config({"fp8": "e4m3"})
+    validate_fp4_config(None)
+
+
+def test_validate_fp4_config_requires_blackwell(monkeypatch):
+    monkeypatch.setattr(quantization_utils, "has_visible_cuda_device", lambda: True)
+    monkeypatch.setattr(quantization_utils, "is_blackwell_or_newer", lambda: False)
+    with pytest.raises(ValueError, match="SM100"):
+        validate_fp4_config({"fp4": "e2m1", "fp4_recipe": "nvfp4"})
+    monkeypatch.setattr(quantization_utils, "is_blackwell_or_newer", lambda: True)
+    validate_fp4_config({"fp4": "e2m1", "fp4_recipe": "nvfp4"})

@@ -554,6 +554,14 @@ class MegatronConfig(BaseConfig):
     """TransformerEngine amax history reduction, e.g. ``"most_recent"`` or ``"max"``. Folded
     into ``transformer_config_kwargs["fp8_amax_compute_algo"]``; an explicit kwarg takes
     precedence."""
+    fp4: Optional[str] = None
+    """TransformerEngine NVFP4 compute format for linear-layer GEMMs; set to ``"e2m1"``.
+    ``None`` (default) trains without FP4. Mutually exclusive with ``fp8``; requires Blackwell
+    (SM100+). Rollout weight sync stays BF16. Folded into ``transformer_config_kwargs["fp4"]``;
+    an explicit kwarg takes precedence."""
+    fp4_recipe: Optional[str] = None
+    """TransformerEngine FP4 scaling recipe; only ``"nvfp4"`` is supported. Folded into
+    ``transformer_config_kwargs["fp4_recipe"]``; an explicit kwarg takes precedence."""
     transformer_config_kwargs: Dict[str, Any] = field(
         default_factory=lambda: copy.deepcopy(DEFAULT_TRANSFORMER_CONFIG_KWARGS)
     )
@@ -639,6 +647,8 @@ class MegatronConfig(BaseConfig):
             ("fp8_recipe", self.fp8_recipe),
             ("fp8_param", self.fp8_param),
             ("fp8_amax_compute_algo", self.fp8_amax_compute_algo),
+            ("fp4", self.fp4),
+            ("fp4_recipe", self.fp4_recipe),
         ):
             if value is not None:
                 self.transformer_config_kwargs.setdefault(key, value)
@@ -1192,15 +1202,17 @@ class InferenceEngineConfig(BaseConfig):
     Also used during full-weight sync, where policy weights are cast to this dtype before being sent
     to the inference engine. The LoRA-adapter sync path exports fp32 instead."""
     fp8_weight_sync_mode: Optional[str] = None
-    """Optional rollout weight format: ``"blockwise"``, ``"mxfp8"``, or ``"auto"``.
+    """Optional rollout weight format: ``"blockwise"``, ``"mxfp8"``, ``"nvfp4"``, or ``"auto"``.
 
-    Sends FP8 checkpoint weights and scales instead of ``model_dtype`` tensors, halving transfer
-    volume and letting vLLM serve FP8. ``"blockwise"`` ships one FP32 scale per 128x128 block;
-    ``"mxfp8"`` ships one E8M0 exponent per 32-element group, matching the recipe Transformer
-    Engine trains with on Blackwell.
+    Sends quantized checkpoint weights and scales instead of ``model_dtype`` tensors, cutting transfer
+    volume and letting vLLM serve them quantized. ``"blockwise"`` ships one FP32 scale per 128x128
+    block; ``"mxfp8"`` ships one E8M0 exponent per 32-element group, matching the recipe Transformer
+    Engine trains with on Blackwell. ``"nvfp4"`` ships weight-only NVFP4 (packed E2M1 codes, one E4M3
+    scale per 16 elements, one global scale per fused module), produced with Transformer Engine's
+    own NVFP4 weight quantizer; vLLM serves it W4A16. It currently supports dense Qwen3.5 only.
 
-    ``"auto"`` selects the format matching the policy's resolved ``fp8_recipe`` -- so trainer and
-    rollout quantize identically. It follows the *recipe*, not the architecture: an explicit
+    ``"auto"`` selects the format matching the policy's resolved ``fp8_recipe`` (or ``"nvfp4"`` when
+    ``fp4`` is enabled) -- so trainer and rollout quantize identically. It follows the *recipe*, not the architecture: an explicit
     ``fp8_recipe="blockwise"`` on Blackwell keeps a blockwise wire.
 
     Requires ``trainer.strategy="megatron"`` and a model with a registered FP8 spec (see

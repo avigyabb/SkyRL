@@ -4,6 +4,7 @@ from typing import Any, Optional
 from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     AUTO_FP8_RECIPE,
     is_mxfp8_recipe,
+    is_nvfp4_recipe,
 )
 
 
@@ -34,7 +35,10 @@ def _fp8_token_align(tp_size: int, cp_size: int, fp8_recipe: Any) -> int:
             "controller). Set transformer_config_kwargs.fp8_recipe to 'blockwise' or "
             "'mxfp8' explicitly."
         )
-    if is_mxfp8_recipe(fp8_recipe):
+    # NVFP4 (passed as the "nvfp4" sentinel, see low_precision_pack_args): Megatron's
+    # get_fp4_align_size() is 32 tokens per local shard (16-byte TMA alignment of
+    # 4-bit values), so the global grid is 32*tp*cp like MXFP8.
+    if is_mxfp8_recipe(fp8_recipe) or is_nvfp4_recipe(fp8_recipe):
         return 32 * tp_size * cp_size
     if tp_size > 1:
         return 128 * tp_size * cp_size

@@ -19,8 +19,11 @@ from typing import Any, Callable, Optional, Sequence
 # without importing the serializer that imports this module.
 BLOCKWISE_FP8 = "blockwise"
 MXFP8 = "mxfp8"
+# Weight-only NVFP4 (vLLM compressed-tensors ``nvfp4-pack-quantized``, W4A16): packed E2M1 codes,
+# one E4M3 scale per 16 elements, one FP32 global scale per fused module.
+NVFP4 = "nvfp4"
 AUTO_FP8 = "auto"
-WIRE_FORMATS = (BLOCKWISE_FP8, MXFP8)
+WIRE_FORMATS = (BLOCKWISE_FP8, MXFP8, NVFP4)
 
 # Scale tensor suffix each wire pairs with a quantized ``.weight`` — the one
 # mapping both the serializer (name emission) and the batched-MoE receiver
@@ -28,7 +31,11 @@ WIRE_FORMATS = (BLOCKWISE_FP8, MXFP8)
 WIRE_SCALE_SUFFIX = {
     BLOCKWISE_FP8: ".weight_scale_inv",
     MXFP8: ".weight_scale",
+    NVFP4: ".weight_scale",
 }
+# NVFP4 renames the quantized tensor itself and adds a per-module global scale.
+NVFP4_PACKED_SUFFIX = ".weight_packed"
+NVFP4_GLOBAL_SCALE_SUFFIX = ".weight_global_scale"
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,11 @@ class ModelFp8Spec:
     moe_module: str = "experts"
     # every projection the model emits, for receiver-side target derivation
     moe_projections: tuple[MoeProjection, ...] = field(default=())
+    # NVFP4 wire only. Each group lists ``.weight`` name suffixes that vLLM fuses into one module
+    # (e.g. q/k/v -> qkv_proj); vLLM keeps one global scale per fused module, so the sender
+    # quantizes a group's members together under a shared global scale.
+    nvfp4_fusion_groups: tuple[tuple[str, ...], ...] = field(default=())
+    supports_nvfp4: bool = False
 
 
 _REGISTRY: list[ModelFp8Spec] = []

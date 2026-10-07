@@ -65,3 +65,10 @@ def test_auto_recipe_is_refused_rather_than_packed_on_a_guessed_grid():
     # Without FP8 the recipe is never consulted, so "auto" stays harmless.
     assert get_packed_seq_align_size(tp_size=2, cp_size=1, fp8_enabled=False, fp8_recipe="auto") == 2
     assert get_unpacked_seq_align_size(tp_size=2, fp8_enabled=False, fp8_recipe="auto") == 2
+
+
+def test_nvfp4_aligns_to_32_token_local_shards():
+    assert get_packed_seq_align_size(tp_size=1, cp_size=1, fp8_enabled=True, fp8_recipe="nvfp4") == 32
+    assert get_packed_seq_align_size(tp_size=2, cp_size=1, fp8_enabled=True, fp8_recipe="nvfp4") == 64
+    assert get_packed_seq_align_size(tp_size=2, cp_size=2, fp8_enabled=True, fp8_recipe="nvfp4") == 128
+    assert get_unpacked_seq_align_size(tp_size=2, fp8_enabled=True, fp8_recipe="nvfp4") == 64

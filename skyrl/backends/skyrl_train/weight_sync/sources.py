@@ -170,7 +170,7 @@ class MegatronWeightSource(WeightSource):
 class SerializedFp8WeightSource(WeightSource):
     """Serialize a dense source into FP8 checkpoint tensors on the configured wire.
 
-    The wire (``blockwise`` or ``mxfp8``) is carried by ``config``; this class is
+    The wire (``blockwise``, ``mxfp8`` or ``nvfp4``) is carried by ``config``; this class is
     agnostic to it.
 
     The vLLM trainer engines require metadata and iteration to expose the same
@@ -187,7 +187,14 @@ class SerializedFp8WeightSource(WeightSource):
     def _serialized(self) -> Iterator[Tuple[str, torch.Tensor]]:
         from skyrl.backends.skyrl_train.weight_sync.fp8 import (
             iter_serialized_fp8_tensors,
+            iter_serialized_nvfp4_tensors,
         )
+
+        if self._config.is_nvfp4:
+            # Fused-module groups are quantized together, so the NVFP4 wire consumes the stream.
+            for serialized_name, serialized_tensor in iter_serialized_nvfp4_tensors(iter(self._source), self._config):
+                yield serialized_name, serialized_tensor.detach().contiguous()
+            return
 
         for name, tensor in self._source:
             for serialized_name, serialized_tensor in iter_serialized_fp8_tensors(

@@ -23,10 +23,12 @@ from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     has_visible_cuda_device,
     is_blackwell_or_newer,
+    is_fp4_enabled,
     is_fp8_enabled,
     resolve_auto_fp8_recipe,
     resolve_auto_wire_format,
     validate_concrete_fp8_recipe,
+    validate_fp4_config,
 )
 from skyrl.backends.skyrl_train.weight_sync.fp8 import (
     AUTO_FP8,
@@ -243,6 +245,7 @@ def validate_megatron_cfg(cfg: SkyRLTrainConfig):
             continue
         resolve_auto_fp8_recipe(transformer_kwargs)
         validate_concrete_fp8_recipe(transformer_kwargs)
+        validate_fp4_config(transformer_kwargs)
 
     # Resolve fp8_weight_sync_mode="auto" from the policy's recipe so the
     # rollout serves the representation the trainer computes with. This keys
@@ -255,8 +258,11 @@ def validate_megatron_cfg(cfg: SkyRLTrainConfig):
     # boot config), so resolve_auto_wire_format refuses to guess and raises.
     ie_cfg = cfg.generator.inference_engine
     if ie_cfg.fp8_weight_sync_mode == AUTO_FP8:
-        policy_recipe = cfg.trainer.policy.megatron_config.transformer_config_kwargs.get("fp8_recipe")
-        ie_cfg.fp8_weight_sync_mode = resolve_auto_wire_format(policy_recipe)
+        policy_kwargs = cfg.trainer.policy.megatron_config.transformer_config_kwargs
+        policy_recipe = policy_kwargs.get("fp8_recipe")
+        ie_cfg.fp8_weight_sync_mode = resolve_auto_wire_format(
+            policy_recipe, fp4_enabled=is_fp4_enabled(policy_kwargs.get("fp4"))
+        )
         logger.info(
             "fp8_weight_sync_mode='auto' resolved to {!r} from fp8_recipe={!r}",
             ie_cfg.fp8_weight_sync_mode,
@@ -1084,6 +1090,19 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
     if forwarded:
         logger.info(f"Exporting SKYRL_* overrides to ray runtime env: {sorted(forwarded)}")
     env_vars.update(forwarded)
+
+    # TE's NVFP4BlockScaling reads its options (RHT, stochastic rounding, 2D weight
+    # quantization, backward precision) from the environment at recipe construction, which
+    # happens inside the Megatron workers; forward them so a launcher-shell setting is not
+    # silently ignored there.
+    nvfp4_forwarded = {
+        k: v
+        for k, v in os.environ.items()
+        if (k.startswith("NVTE_NVFP4_") or k == "NVTE_BACKWARD_OVERRIDE") and k not in env_vars
+    }
+    if nvfp4_forwarded:
+        logger.info(f"Exporting TE NVFP4 overrides to ray runtime env: {sorted(nvfp4_forwarded)}")
+    env_vars.update(nvfp4_forwarded)
 
     # Forward one block-scale contract to all Ray actors. Hopper defaults to FP32
     # scales; Blackwell (SM100+) defaults to power-of-two scales, the only mode TE

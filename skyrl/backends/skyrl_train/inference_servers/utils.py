@@ -1,6 +1,7 @@
 import copy
 import json
 import logging
+import os
 from argparse import Namespace
 from typing import Any, Dict, List, Optional
 
@@ -109,6 +110,8 @@ def _apply_serialized_fp8_weight_sync_defaults(
     for key, value in get_serialized_fp8_quantization_config(
         ignored_layers=ignored_layers,
         wire_format=mode,
+        # A static activation amax (the same env the sender reads) selects W4A4 NVFP4 serving.
+        nvfp4_static_input=bool(os.environ.get("SKYRL_NVFP4_INPUT_AMAX")),
     ).items():
         _set_or_validate(
             qcfg,

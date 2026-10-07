@@ -36,7 +36,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.model_utils import (
     vocab_parallel_entropy_packed_sequences,
 )
 from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
-    is_fp8_enabled,
+    low_precision_pack_args,
 )
 from skyrl.backends.skyrl_train.distributed.megatron.token_metadata import (
     TokenMetadataLayout,
@@ -441,8 +441,7 @@ class MegatronModelWrapper:
             batch = _copy_tensor_dict_to_device(batch, torch.cuda.current_device())
 
             model_config = get_model_config(model)
-            fp8_enabled = is_fp8_enabled(getattr(model_config, "fp8", None))
-            fp8_recipe = getattr(model_config, "fp8_recipe", None)
+            fp8_enabled, fp8_recipe = low_precision_pack_args(model_config)
             rollout_expert_indices = batch.pop("rollout_expert_indices", None)
             router_padding_mask = batch.pop("router_padding_mask", None)
 
@@ -1076,8 +1075,7 @@ class MegatronModelWrapper:
             batch = _copy_tensor_dict_to_device(batch, torch.cuda.current_device())
 
             model_config = get_model_config(model)
-            fp8_enabled = is_fp8_enabled(getattr(model_config, "fp8", None))
-            fp8_recipe = getattr(model_config, "fp8_recipe", None)
+            fp8_enabled, fp8_recipe = low_precision_pack_args(model_config)
             rollout_expert_indices = batch.pop("rollout_expert_indices", None)
             router_padding_mask = batch.pop("router_padding_mask", None)
 

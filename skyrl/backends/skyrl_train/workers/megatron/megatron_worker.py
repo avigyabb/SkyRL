@@ -46,6 +46,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.optimizer import (
 from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
     resolve_auto_fp8_recipe,
     validate_concrete_fp8_recipe,
+    validate_fp4_config,
     validate_mxfp8_gdn_tp_alignment,
 )
 from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
@@ -241,6 +242,7 @@ class MegatronWorker:
         # re-run the device/recipe validation the blind driver had to skip.
         resolve_auto_fp8_recipe(transformer_config_kwargs)
         validate_concrete_fp8_recipe(transformer_config_kwargs)
+        validate_fp4_config(transformer_config_kwargs)
         # Megatron's own fp8 guard checks only the GLOBAL GDN in_proj dim; TE
         # quantizes the TP shard. Refuse misaligned shards here with the
         # arithmetic instead of TE's C++ assert deep inside model build.

@@ -5,6 +5,7 @@ from typing import Any, MutableMapping, Optional
 from loguru import logger
 
 AUTO_FP8_RECIPE = "auto"
+NVFP4_RECIPE = "nvfp4"
 
 
 def is_fp8_enabled(fp8: Any) -> bool:
@@ -17,6 +18,57 @@ def is_fp8_enabled(fp8: Any) -> bool:
 def is_mxfp8_recipe(fp8_recipe: Any) -> bool:
     """Return whether a Megatron/TE fp8 recipe value selects MXFP8."""
     return isinstance(fp8_recipe, str) and fp8_recipe.strip().lower() == "mxfp8"
+
+
+def is_fp4_enabled(fp4: Any) -> bool:
+    """Return whether a Megatron/TE fp4 config value enables NVFP4 execution."""
+    return is_fp8_enabled(fp4)
+
+
+def is_nvfp4_recipe(recipe: Any) -> bool:
+    """Return whether a recipe value is the NVFP4 packing sentinel."""
+    return isinstance(recipe, str) and recipe.strip().lower() == NVFP4_RECIPE
+
+
+def low_precision_pack_args(transformer_config: Any) -> tuple[bool, Optional[str]]:
+    """Return ``(enabled, recipe)`` for sequence-packing alignment.
+
+    ``transformer_config`` is a TransformerConfig or a ``transformer_config_kwargs``
+    mapping. FP4 and FP8 are mutually exclusive in Megatron, so NVFP4 reports the
+    ``"nvfp4"`` sentinel recipe through the same arguments FP8 alignment already takes.
+    """
+    if isinstance(transformer_config, MutableMapping):
+        get = transformer_config.get
+    else:
+
+        def get(name, default=None):
+            return getattr(transformer_config, name, default)
+
+    if is_fp4_enabled(get("fp4", None)):
+        return True, NVFP4_RECIPE
+    return is_fp8_enabled(get("fp8", None)), get("fp8_recipe", None)
+
+
+def validate_fp4_config(transformer_config_kwargs: Optional[MutableMapping[str, Any]]) -> None:
+    """Reject NVFP4 settings that SkyRL or Transformer Engine cannot run.
+
+    Runs wherever the config is concrete (driver with a GPU, and every Megatron worker).
+    """
+    kwargs = transformer_config_kwargs or {}
+    if not is_fp4_enabled(kwargs.get("fp4")):
+        return
+    if is_fp8_enabled(kwargs.get("fp8")):
+        raise ValueError("fp4 and fp8 cannot be enabled together; pick one low-precision GEMM format.")
+    recipe = kwargs.get("fp4_recipe", NVFP4_RECIPE)
+    if not is_nvfp4_recipe(recipe):
+        raise ValueError(f"fp4_recipe={recipe!r} is not supported; only 'nvfp4' is.")
+    if is_fp8_enabled(kwargs.get("fp4_param")):
+        raise ValueError(
+            "fp4_param=true is not supported: SkyRL's weight sync reads BF16 primary weights. "
+            "Use fp4_param=false (GEMMs still run NVFP4)."
+        )
+    if has_visible_cuda_device() and not is_blackwell_or_newer():
+        raise ValueError("fp4=e2m1 (NVFP4) requires SM100+ (Blackwell).")
 
 
 def resolve_text_config(hf_config: Any) -> Any:
@@ -164,7 +216,7 @@ def validate_mxfp8_gdn_tp_alignment(
     )
 
 
-def resolve_auto_wire_format(fp8_recipe: Any) -> str:
+def resolve_auto_wire_format(fp8_recipe: Any, fp4_enabled: bool = False) -> str:
     """Resolve ``fp8_weight_sync_mode="auto"`` from the policy's concrete recipe.
 
     Keys off the *recipe*, never the architecture: the rollout must serve the
@@ -173,7 +225,13 @@ def resolve_auto_wire_format(fp8_recipe: Any) -> str:
     a recipe left ``"auto"`` by a GPU-less driver is refused rather than
     guessed, because the wire chosen here reaches every engine's boot config —
     unlike the recipe, it gets no second resolution on the workers.
+
+    An NVFP4-trained policy (``fp4_enabled``) resolves to the NVFP4 wire.
     """
+    if fp4_enabled:
+        from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import NVFP4
+
+        return NVFP4
     if isinstance(fp8_recipe, str) and fp8_recipe.strip().lower() == AUTO_FP8_RECIPE:
         raise ValueError(
             'fp8_weight_sync_mode="auto" cannot be resolved while fp8_recipe is still "auto" '
@@ -194,16 +252,17 @@ def resolve_auto_wire_format(fp8_recipe: Any) -> str:
 def wire_to_engine_quantization(wire_format: str) -> str:
     """Map a serialized wire format to the vLLM ``quantization`` method that serves it.
 
-    MXFP8 rides vLLM's compressed-tensors path; blockwise rides its fp8 path.
+    MXFP8 and NVFP4 ride vLLM's compressed-tensors path; blockwise rides its fp8 path.
     Engines need this value at boot (``engine_init_kwargs.quantization``),
     before trainer-side config resolution runs, so launchers deriving it for
     ``fp8_weight_sync_mode=auto`` call this instead of re-encoding the mapping.
     """
     from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import (
         MXFP8,
+        NVFP4,
         WIRE_FORMATS,
     )
 
     if wire_format not in WIRE_FORMATS:
         raise ValueError(f"Unsupported wire format {wire_format!r}; expected one of {WIRE_FORMATS!r}")
-    return "compressed-tensors" if wire_format == MXFP8 else "fp8"
+    return "compressed-tensors" if wire_format in (MXFP8, NVFP4) else "fp8"

@@ -10,6 +10,7 @@ from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
 from skyrl.backends.skyrl_train.weight_sync.fp8.models.base import (
     BLOCKWISE_FP8,
     MXFP8,
+    NVFP4,
     ModelFp8Spec,
     MoeExpertSpec,
     MoeProjection,
@@ -62,6 +63,15 @@ _QWEN35_MXFP8_EXTRA_VISION_BLOCK_TEMPLATES = ("{model_prefix}.visual.blocks.{blo
 _QWEN35_MXFP8_VISION_MERGER_TEMPLATES = (
     "{model_prefix}.visual.merger.linear_fc1",
     "{model_prefix}.visual.merger.linear_fc2",
+)
+
+# Weights vLLM fuses into one module (see Qwen3_5ForCausalLM.packed_modules_mapping); the NVFP4
+# wire quantizes each group under one shared global scale.
+_QWEN35_NVFP4_FUSION_GROUPS = (
+    (".self_attn.q_proj.weight", ".self_attn.k_proj.weight", ".self_attn.v_proj.weight"),
+    (".mlp.gate_proj.weight", ".mlp.up_proj.weight"),
+    (".mlp.shared_expert.gate_proj.weight", ".mlp.shared_expert.up_proj.weight"),
+    (".linear_attn.in_proj_qkv.weight", ".linear_attn.in_proj_z.weight"),
 )
 
 _MOE_GATE = MoeProjection(hf_name="gate_proj", vllm_param="w13_weight", shard_id="w1")
@@ -124,12 +134,15 @@ def get_qwen35_fp8_ignored_layers(
                 vision_depth = value
                 break
     block_templates = _QWEN35_VISION_BLOCK_PREFIX_TEMPLATES
-    if wire_format == MXFP8:
+    # NVFP4 excludes the same vision modules as MXFP8: its Marlin kernel needs tile-aligned dims
+    # (the vision MLP's 4304 is not), and the tower is unused on a text-only rollout.
+    mx_like = wire_format in (MXFP8, NVFP4)
+    if mx_like:
         block_templates = block_templates + _QWEN35_MXFP8_EXTRA_VISION_BLOCK_TEMPLATES
     for block_idx in range(vision_depth):
         for template in block_templates:
             ignored.append(template.format(model_prefix=model_prefix, block_idx=block_idx))
-    if wire_format == MXFP8 and vision_depth:
+    if mx_like and vision_depth:
         for template in _QWEN35_MXFP8_VISION_MERGER_TEMPLATES:
             ignored.append(template.format(model_prefix=model_prefix))
     return ignored
@@ -150,6 +163,9 @@ def is_quantizable_weight_shape(name: str, shape: Sequence[int], wire_format: st
     if not name.endswith(_QWEN35_FP8_WEIGHT_SUFFIXES):
         return False
     if wire_format == MXFP8 and shape[1] % MXFP8_GROUP_SIZE != 0:
+        return False
+    if wire_format == NVFP4 and (shape[1] % 128 != 0 or shape[0] % 64 != 0):
+        # Marlin FP4 tiles: K % 128 and N % 64. A weight that misses them stays BF16 on the wire.
         return False
     return True
 
@@ -176,5 +192,7 @@ QWEN35_FP8_SPEC = register_fp8_spec(
         ignored_layers=get_qwen35_fp8_ignored_layers,
         moe_expert_spec=batched_moe_expert_spec,
         moe_projections=(_MOE_GATE, _MOE_UP, _MOE_DOWN),
+        nvfp4_fusion_groups=_QWEN35_NVFP4_FUSION_GROUPS,
+        supports_nvfp4=True,
     )
 )
