@@ -64,6 +64,13 @@ indexes a single expert. Qwen3.5 dense and MoE.
 * `SKYRL_NVFP4_INPUT_AMAX=<float>` (experimental) adds a static activation scale for W4A4 serving. Generation was
   ~10% faster than BF16 (44-57 s) with the same gap, but the value is not calibrated: `64` and `256` behave alike,
   `16` overflows (gap 0.15, reward -1.7). Do not use it without calibrating per model.
+* `SKYRL_NVFP4_CALIBRATE_INPUT=1` (experimental, dense linears, Megatron, PP=1) replaces that constant with a
+  per-layer amax the trainer measures on its own forward passes (forward pre-hooks on the TE linears, norm replayed
+  for the fused `LayerNormLinear`, max-reduced across ranks, mapped to HF weight names through the bridge). Each sync
+  ships one `input_global_scale` per layer; the first sync, before any data, uses `SKYRL_NVFP4_INPUT_AMAX`
+  (default 128). Knobs: `SKYRL_NVFP4_CALIB_DECAY` (0.9, how slowly a stale peak is forgotten),
+  `SKYRL_NVFP4_CALIB_MARGIN` (1.0). `SKYRL_NVFP4_CALIB_DUMP=<dir>` writes the measured table as JSON.
+  Routed-expert inputs are not calibrated yet (they still ship 1.0).
 
 ### 35B-A3B (MoE), TP=1, EP=8, 4 steps, one seed
 
@@ -108,3 +115,20 @@ The training side gets no such saving: primary weights, FP32 masters and optimiz
 
 No NVFP4 parameter storage (`fp4_param`), no activation calibration, only 4 steps of any 35B run, no run longer than
 40 steps, one seed per row.
+
+
+### W4A4 activation scales: global constant vs trainer-calibrated (Qwen3.5-9B, 6 steps, 3 seeds)
+
+`run_nvfp4_w4a4_calibration_qwen35_9b.sh` (`ARM=global|calibrated|w4a16`). Measured per-layer amax spans ~2 to ~350
+(median ~47); the largest are the late-layer MLP down-projections (layer 31: 346), which a single constant of 64 clips.
+
+| arm | seeds | mean logprob gap | mean worst-token gap | `generate` (s) | mean reward |
+| --- | --- | --- | --- | --- | --- |
+| global amax 64 | 42, 1, 2 | 0.0390 | 14.5 | 48.7 | -0.93 |
+| calibrated | 42, 1, 2 | 0.0376 | 8.3 | 48.7 | -0.90 |
+
+* The worst-token gap is about halved in all three seeds (7.3 / 9.2 / 8.5 vs 15.2 / 14.2 / 14.2).
+* The mean gap is lower in every seed but by only ~3.6% (paired differences 0.003 / 0.0003 / 0.0009), which is within
+  noise. Generation time and reward do not separate. Do not read this as a speed or reward win.
+* Margin sweep (seed 42, one run each): 0.7 clips and the gap more than doubles (0.091); 1.0 gives 0.040; 1.5 gives
+  0.041 but the worst-token gap returns to the global arm's (14.4). Keep the margin at 1.0.

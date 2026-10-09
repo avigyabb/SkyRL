@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Iterator, Sequence
+from typing import Callable, Iterator, Sequence
 
 import torch
 
@@ -83,6 +83,26 @@ class SerializedFp8Config:
     # amax every quantized linear's ``input_global_scale`` is derived from, which makes vLLM quantize
     # activations to FP4 too (W4A4).
     nvfp4_input_amax: float | None = None
+    # NVFP4 wire only: per-weight activation amax measured by the trainer (HF weight name -> amax),
+    # mutated in place by ``nvfp4_input_amax_refresh`` before each export. A weight with no entry falls
+    # back to ``nvfp4_input_amax`` (the first sync happens before the trainer has seen any data).
+    nvfp4_input_amax_by_name: dict | None = None
+    nvfp4_input_amax_refresh: Callable[[], dict] | None = None
+
+    def refresh_input_amax(self) -> None:
+        """Pull the trainer's latest per-layer amax into ``nvfp4_input_amax_by_name`` (collective)."""
+        if self.nvfp4_input_amax_refresh is not None and self.nvfp4_input_amax_by_name is not None:
+            fresh = self.nvfp4_input_amax_refresh()
+            self.nvfp4_input_amax_by_name.clear()
+            self.nvfp4_input_amax_by_name.update(fresh)
+
+    def input_amax_for(self, weight_names: Sequence[str]) -> float | None:
+        """Activation amax for the module serving ``weight_names`` (members of a fused module share one)."""
+        if self.nvfp4_input_amax_by_name:
+            found = [self.nvfp4_input_amax_by_name[n] for n in weight_names if n in self.nvfp4_input_amax_by_name]
+            if found:
+                return max(found)
+        return self.nvfp4_input_amax
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "weight_block_size", normalize_block_size(self.weight_block_size))
@@ -106,6 +126,19 @@ class SerializedFp8Config:
                 "resolve_fp8_spec(hf_config) before serializing weights"
             )
         return self.spec
+
+
+NVFP4_CALIBRATION_INIT_AMAX = 128.0
+
+
+def nvfp4_calibrated_input_enabled() -> bool:
+    """``SKYRL_NVFP4_CALIBRATE_INPUT=1``: W4A4 rollouts with per-layer activation scales from the trainer."""
+    return os.environ.get("SKYRL_NVFP4_CALIBRATE_INPUT", "0") not in ("", "0", "false", "False")
+
+
+def nvfp4_static_input_enabled() -> bool:
+    """Whether the engine should serve W4A4 (any static activation scale configured)."""
+    return bool(os.environ.get("SKYRL_NVFP4_INPUT_AMAX")) or nvfp4_calibrated_input_enabled()
 
 
 def resolve_serialized_fp8_config(
@@ -149,7 +182,15 @@ def resolve_serialized_fp8_config(
     if fp8_weight_sync_mode == NVFP4:
         raw = os.environ.get("SKYRL_NVFP4_INPUT_AMAX")
         nvfp4_input_amax = float(raw) if raw else None
-    return SerializedFp8Config(spec=spec, wire_format=fp8_weight_sync_mode, nvfp4_input_amax=nvfp4_input_amax)
+        if nvfp4_calibrated_input_enabled():
+            # Per-layer amax comes from the trainer; this is only the fallback for the first sync.
+            nvfp4_input_amax = nvfp4_input_amax or NVFP4_CALIBRATION_INIT_AMAX
+    return SerializedFp8Config(
+        spec=spec,
+        wire_format=fp8_weight_sync_mode,
+        nvfp4_input_amax=nvfp4_input_amax,
+        nvfp4_input_amax_by_name={} if nvfp4_calibrated_input_enabled() and fp8_weight_sync_mode == NVFP4 else None,
+    )
 
 
 def _mxfp8_group_args(dynamic: bool) -> dict:
@@ -420,6 +461,7 @@ def iter_serialized_nvfp4_tensors(
     """
 
     spec = config.require_spec()
+    config.refresh_input_amax()
     pending: dict[tuple[str, str], dict[str, torch.Tensor]] = {}
     for name, tensor in stream:
         if spec.moe_expert_spec(name) is not None:
@@ -430,13 +472,15 @@ def iter_serialized_nvfp4_tensors(
             continue
         grouped = _nvfp4_group_members(spec, name)
         if grouped is None:
-            yield from _nvfp4_tensors_for_group([(name, tensor)], config.nvfp4_input_amax)
+            yield from _nvfp4_tensors_for_group([(name, tensor)], config.input_amax_for([name]))
             continue
         key, member_names = grouped
         bucket = pending.setdefault(key, {})
         bucket[name] = tensor
         if len(bucket) == len(member_names):
-            yield from _nvfp4_tensors_for_group([(m, bucket[m]) for m in member_names], config.nvfp4_input_amax)
+            yield from _nvfp4_tensors_for_group(
+                [(m, bucket[m]) for m in member_names], config.input_amax_for(member_names)
+            )
             del pending[key]
     if pending:
         incomplete = {key: sorted(bucket) for key, bucket in pending.items()}
