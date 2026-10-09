@@ -1394,6 +1394,21 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                     f"got {resolved_backend!r}."
                 )
             self._serialized_fp8_config = resolve_serialized_fp8_config(mode, self.strategy.hf_config)
+            if self._serialized_fp8_config.nvfp4_input_amax_by_name is not None:
+                # W4A4 rollouts with per-layer activation scales measured on the trainer's own forwards.
+                from skyrl.backends.skyrl_train.workers.megatron.quantization.activation_calibrator import (
+                    ActivationAmaxCalibrator,
+                )
+
+                self._nvfp4_calibrator = ActivationAmaxCalibrator(
+                    self.bridge,
+                    self.actor_module,
+                    decay=float(os.environ.get("SKYRL_NVFP4_CALIB_DECAY", "0.9")),
+                    margin=float(os.environ.get("SKYRL_NVFP4_CALIB_MARGIN", "1.0")),
+                )
+                object.__setattr__(
+                    self._serialized_fp8_config, "nvfp4_input_amax_refresh", self._nvfp4_calibrator.collect
+                )
 
         await super().init_weight_sync_state(inference_engine_client, inference_engine_cfg)
 

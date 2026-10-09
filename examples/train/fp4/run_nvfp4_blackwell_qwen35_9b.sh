@@ -21,7 +21,7 @@ MODEL_NAME="Qwen/Qwen3.5-9B-Base"
 DATA_DIR="${DATA_DIR:-$HOME/data/dapo}"
 TRAIN_FILE="$DATA_DIR/dapo-math-17k-cleaned.parquet"
 TEST_FILE="$DATA_DIR/aime-2024-cleaned.parquet"
-LOGGER="wandb"  # change to "console" to print to stdout
+LOGGER="${LOGGER:-wandb}"  # change to "console" to print to stdout
 
 # Colocated by default: training and inference share the same GPUs. For a
 # disaggregated (non-colocated) run, set COLOCATE_ALL=false and split the GPUs,

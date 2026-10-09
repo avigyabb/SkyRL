@@ -205,3 +205,33 @@ def test_static_input_scale_emitted_when_amax_set(monkeypatch, config):
     assert not any(k.endswith(".input_global_scale") for k in plain)
     q = get_serialized_fp8_quantization_config(wire_format=NVFP4, nvfp4_static_input=True)
     assert "input_activations" in q["config_groups"]["group_0"]
+
+
+def test_per_layer_input_amax_overrides_fallback_and_refreshes(config):
+    config, _ = config
+    p = "model.layers.3.self_attn."
+    mlp = "model.layers.3.mlp."
+    by_name = {}
+    state = {"fresh": {p + "q_proj.weight": 8.0, p + "k_proj.weight": 8.0, p + "v_proj.weight": 8.0}}
+    config = dataclasses.replace(
+        config,
+        nvfp4_input_amax=128.0,
+        nvfp4_input_amax_by_name=by_name,
+        nvfp4_input_amax_refresh=lambda: state["fresh"],
+    )
+    stream = [
+        (p + "q_proj.weight", _w(512)),
+        (p + "k_proj.weight", _w(128)),
+        (p + "v_proj.weight", _w(128)),
+        (mlp + "down_proj.weight", _w(256)),  # uncalibrated -> fallback
+    ]
+    out = dict(iter_serialized_nvfp4_tensors(iter(stream), config))
+    assert torch.allclose(out[p + "q_proj.input_global_scale"], torch.tensor([448.0 * 6.0 / 8.0]))
+    assert torch.allclose(out[p + "v_proj.input_global_scale"], out[p + "q_proj.input_global_scale"])
+    assert torch.allclose(out[mlp + "down_proj.input_global_scale"], torch.tensor([448.0 * 6.0 / 128.0]))
+
+    # The next export sees the refreshed measurements (and drops stale entries).
+    state["fresh"] = {mlp + "down_proj.weight": 2000.0}
+    out = dict(iter_serialized_nvfp4_tensors(iter(stream), config))
+    assert torch.allclose(out[mlp + "down_proj.input_global_scale"], torch.tensor([448.0 * 6.0 / 2000.0]))
+    assert torch.allclose(out[p + "q_proj.input_global_scale"], torch.tensor([448.0 * 6.0 / 128.0]))
