@@ -125,6 +125,11 @@ class MegatronWeightSource(WeightSource):
     ``param_filter`` keeps the conversion tasks whose global Megatron name it
     accepts. Every rank filters the same global list, so they enter the same
     collectives, and a filter by name keeps each ``group_key`` whole.
+
+    Tensors are cast to ``dtype``, except fp32 tensors whose HF name ends with
+    one of the model bridge's ``FP32_HF_PARAM_SUFFIXES``: those are fp32 in the
+    checkpoint and in the inference model too (e.g. Muse Spark's router weight
+    and expert-bias correction), and rounding them changes expert routing.
     """
 
     def __init__(
@@ -139,6 +144,13 @@ class MegatronWeightSource(WeightSource):
         self._dtype = dtype
         self._param_filter = param_filter
         self._meta: Optional[List[ParamMeta]] = None
+        model_bridge = getattr(bridge, "_model_bridge", None)
+        self._fp32_suffixes = tuple(getattr(model_bridge, "FP32_HF_PARAM_SUFFIXES", ()))
+
+    def _wire_dtype(self, name: str, tensor: torch.Tensor) -> torch.dtype:
+        if self._fp32_suffixes and tensor.dtype == torch.float32 and name.endswith(self._fp32_suffixes):
+            return torch.float32
+        return self._dtype
 
     def _export(self) -> Iterator[Tuple[str, torch.Tensor]]:
         tasks = None
@@ -154,7 +166,7 @@ class MegatronWeightSource(WeightSource):
         if self._meta is None:
             meta: List[ParamMeta] = []
             for name, tensor in self._export():
-                meta.append(ParamMeta(name, self._dtype, tuple(tensor.shape)))
+                meta.append(ParamMeta(name, self._wire_dtype(name, tensor), tuple(tensor.shape)))
                 del tensor
             self._meta = meta
         return self._meta
@@ -163,7 +175,8 @@ class MegatronWeightSource(WeightSource):
         # See FsdpWeightSource.__iter__ on the device.
         device = torch.cuda.current_device() if torch.cuda.is_available() else None
         for name, tensor in self._export():
-            full = tensor.to(device=device, dtype=self._dtype, non_blocking=True).detach().contiguous()
+            dtype = self._wire_dtype(name, tensor)
+            full = tensor.to(device=device, dtype=dtype, non_blocking=True).detach().contiguous()
             yield name, full
 
 

@@ -304,7 +304,7 @@ def _build_sender_init_info(
                 # Broadcast out of a fixed reusable buffer instead of one NCCL
                 # call per parameter. The engine propagates this to the worker at
                 # the handshake, so the two sides cannot disagree.
-                packed=True,
+                packed=ie_cfg.weight_transfer_packed,
                 packed_buffer_size_bytes=_packed_buffer_size_bytes(
                     base_model_path, ie_cfg.weight_transfer_threshold_cuda_ipc_GB, dtype
                 ),

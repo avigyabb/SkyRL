@@ -1226,6 +1226,13 @@ class InferenceEngineConfig(BaseConfig):
     Applies to both push backends -- ``nccl`` and colocated ``ipc``. Raised to fit the
     model's largest single parameter when that exceeds it, since a tensor too large for
     the buffer cannot be packed at all."""
+    weight_transfer_packed: bool = True
+    """Pack parameters into reusable buffers on the ``nccl`` (non-colocated) path.
+
+    ``False`` broadcasts one parameter at a time, and each inference worker frees it right after
+    loading. Packing is faster for many small parameters, but its receive chunks are sized to the
+    largest parameter and live outside ``gpu_memory_utilization``: for Muse Spark (~16 GiB fused
+    expert tensors) they OOMed the inference workers, where one parameter at a time fits."""
     delta_weight_sync: Optional[DeltaWeightSyncConfig] = None
     """Required when ``weight_sync_backend="delta"``."""
     tensor_parallel_size: int = 1

@@ -51,6 +51,8 @@ from tests.backends.skyrl_train.gpu.utils import (
 
 # BF16 masters for the INT4-served Kimi row: the same slice, experts dequantized.
 KIMI_BF16_MASTERS = "eatang/Kimi-K2.5-2layer-BF16"
+# 4-layer slice of meta-models/Muse-Spark-Open-816B-A42B (gated). Override with a local path.
+MUSE_SPARK_4LAYER = os.environ.get("SKYRL_MUSE_SPARK_4LAYER", "Muse-Spark-Open-4layer")
 
 NUM_PROMPTS = 10
 N_SAMPLES_PER_PROMPT = 8
@@ -110,6 +112,13 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
         # max_num_seqs=1024 and 64 heads that is 65536 > 65535 and the CUDA-graph capture / profile
         # run fails with "Triton Error [CUDA]: invalid argument". Stay below the limit.
         cfg.generator.inference_engine.max_num_seqs = 512
+    if "muse-spark" in model_name.lower():
+        # Muse Spark Open ships as a vision/audio/language checkpoint; SkyRL bridges only the
+        # language model (patches/megatron/muse_spark), so route trainer and vLLM to text-only.
+        cfg.trainer.remove_microbatch_padding = True
+        cfg.trainer.policy.language_model_only = True
+        cfg.trainer.ref.language_model_only = True
+        cfg.generator.inference_engine.language_model_only = True
     if "kimi-k2.5" in model_name.lower():
         # Unified VL checkpoint with a DeepSeek-V3 language model under a
         # `language_model.` prefix; MegatronWorker refuses it without
@@ -148,6 +157,7 @@ def get_test_actor_config(model_name) -> SkyRLTrainConfig:
         or ("glm-4.7-flash" in model_name.lower())
         or ("glm-5.3-flash" in model_name.lower())
         or ("kimi-k2.5" in model_name.lower())
+        or ("muse-spark" in model_name.lower())
     )
     if is_large_moe:
         cfg.trainer.policy.inference_only_init = True
@@ -243,6 +253,11 @@ def _engine_overrides_for_model(model_name: str, fp8_mode: str | None = None) ->
     if "kimi-k2.5" in model_name.lower():
         # Same story: a 262k default context, and 384 routed experts sitting next
         # to the colocated Megatron shard.
+        overrides["engine_init_kwargs"]["max_model_len"] = 4096
+        overrides["gpu_memory_utilization"] = 0.5
+    if "muse-spark" in model_name.lower():
+        # 1M default context; the 4-layer slice is ~54B params (256 experts x 4 layers),
+        # colocated with the Megatron shard.
         overrides["engine_init_kwargs"]["max_model_len"] = 4096
         overrides["gpu_memory_utilization"] = 0.5
     return overrides
@@ -465,6 +480,26 @@ async def construct_training_input_from_generator_output(generator_output, token
             id="glm-5.3-flash-4layer_h100_tp2_ep4_kpool_beyond_topk",
             marks=pytest.mark.h100,
         ),
+        # Muse Spark Open, 4-layer slice of the real checkpoint: 3 sliding-window + 1 NoPE full-attention
+        # layer (the real 3:1 pattern), each with a 256-expert latent MoE (8192 -> 4096), gated residuals,
+        # gated attention with a per-head output norm, and a logit softcap. ~54B params in bf16, so the
+        # same 4xH100 mesh as the other large MoE rows.
+        pytest.param(
+            2,
+            1,
+            1,
+            4,
+            1,
+            4,
+            4,
+            MUSE_SPARK_4LAYER,
+            3e-1,
+            1e-1,
+            None,
+            None,
+            id="muse-spark-open-4layer_h100_tp2_ep4",
+            marks=pytest.mark.h100,
+        ),
         pytest.param(
             2,
             1,
@@ -681,7 +716,7 @@ async def test_logprobs_matching_roundtrip(
     Check that logprob diff matches acrosss vllm and megatron.
     """
     # See the comparison branch at the end of the test.
-    compare_common_prefix = bool(fp8_mode) or "kimi-k2.5" in model_name.lower()
+    compare_common_prefix = bool(fp8_mode) or "kimi-k2.5" in model_name.lower() or "muse-spark" in model_name.lower()
     with ray_init(extra_env_vars=_extra_env_vars_for_model(model_name, fp8_mode)):
         cfg = get_test_actor_config(model_name=model_name)
         # With merge_lora=False the policy is served under the adapter name, which
@@ -874,7 +909,8 @@ async def test_logprobs_matching_roundtrip(
             # score different tokens and the diff is noise. FP8 rows ran on identical
             # synced weights (~0.14 positional vs ~1e-3 on prefixes); the Kimi slice
             # has a flat enough distribution that 53 of 80 sequences diverged
-            # (~0.93 positional vs ~0.008 on prefixes).
+            # (~0.93 positional vs ~0.008 on prefixes), and so does the 4-layer Muse Spark
+            # slice (mean logprob ~-4.7 on its own greedy tokens).
             if compare_common_prefix:
                 ids_1, lp_1 = gen_out_1["response_ids"], gen_out_1["rollout_logprobs"]
                 ids_2, lp_2 = gen_out_2["response_ids"], gen_out_2["rollout_logprobs"]

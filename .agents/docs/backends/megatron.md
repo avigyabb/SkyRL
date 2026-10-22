@@ -15,6 +15,13 @@ SkyRL uses Megatron-Bridge for HF-to-Megatron model conversion. Installed from g
   DSA indexer kernels). The DSA layers are megatron-core's `DSAttention` (NoPE MLA) with the k-pool top-k
   swapped in by `glm5_next/dsa.py`. Removal plan when bumping megatron: `patches/megatron/README.md`. Requires
   `language_model_only=True` (VL checkpoint) and packed sequences (`remove_microbatch_padding=True`).
+- Muse Spark Open (`muse_spark`): `skyrl/backends/skyrl_train/patches/megatron/muse_spark/` (Hybrid
+  `*E` stack: gated-residual GQA layers + latent-MoE layers; provider, blocks, bridge) from
+  Megatron-Bridge#6483, on the provider API. The HF config is registered by
+  `patches/transformers/muse_spark_config.py` (pinned transformers predates it). vLLM side needs the
+  vllm#61879 build and `patches/vllm/patch_muse_spark_reload.py` (weight sync correctness). Requires
+  `language_model_only=True`; LoRA syncs merged weights only (vLLM has no MoE LoRA for it). Removal
+  plan: `patches/megatron/README.md`.
 
 ## Parallelism Strategies
 

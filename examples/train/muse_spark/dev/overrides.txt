@@ -1,0 +1,7 @@
+# Only used by megatron-core's DSA indexer (GLM-5.x); no torch-2.14 build yet.
+fast-hadamard-transform; sys_platform == 'never'
+# Transitive git dep that won't build without TMS_CUDA_MAJOR; vLLM uses its own cumem allocator.
+torch-memory-saver; sys_platform == 'never'
+# mamba-ssm pins tilelang==0.1.8 / apache-tvm-ffi<=0.1.9; take vLLM's (as SkyRL's pyproject does for 0.30).
+tilelang==0.1.12
+apache-tvm-ffi==0.1.11

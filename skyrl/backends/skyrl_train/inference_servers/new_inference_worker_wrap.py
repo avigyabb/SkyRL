@@ -132,6 +132,15 @@ from skyrl.backends.skyrl_train.patches.vllm.patch_glm5next_lora_packing import 
 )
 
 apply_glm5next_lora_packing_patch()
+
+# Muse Spark (vllm#61879) under in-place weight sync: its fused Q/K/V/O-gate loader bypasses
+# layerwise reload (attention updates are dropped) and its router multiplier is folded only once.
+# Applied when the model's package loads.
+from skyrl.backends.skyrl_train.patches.vllm.patch_muse_spark_reload import (  # noqa: E402
+    apply_muse_spark_reload_patch,
+)
+
+apply_muse_spark_reload_patch()
 # Runs in every vLLM worker process before the model is loaded, so the
 # LoRA-capability declaration is in place for the supports_lora() gate.
 from skyrl.backends.skyrl_train.patches.vllm_kimi_k25_lora import (  # noqa: E402

@@ -57,6 +57,9 @@ def call_model_with_fused_lm_head(
         raise NotImplementedError("fused_lm_head_logprob does not support MXFP8 output projection")
     if unwrapped_model.config.use_mup:
         raise NotImplementedError("fused_lm_head_logprob does not support MuP logit scaling")
+    if getattr(unwrapped_model.config, "final_logit_softcapping", None):
+        # The output layer's logit multiplier / soft-cap (Muse Spark) would be skipped.
+        raise NotImplementedError("fused_lm_head_logprob does not support logit soft-capping")
     # Standard GPTModel objects directly take `output_processor`, just call the model like normal
     if "output_processor" in inspect.signature(unwrapped_model.forward).parameters:
         return model(

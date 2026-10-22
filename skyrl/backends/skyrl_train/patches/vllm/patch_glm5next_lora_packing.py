@@ -53,12 +53,21 @@ _GLM5NEXT_PACKED_MODULES_MAPPING = {
 
 
 def _patch_packed_modules_mapping() -> list[str]:
-    """Install the mapping on whichever GLM-5.3-Flash entrypoints this build exposes.
+    """Install the mapping on GLM-5.3-Flash's entrypoints, once its module is loaded.
 
-    ``language_model_only`` selects the ``ForCausalLM`` variant, so set both when present.
+    Deferred rather than imported here: importing ``vllm.models.glm5next`` in every worker
+    registers its KDA ops for whatever model is served (see ``model_module_hooks``).
     """
-    import vllm.models.glm5next as glm5next
+    from skyrl.backends.skyrl_train.patches.vllm.model_module_hooks import (
+        on_model_module_load,
+    )
 
+    on_model_module_load("vllm.models.glm5next", _set_glm5next_packed_modules_mapping)
+    return ["<on load>"]
+
+
+def _set_glm5next_packed_modules_mapping(glm5next) -> list[str]:
+    """``language_model_only`` selects the ``ForCausalLM`` variant, so set both when present."""
     patched = []
     for cls_name in ("Glm5NextForConditionalGeneration", "Glm5NextForCausalLM"):
         cls = getattr(glm5next, cls_name, None)

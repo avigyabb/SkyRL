@@ -1,0 +1,2 @@
+nvidia-modelopt==0.46.1
+nvidia-resiliency-ext @ git+https://github.com/NVIDIA/nvidia-resiliency-ext@6c5f2a13c7688d92a7ac7ee6e464721eb8b7345d

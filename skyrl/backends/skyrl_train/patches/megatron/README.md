@@ -168,6 +168,62 @@ Not carried. GLM-5.3-Flash runs bf16 end to end.
   - Delete `glm5_next/`.
 - **Verify:** the full [Verification](#verification) set.
 
+## Muse Spark Open (`muse_spark`)
+
+### NVIDIA-NeMo/Megatron-Bridge#6483: the Muse Spark Open model
+
+The upstream model is builder-backed (`MuseSparkModelConfig` + `MuseSparkModelBuilder`, reached
+through `AutoBridge.get_model()`), and it also carries the HF vision/audio towers. SkyRL's worker
+drives the provider API (`to_megatron_provider()`), so `muse_spark/` carries only the language-model
+half, re-expressed as a `HybridModelProvider`.
+
+- **Carried as:** `muse_spark/`:
+  - `blocks.py`: the Hybrid attention / latent-MoE specs, copied from upstream's
+    `modeling_muse_spark_open/blocks.py` with two pin adaptations:
+    - `MuseSparkSelfAttention` inlines the parameter-free Q/K norms. The pinned Bridge only has
+      them fused with Glimmer's post norm, as `MuseGlimmerSelfAttention`.
+    - `MuseSparkMoE.preprocess` drops `padding_mask`, which the pinned `MoELayer.preprocess`
+      doesn't take.
+  - `provider.py`: `MuseSparkModelProvider`, plus the embedding-norm and logit-softcap instance
+    mixins (upstream does both inside `MuseSparkModel.forward`).
+  - `bridge.py`: `MuseSparkBridge`, registered for `MuseSparkForConditionalGeneration` on
+    import. Its config translation and mapping registry follow upstream's
+    `hf_config_to_model_config` / `mapping_registry`.
+- **Landed?** The pinned Megatron-Bridge has `megatron/bridge/models/muse_spark_open/`.
+- **Remove:**
+  - Either teach `MegatronWorker` the builder API (`get_model_config()` / `get_model()`), or
+    keep `provider.py` + `bridge.py` and import the blocks from
+    `megatron.bridge.models.muse_spark_open.modeling_muse_spark_open.blocks` instead of the
+    vendored copy.
+  - Before switching to upstream's `MuseSparkModel`, check that its forward doesn't
+    double-slice context parallelism: it calls `slice_batch_for_context_parallel` itself, while
+    SkyRL slices before calling the model.
+  - `workers/megatron/model_bridges.py`: drop the `muse_spark` import.
+  - Delete `muse_spark/`.
+- **Verify:** `muse-spark-open-4layer_*` in `gpu_ci/megatron/test_megatron_models.py` and
+  `test_megatron_lora_models.py`.
+
+- **Verify:** also `gpu_ci/patches/megatron/muse_spark_vs_hf.py` (Megatron vs HF reference
+  logprobs; 0.028 on the 4-layer slice at TP2/EP4) and `muse_spark_export_check.py` (Megatron -> HF
+  export identical to the checkpoint except the final norm's bf16 rounding).
+
+Related, outside this folder:
+- `patches/transformers/muse_spark_config.py` registers the HF config, because the pinned
+  transformers predates `transformers.models.muse_spark`. Delete it, and its call in
+  `skyrl/backends/skyrl_train/__init__.py`, once the pin includes that module.
+- `distributed/megatron/fused_lm_head.py` refuses soft-capped logits; keep that guard.
+- `MuseSparkBridge.FP32_HF_PARAM_SUFFIXES` keeps the router weight and expert-bias correction fp32
+  through `MegatronWeightSource` (bf16-rounding them changes routing).
+- `MuseSparkBridge._merge_lora_adapter_weights` splits a fused `linear_qkv` LoRA into q/k/v/gate for
+  merged-LoRA export. Bridge's generic merge only knows QKV and GDN layouts; check upstream before
+  removing.
+- vLLM (vllm#61879), `patches/vllm/patch_muse_spark_reload.py`: the fused QKV+O-gate loader bypasses
+  layerwise reload (attention updates were silently dropped on every sync), and the router
+  multiplier fold ran only once. Installed through `patches/vllm/model_module_hooks.py`, which
+  defers per-model vLLM patches to model load (importing `vllm.models.glm5next` in every worker
+  registered a duplicate `fused_rms_norm_gated` CustomOp next to Muse Spark's). Delete the patch
+  once upstream fixes both; its docstring has the check.
+
 ## Standalone patches
 
 ### `patch_dsa_index_share.py` (+ `dsa_index_share_recompute.patch`): NVIDIA/Megatron-LM#6793

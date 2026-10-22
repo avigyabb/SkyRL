@@ -44,6 +44,7 @@ from skyrl.train.utils.utils import validate_cfg
 from tests.backends.skyrl_train.gpu.gpu_ci.conftest import ray_init
 from tests.backends.skyrl_train.gpu.gpu_ci.megatron.test_megatron_models import (
     MAX_GENERATE_LENGTH,
+    MUSE_SPARK_4LAYER,
     _engine_overrides_for_model,
     _extra_env_vars_for_model,
     generate_with_vllm,
@@ -206,6 +207,41 @@ async def _sync_weights(policy, client, cfg, label: str):
             False,
             id="glm-5.3-flash-4layer_h100_tp2_ep4_adapter",
             marks=pytest.mark.h100,
+        ),
+        # Muse Spark Open 4-layer slice, same mesh as its row in test_megatron_models.py. Merged
+        # LoRA: the fused QKV+gate (split by MuseSparkBridge._merge_lora_adapter_weights), attention
+        # output and grouped expert linears, synced as full weights. Measured on 4xB200: 0.038 zero
+        # adapter, 0.040 after the perturbed adapter is synced (0.268 stale).
+        pytest.param(
+            2,
+            1,
+            1,
+            4,
+            1,
+            4,
+            4,
+            MUSE_SPARK_4LAYER,
+            1e-1,
+            True,
+            id="muse-spark-open-4layer_h100_tp2_ep4_merged",
+            marks=pytest.mark.h100,
+        ),
+        # Adapter sync can't work yet: vllm#61879 rejects MoE LoRA for Muse Spark ("post-expert norm
+        # does not support MoE LoRA: the LoRA path applies the top-k weights alongside GEMM2"), and
+        # its fused qkv_proj (Q+K+V+O-gate) is a single LoRA module with no PEFT-name mapping.
+        pytest.param(
+            2,
+            1,
+            1,
+            4,
+            1,
+            4,
+            4,
+            MUSE_SPARK_4LAYER,
+            1e-1,
+            False,
+            id="muse-spark-open-4layer_h100_tp2_ep4_adapter",
+            marks=[pytest.mark.h100, pytest.mark.skip(reason="vLLM has no MoE LoRA for Muse Spark yet")],
         ),
     ],
 )
