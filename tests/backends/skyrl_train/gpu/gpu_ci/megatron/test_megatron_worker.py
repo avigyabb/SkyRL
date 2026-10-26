@@ -1013,3 +1013,61 @@ async def test_megatron_offload_memory_and_correctness(ray_init_fixture, worker_
             assert k in result_backload.metrics
             assert v == result_backload.metrics[k], f"Metrics mismatch for {k}: {v} != {result_backload.metrics[k]}"
         assert result.loss_fn_outputs == result_backload.loss_fn_outputs, "loss_fn_outputs mismatch after backload"
+
+
+@pytest.mark.asyncio
+@pytest.mark.megatron
+async def test_megatron_lora_offload_scopes(ray_init_fixture):
+    """
+    With LoRA the trainable adapters (fused DDP buffers) and the frozen base weights
+    offload and backload independently through ``model_scope``:
+
+    1. Offload the frozen base weights only: memory drops, the adapters stay.
+    2. Offload the adapters too: memory drops again.
+    3. Backload the adapters only: memory returns to the level of step 1.
+    4. Backload the base weights: memory returns to the resident level and a
+       forward pass matches the one taken before any offload.
+    """
+    cfg = get_test_actor_config()
+    cfg.trainer.strategy = "megatron"
+    cfg.trainer.policy.model.lora = SkyRLLoraConfig(rank=16, alpha=16)
+    cfg.trainer.placement.policy_num_gpus_per_node = 2
+    cfg.trainer.policy.megatron_config.tensor_model_parallel_size = 2
+    cfg.trainer.policy.megatron_config.pipeline_model_parallel_size = 1
+    cfg.trainer.policy.megatron_config.context_parallel_size = 1
+    cfg.trainer.policy.megatron_config.expert_model_parallel_size = 1
+    cfg.trainer.policy.megatron_config.expert_tensor_parallel_size = 1
+    actor_group = init_worker_with_type(
+        "policy",
+        shared_pg=None,
+        colocate_all=False,
+        num_gpus_per_node=cfg.trainer.placement.policy_num_gpus_per_node,
+        cfg=cfg,
+    )
+
+    batch = get_test_training_batch()
+    results = ray.get(actor_group.async_run_ray_method("mesh", "forward", batch))
+    resident = get_rank_0_memory(actor_group, "Resident")
+
+    actor_group.offload_to_cpu(offload_optimizer=True, offload_model=True, model_scope="frozen")
+    frozen_offloaded = get_rank_0_memory(actor_group, "Frozen base weights + optimizer offloaded")
+    assert frozen_offloaded < resident
+
+    actor_group.offload_to_cpu(offload_optimizer=False, offload_model=True, model_scope="trainable")
+    all_offloaded = get_rank_0_memory(actor_group, "Adapters offloaded too")
+    assert all_offloaded < frozen_offloaded, "offloading the adapters must free their buffers"
+
+    actor_group.backload_to_gpu(backload_optimizer=False, backload_model=True, model_scope="trainable")
+    adapters_only = get_rank_0_memory(actor_group, "Adapters backloaded, base weights still offloaded")
+    assert adapters_only > all_offloaded
+    assert (
+        abs(adapters_only - frozen_offloaded) < 1e8
+    ), f"adapter-only residency should match step 1: {adapters_only} vs {frozen_offloaded}"
+
+    actor_group.backload_to_gpu(backload_optimizer=True, backload_model=True, model_scope="frozen")
+    backloaded = get_rank_0_memory(actor_group, "Fully backloaded")
+    assert abs(backloaded - resident) < 4e8, f"fully backloaded memory {backloaded} vs resident {resident}"
+
+    results_backload = ray.get(actor_group.async_run_ray_method("mesh", "forward", batch))
+    for result, result_backload in zip(results, results_backload):
+        assert result.loss_fn_outputs == result_backload.loss_fn_outputs, "forward mismatch after scoped backload"

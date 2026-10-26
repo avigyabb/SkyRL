@@ -100,8 +100,8 @@ async def test_colocate_all_only_one_model_on_gpu(ray_init_fixture):
         )
 
         # Mark both as on GPU after init
-        dispatch._gpu_state["policy"] = GPUState(model_on_gpu=True, optimizer_on_gpu=True)
-        dispatch._gpu_state["ref"] = GPUState(model_on_gpu=True, optimizer_on_gpu=False)
+        dispatch._gpu_state["policy"] = GPUState(model_on_gpu=True, optimizer_on_gpu=True, trainable_on_gpu=True)
+        dispatch._gpu_state["ref"] = GPUState(model_on_gpu=True, optimizer_on_gpu=False, trainable_on_gpu=True)
 
         # Manually offload both to start from clean state
         policy_group.offload_to_cpu()
@@ -188,22 +188,24 @@ async def test_gpu_state_tracking_accuracy(ray_init_fixture):
         dispatch.mark_all_offloaded()
 
         # Verify initial state
-        assert dispatch._gpu_state["policy"] == GPUState(model_on_gpu=False, optimizer_on_gpu=False)
-        assert dispatch._gpu_state["ref"] == GPUState(model_on_gpu=False, optimizer_on_gpu=False)
+        assert dispatch._gpu_state["policy"] == GPUState.offloaded()
+        assert dispatch._gpu_state["ref"] == GPUState.offloaded()
 
         # Load policy for training (needs model + optimizer)
         dp_size = policy_group.actor_infos[0].rank.dp_size
         dummy_batch = make_dummy_training_batch(batch_size=dp_size)
         dispatch.forward_backward("policy", dummy_batch)
 
-        assert dispatch._gpu_state["policy"] == GPUState(model_on_gpu=True, optimizer_on_gpu=True)
-        assert dispatch._gpu_state["ref"] == GPUState(model_on_gpu=False, optimizer_on_gpu=False)
+        assert dispatch._gpu_state["policy"] == GPUState(
+            model_on_gpu=True, optimizer_on_gpu=True, trainable_on_gpu=True
+        )
+        assert dispatch._gpu_state["ref"] == GPUState.offloaded()
 
         # Load ref for inference (only needs model)
         dispatch.forward("ref", dummy_batch)
 
-        assert dispatch._gpu_state["ref"] == GPUState(model_on_gpu=True, optimizer_on_gpu=False)
-        assert dispatch._gpu_state["policy"] == GPUState(model_on_gpu=False, optimizer_on_gpu=False)
+        assert dispatch._gpu_state["ref"] == GPUState(model_on_gpu=True, optimizer_on_gpu=False, trainable_on_gpu=True)
+        assert dispatch._gpu_state["policy"] == GPUState.offloaded()
 
     finally:
         ray.shutdown()
