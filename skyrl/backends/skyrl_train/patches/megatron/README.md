@@ -31,6 +31,7 @@ Tests for this folder mirror its layout, so they are found and deleted together 
 | `patches/megatron/test_moe_release_dispatcher_probs.py` (CPU) | `patch_moe_release_dispatcher_probs.py`, fake layer state |
 | `patches/megatron/test_distopt_mixed_dtype_group_index.py` (CPU) | `patch_distopt_mixed_dtype_group_index.py` index rebuild |
 | `patches/megatron/test_clip_grads_mixed_dtype.py` (CPU) | `patch_clip_grads_mixed_dtype.py` dtype split and the `multi_tensor_applier` wrapper |
+| `patches/megatron/test_mhc_recompute_mappings.py` (CPU) | `patch_mhc_recompute_mappings.py` same outputs and grads, no fp32 copy saved (unfused path) |
 | `gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool_tp_shard.py` | `mcore_ext/dsa_kpool.py` TP query sharding (two ranks) |
 | `gpu_ci/patches/megatron/test_checkpoint_without_output_frozen_inputs.py` | `patch_checkpoint_without_output_frozen_inputs.py`; the unpatched case doubles as the landed check |
 
@@ -270,6 +271,20 @@ the two functions (`_group_grads_by_dtype`).
 - **Landed?** `clip_grads.py` has `_group_grads_by_dtype` (or otherwise splits by dtype before each launch).
 - **Remove:** the `apply_clip_grads_mixed_dtype_patch()` call and import in `megatron_worker.py`, the module, and
   `patches/megatron/test_clip_grads_mixed_dtype.py`.
+
+### `patch_mhc_recompute_mappings.py`: NVIDIA/Megatron-LM#7521 covers only the unfused path
+
+Under `recompute_modules=[..., "mhc"]`, `HyperConnectionModule._forward_with_checkpoint` checkpoints only `aggregate`;
+`compute_mappings` upcasts the n-stream hidden states to fp32 for the mapping projection and autograd keeps that copy
+(2x the bf16 hidden states per mHC site: 17.8 GiB at ~3.5K-token rows on DeepSeek-V4.1-Flash). The patch runs
+`compute_mappings` under non-reentrant `torch.utils.checkpoint` inside that path, the same trick as
+`mcore_ext/hyper_connection.py` for GLM-5.3-Flash. #7521 (merged to main 2026-10-28) checkpoints
+`_projection_and_get_norm` (unfused) but not the fused `fused_proj_rms_compute_h` the DeepSeek-V4/V4.1 recipes use.
+- **Landed?** The pinned megatron-core keeps no fp32 copy on the fused path either (the CPU test only covers the
+  unfused path; check `fused_proj_rms_compute_h` / `_torch_proj_rms_compute_h` for a checkpoint or an
+  activation-dtype input).
+- **Remove:** the `apply_mhc_recompute_mappings_patch()` call and import in `megatron_worker.py`, the module, and
+  `patches/megatron/test_mhc_recompute_mappings.py`.
 
 ### `patch_dsa_hybrid_indexer.py`: SkyRL-only, no upstream counterpart
 
