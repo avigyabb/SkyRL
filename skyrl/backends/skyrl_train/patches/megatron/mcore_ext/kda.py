@@ -55,6 +55,20 @@ except ImportError:
 # instead of once per projection and adapter. Exact: see ``_without_sequence_parallel_comm``.
 _GATHER_ONCE = os.environ.get("SKYRL_KDA_GATHER_ONCE", "0").lower() in ("1", "true")
 
+# Opt-in: fla's intra-card context-parallel backend for the inter-chunk state recurrence
+# (``chunk_gated_delta_rule_fwd_h``, run in forward and recomputed in backward). It splits a long
+# sequence into sub-sequences scanned in parallel and merges their states, so a few local heads
+# still fill the SMs. fla enables it only under ``torch.inference_mode()``; the forward it computes
+# is the same, so lift that gate for training. Needs ``cu_seqlens``.
+_INTRACARD_CP = os.environ.get("SKYRL_KDA_INTRACARD_CP", "0").lower() in ("1", "true")
+if _INTRACARD_CP and HAVE_FLA:
+    import fla.ops.common.backends.intracard as _fla_intracard
+
+    os.environ["FLA_INTRACARD_CP"] = "1"
+    _fla_intracard.IntraCardCPBackend.chunk_gated_delta_rule_fwd_h_verifier = (
+        lambda self, *args, cu_seqlens=None, **kwargs: (cu_seqlens is not None, None)
+    )
+
 
 @contextlib.contextmanager
 def _without_sequence_parallel_comm(*modules):
@@ -310,6 +324,8 @@ class KimiDeltaAttention(MegatronModule):
         batch, seq_len, _ = q.shape
         if cu_seqlens is not None and batch != 1:
             raise ValueError("Packed KDA input expects batch dimension 1.")
+        if _INTRACARD_CP and cu_seqlens is None and batch == 1:
+            cu_seqlens = torch.tensor([0, seq_len], dtype=torch.long, device=q.device)
 
         q = self._conv(self.q_conv1d, q, cu_seqlens)
         k = self._conv(self.k_conv1d, k, cu_seqlens)

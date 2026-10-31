@@ -1172,6 +1172,8 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         "SKYRL_DSA_KPOOL_FUSED_INDEXER",
         "SKYRL_KDA_GATHER_ONCE",
         "SKYRL_MHC_COMPILE_PROJ_RMS",
+        "SKYRL_KDA_INTRACARD_CP",
+        "SKYRL_LORA_ROW_ADAPTER_LOCAL",
         # vLLM all-reduce backend switches; multi-node TP engines need FlashInfer / symm-mem off.
         "VLLM_ALLREDUCE_USE_FLASHINFER",
         "VLLM_ALLREDUCE_USE_SYMM_MEM",
