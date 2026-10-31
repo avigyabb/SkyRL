@@ -47,6 +47,8 @@ except ImportError:
 _KPOOL_SCORE_CHUNK_ELEMS = int(os.environ.get("SKYRL_DSA_KPOOL_SCORE_CHUNK_ELEMS", 1 << 29))
 # SkyRL: score pools with a fused Triton kernel (BF16 inputs, FP32 accumulation, causal tiles only)
 # instead of the FP32 einsum. Not bitwise equal: near-ties in the pool selection can differ.
+# SkyRL: rows per stripe when the indexer's query rows are split across a group (0: contiguous slices).
+_KPOOL_SHARD_STRIPE = int(os.environ.get("SKYRL_DSA_KPOOL_SHARD_STRIPE", "0"))
 _KPOOL_FUSED_INDEXER = os.environ.get("SKYRL_DSA_KPOOL_FUSED_INDEXER", "0").lower() in ("1", "true")
 
 
@@ -416,12 +418,47 @@ def fused_qk_topk_kpool(
     else:
         index_scores = None
         rows_per_rank = -(-sq // shard_size)
-        q_lo = min(sq, query_shard_group.rank() * rows_per_rank) if shard_size > 1 else 0
-        q_hi = min(sq, q_lo + rows_per_rank)
-        pool_topk = _kpool_topk_in_query_chunks(
-            q, weights, k_pooled, budget, select_k, chunk, q_lo, q_hi, use_relu, mask, v_starts, v_ends, k_pos
-        )
-        if shard_size > 1:
+        stripe = _KPOOL_SHARD_STRIPE
+        striped = shard_size > 1 and stripe > 0 and v_starts is not None and sq % (shard_size * stripe) == 0
+        if striped:
+            # SkyRL: causal scoring work grows with the query position, so contiguous row slices
+            # leave the last rank with ~2x the average work. Rank r takes the stripes r, r + shard,
+            # r + 2 * shard, ... of ``stripe`` rows instead; the gather below restores row order.
+            rank = query_shard_group.rank()
+            n_stripes = sq // (shard_size * stripe)
+            rows = (
+                (torch.arange(n_stripes, device=q.device) * shard_size + rank).unsqueeze(1) * stripe
+                + torch.arange(stripe, device=q.device)
+            ).reshape(-1)
+            pool_topk = _kpool_topk_in_query_chunks(
+                q.index_select(0, rows),
+                weights.index_select(0, rows),
+                k_pooled,
+                budget,
+                select_k,
+                chunk,
+                0,
+                rows.numel(),
+                use_relu,
+                None,
+                v_starts.index_select(0, rows),
+                v_ends.index_select(0, rows),
+                k_pos,
+            )
+        else:
+            q_lo = min(sq, query_shard_group.rank() * rows_per_rank) if shard_size > 1 else 0
+            q_hi = min(sq, q_lo + rows_per_rank)
+            pool_topk = _kpool_topk_in_query_chunks(
+                q, weights, k_pooled, budget, select_k, chunk, q_lo, q_hi, use_relu, mask, v_starts, v_ends, k_pos
+            )
+        if striped:
+            local = pool_topk.to(torch.int32).contiguous()
+            gathered = torch.empty((shard_size * batch, rows_per_rank, budget), dtype=torch.int32, device=q.device)
+            torch.distributed.all_gather_into_tensor(gathered, local, group=query_shard_group)
+            # [shard, batch, n_stripes, stripe, budget] -> [batch, n_stripes, shard, stripe, budget]
+            gathered = gathered.view(shard_size, batch, n_stripes, stripe, budget).permute(1, 2, 0, 3, 4)
+            pool_topk = gathered.reshape(batch, sq, budget).to(torch.int64)
+        elif shard_size > 1:
             # Pool ids fit in int32; pad the (possibly short) last slice so shards are equal-sized.
             local = pool_topk.to(torch.int32)
             if local.shape[1] < rows_per_rank:
