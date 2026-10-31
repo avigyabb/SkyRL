@@ -10,6 +10,7 @@ DELETE THIS MODULE once ``TransformerConfig`` carries the input-norm knobs upstr
 (``mhc_norm_eps`` / ``mhc_norm_eps_inside_sqrt``, read by ``HyperConnectionModule`` itself).
 """
 
+import os
 from typing import Tuple
 
 import torch
@@ -46,7 +47,7 @@ class RMSNormInputHyperConnectionModule(HyperConnectionModule):
         # Checkpointed so backward keeps only the activation-dtype input, not its FP32 upcast
         # (2 GiB per mHC site at 32k tokens per rank); the upcast and the math rerun in backward.
         proj, r = checkpoint(
-            _proj_rms,
+            _proj_rms_compiled if _COMPILE_PROJ_RMS else _proj_rms,
             x.reshape(s * b, nC),
             self.mapping_proj.weight,
             self.norm_eps,
@@ -63,3 +64,9 @@ def _proj_rms(x: Tensor, weight: Tensor, eps: float) -> Tuple[Tensor, Tensor]:
     proj = torch.matmul(x, weight.t())
     r = torch.rsqrt(x.square().mean(dim=-1, keepdim=True) + eps)
     return proj, r
+
+
+# Opt-in: fuse the FP32 upcast, RMS reduction and their backward (eager: ~6 elementwise kernels
+# over the [tokens, n*C] stream per mHC site, forward plus recompute plus backward).
+_COMPILE_PROJ_RMS = os.environ.get("SKYRL_MHC_COMPILE_PROJ_RMS", "0").lower() in ("1", "true")
+_proj_rms_compiled = torch.compile(_proj_rms, dynamic=True)
