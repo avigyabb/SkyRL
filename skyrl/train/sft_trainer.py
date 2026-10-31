@@ -1797,6 +1797,8 @@ class SFTTrainer:
         }
         if self.sft_cfg.strategy == "megatron" and self.sft_cfg.megatron_config.moe_enable_routing_replay:
             fields["rollout_expert_indices"] = self._build_dummy_routes(batch_size, max_length)
+            # Every token has a route, so none is skipped in replay.
+            fields["router_padding_mask"] = torch.zeros(batch_size, max_length, dtype=torch.bool)
 
         batch = TrainingInputBatch(fields)
         batch.metadata = {"response_length": num_actions}

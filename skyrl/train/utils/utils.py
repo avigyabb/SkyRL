@@ -1160,6 +1160,8 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         "HF_HUB_OFFLINE",
         "HF_ENDPOINT",
         "PYTORCH_CUDA_ALLOC_CONF",
+        # Lets cuBLAS run FP32 GEMMs (e.g. the DSA k-pool indexer scores) on TF32 tensor cores.
+        "TORCH_ALLOW_TF32_CUBLAS_OVERRIDE",
         # Selects the DSA indexer top-k backend under dsa_kernel_backend=cudnn
         # (patches/megatron/patch_dsa_hybrid_indexer.py); read in the Megatron workers.
         "SKYRL_DSA_INDEXER_BACKEND",
