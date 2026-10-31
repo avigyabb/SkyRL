@@ -23,12 +23,15 @@ Config fields (shared with ``GatedDeltaNet``): ``linear_num_value_heads`` /
 ``-exp(A_log) * softplus(f + dt_bias)`` gate of the original Kimi Linear).
 """
 
+import contextlib
+import os
 from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.tensor_parallel.mappings import gather_from_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -47,6 +50,37 @@ try:
     HAVE_FLA = True
 except ImportError:
     HAVE_FLA = False
+
+# Opt-in: all-gather the sequence-parallel input once for q/k/v/b_proj (and their LoRA adapters)
+# instead of once per projection and adapter. Exact: see ``_without_sequence_parallel_comm``.
+_GATHER_ONCE = os.environ.get("SKYRL_KDA_GATHER_ONCE", "0").lower() in ("1", "true")
+
+
+@contextlib.contextmanager
+def _without_sequence_parallel_comm(*modules):
+    """Run column-parallel projections (optionally LoRA-wrapped) on an already-gathered input.
+
+    The TE base linear runs as ``parallel_mode=None`` (no forward all-gather, no backward dgrad
+    reduce-scatter) and the LoRA adapter skips its own gather; each then returns a partial input
+    gradient over its output shard, which the caller's single ``gather_from_sequence_parallel_region``
+    sums in its backward reduce-scatter -- the same sum the per-module reduce-scatters computed.
+    """
+    saved = []
+    for module in modules:
+        base = getattr(module, "to_wrap", module)
+        adapter = getattr(module, "adapter", None)
+        saved.append((base, base.parallel_mode, base.sequence_parallel, adapter))
+        base.parallel_mode, base.sequence_parallel = None, False
+        if adapter is not None:
+            saved[-1] += (adapter.disable_sequence_parallel_comm,)
+            adapter.disable_sequence_parallel_comm = True
+    try:
+        yield
+    finally:
+        for base, mode, sp, adapter, *rest in saved:
+            base.parallel_mode, base.sequence_parallel = mode, sp
+            if adapter is not None:
+                adapter.disable_sequence_parallel_comm = rest[0]
 
 
 @dataclass
@@ -255,12 +289,21 @@ class KimiDeltaAttention(MegatronModule):
 
         # Column-parallel projections gather the sequence-parallel shard internally, so every
         # per-token/per-sequence op below sees the full sequence ([s, b, local]).
-        q, _ = self.q_proj(hidden_states)
-        k, _ = self.k_proj(hidden_states)
-        v, _ = self.v_proj(hidden_states)
+        if _GATHER_ONCE and self.config.sequence_parallel and self.tp_size > 1:
+            full = gather_from_sequence_parallel_region(hidden_states, group=self.tp_group)
+            with _without_sequence_parallel_comm(self.q_proj, self.k_proj, self.v_proj, self.b_proj):
+                q, _ = self.q_proj(full)
+                k, _ = self.k_proj(full)
+                v, _ = self.v_proj(full)
+                beta, _ = self.b_proj(full)
+            del full
+        else:
+            q, _ = self.q_proj(hidden_states)
+            k, _ = self.k_proj(hidden_states)
+            v, _ = self.v_proj(hidden_states)
+            beta, _ = self.b_proj(hidden_states)
         f, _ = self.f_b_proj(self.f_a_proj(hidden_states)[0])
         gate, _ = self.g_b_proj(self.g_a_proj(hidden_states)[0])
-        beta, _ = self.b_proj(hidden_states)
 
         # [s, b, ·] -> [b, s, ·] (fla layout; b == 1 for packed sequences).
         q, k, v, f, gate, beta = (t.transpose(0, 1).contiguous() for t in (q, k, v, f, gate, beta))
