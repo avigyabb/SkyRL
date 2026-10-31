@@ -70,6 +70,12 @@ if _INTRACARD_CP and HAVE_FLA:
     )
 
 
+# fla backend for the q/k/v short convolutions: ``triton`` (fla's default), ``mix`` (Triton forward,
+# causal-conv1d CUDA backward) or ``cuda``. All three give the same output; ``mix`` is ~25% faster
+# fwd+bwd at 256k tokens on B200.
+_CONV_BACKEND = os.environ.get("SKYRL_KDA_CONV_BACKEND", "triton")
+
+
 @contextlib.contextmanager
 def _without_sequence_parallel_comm(*modules):
     """Run column-parallel projections (optionally LoRA-wrapped) on an already-gathered input.
@@ -258,6 +264,15 @@ class KimiDeltaAttention(MegatronModule):
             name=(name + ".o_proj") if name is not None else None,
         )
 
+    def _b_proj(self, x: torch.Tensor):
+        """``b_proj`` in BF16: its ``heads / TP`` output rows (e.g. 16) are below MXFP8's 32-row block."""
+        if not self.config.fp8:
+            return self.b_proj(x)
+        import transformer_engine.pytorch as te
+
+        with te.fp8_autocast(enabled=False):
+            return self.b_proj(x)
+
     @staticmethod
     def _resolve_cu_seqlens(packed_seq_params: Optional[PackedSeqParams]) -> Optional[torch.Tensor]:
         if packed_seq_params is None or packed_seq_params.qkv_format != "thd":
@@ -280,6 +295,7 @@ class KimiDeltaAttention(MegatronModule):
             activation="silu",
             initial_state=None,
             output_final_state=False,
+            backend=_CONV_BACKEND,
             cu_seqlens=cu_seqlens,
         )
         return out
@@ -309,13 +325,13 @@ class KimiDeltaAttention(MegatronModule):
                 q, _ = self.q_proj(full)
                 k, _ = self.k_proj(full)
                 v, _ = self.v_proj(full)
-                beta, _ = self.b_proj(full)
+                beta, _ = self._b_proj(full)
             del full
         else:
             q, _ = self.q_proj(hidden_states)
             k, _ = self.k_proj(hidden_states)
             v, _ = self.v_proj(hidden_states)
-            beta, _ = self.b_proj(hidden_states)
+            beta, _ = self._b_proj(hidden_states)
         f, _ = self.f_b_proj(self.f_a_proj(hidden_states)[0])
         gate, _ = self.g_b_proj(self.g_a_proj(hidden_states)[0])
 
