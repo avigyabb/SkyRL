@@ -228,3 +228,20 @@ def test_fused_linear_logprob_tp(nproc):
 
 if __name__ == "__main__":
     _distributed_main()
+
+
+def test_frozen_weight_skips_weight_grad(tp_group):
+    """A frozen output layer (LoRA) gets no weight grad, and grad_hidden is unchanged."""
+    device = torch.device("cuda")
+    torch.manual_seed(0)
+    B, S, V = 2, 48, 4096
+    hidden = torch.randn(B, S, H, dtype=torch.bfloat16, device=device)
+    weight = torch.randn(V, H, dtype=torch.bfloat16, device=device) * (H**-0.5)
+    target = torch.randint(0, V, (B, S), device=device, dtype=torch.long)
+
+    h = hidden.clone().requires_grad_(True)
+    out = FusedLinearChunkedDistributedLogprob.apply(h, weight, target, 0, V, 16, tp_group, False)
+    out.backward(_grad_seed(out))
+    _, gh_ref, _ = _fused_fb(hidden, weight, target, 0, V, tp_group, 16)
+    assert weight.grad is None
+    torch.testing.assert_close(h.grad, gh_ref)

@@ -381,7 +381,14 @@ class FusedLinearChunkedDistributedLogprob(torch.autograd.Function):
         # is never built — each chunk's logit grad is immediately projected onto
         # grad_hidden / grad_weight and then freed.
         grad_hidden = torch.empty_like(hidden)
-        grad_weight = torch.zeros((partition_vocab_size, hidden_size), dtype=torch.float32, device=weight.device)
+        # A frozen output layer (e.g. LoRA, which never targets it) needs no weight grad: skip
+        # its per-chunk [V//TP, H] matmul and fp32 accumulation.
+        needs_weight_grad = ctx.needs_input_grad[1]
+        grad_weight = (
+            torch.zeros((partition_vocab_size, hidden_size), dtype=torch.float32, device=weight.device)
+            if needs_weight_grad
+            else None
+        )
 
         for chunk_idx in range(num_chunks):
             chunk_start = chunk_idx * chunk_size
@@ -416,6 +423,8 @@ class FusedLinearChunkedDistributedLogprob(torch.autograd.Function):
 
             # Project chunk logit-grad back to hidden / weight grads.
             grad_hidden[:, chunk_start:chunk_end, :] = torch.matmul(grad_logits, weight)
+            if not needs_weight_grad:
+                continue
             grad_logits_2d = grad_logits.reshape(-1, partition_vocab_size)
             h_2d = h_chunk.reshape(-1, hidden_size)
             # Run the [V//TP, H] weight-grad matmul in the low-precision compute
@@ -427,7 +436,8 @@ class FusedLinearChunkedDistributedLogprob(torch.autograd.Function):
             grad_weight.add_(torch.matmul(grad_logits_2d.t(), h_2d.to(dtype=grad_logits.dtype)).to(torch.float32))
 
         # forward args: hidden, weight, target, vocab_start, vocab_end, chunk_size, tp_group, inference_only
-        return grad_hidden, grad_weight.to(weight.dtype), None, None, None, None, None, None
+        grad_weight = grad_weight.to(weight.dtype) if needs_weight_grad else None
+        return grad_hidden, grad_weight, None, None, None, None, None, None
 
 
 def _fused_lm_head_logprob_apply(
