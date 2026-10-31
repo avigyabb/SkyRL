@@ -30,6 +30,8 @@ import os
 from typing import Optional, Tuple
 
 import torch
+import triton
+import triton.language as tl
 from megatron.core.transformer.experimental_attention_variant import dsa_masking
 from megatron.core.transformer.experimental_attention_variant.dsa import (
     _compute_index_scores,
@@ -43,6 +45,9 @@ except ImportError:
 
 # Upper bound on elements of one query chunk's per-head FP32 index scores (default 2 GiB).
 _KPOOL_SCORE_CHUNK_ELEMS = int(os.environ.get("SKYRL_DSA_KPOOL_SCORE_CHUNK_ELEMS", 1 << 29))
+# SkyRL: score pools with a fused Triton kernel (BF16 inputs, FP32 accumulation, causal tiles only)
+# instead of the FP32 einsum. Not bitwise equal: near-ties in the pool selection can differ.
+_KPOOL_FUSED_INDEXER = os.environ.get("SKYRL_DSA_KPOOL_FUSED_INDEXER", "0").lower() in ("1", "true")
 
 
 def _kpool_fp8_input(x: torch.Tensor) -> torch.Tensor:
@@ -196,6 +201,12 @@ def _kpool_topk_in_query_chunks(
     pool_topk = torch.full((batch, q_hi - q_lo, budget), -1, dtype=torch.int64, device=q.device)
     if select_k == 0:
         return pool_topk
+    if _KPOOL_FUSED_INDEXER and v_starts is not None:
+        fused = _kpool_topk_fused(
+            q, weights, k_pooled, pool_topk, select_k, q_lo, q_hi, use_relu, v_starts, v_ends, k_pos
+        )
+        if fused is not None:
+            return fused
     k_fp32 = k_pooled.float()
     for q0 in range(q_lo, q_hi, chunk):
         q1 = min(q_hi, q0 + chunk)
@@ -213,6 +224,112 @@ def _kpool_topk_in_query_chunks(
         topk_scores, topk_ids = scores.topk(select_k, dim=-1)
         del scores
         pool_topk[:, q0 - q_lo : q1 - q_lo, :select_k] = topk_ids.masked_fill_(topk_scores == float("-inf"), -1)
+    return pool_topk
+
+
+@triton.jit
+def _kpool_score_kernel(
+    Q,
+    K,
+    W,
+    PS,
+    PE,
+    OUT,
+    S,
+    NP,
+    stride_qs,
+    stride_qh,
+    stride_ks,
+    stride_ws,
+    stride_os,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    BQ: tl.constexpr,
+    BN: tl.constexpr,
+    RELU: tl.constexpr,
+):
+    """OUT[q, p] = sum_h W[q, h] * relu(Q[q, h] . K[p]) for PS[q] <= p < PE[q], else -inf."""
+    q0 = tl.program_id(0) * BQ
+    n0 = tl.program_id(1) * BN
+    offs_q = q0 + tl.arange(0, BQ)
+    offs_n = n0 + tl.arange(0, BN)
+    offs_d = tl.arange(0, D)
+    q_ok = offs_q < S
+    ps = tl.load(PS + offs_q, mask=q_ok, other=2147483647)
+    pe = tl.load(PE + offs_q, mask=q_ok, other=0)
+    out_ptrs = OUT + offs_q[:, None] * stride_os + offs_n[None, :]
+    out_ok = q_ok[:, None] & (offs_n[None, :] < NP)
+    acc = tl.full([BQ, BN], float("-inf"), tl.float32)
+    # Skip tiles outside every row's bounds (the non-causal half).
+    if (n0 < tl.max(pe)) & (n0 + BN > tl.min(ps)):
+        k = tl.load(K + offs_n[:, None] * stride_ks + offs_d[None, :], mask=(offs_n < NP)[:, None], other=0.0)
+        kt = tl.trans(k)
+        acc = tl.zeros([BQ, BN], tl.float32)
+        for h in range(H):
+            qh = tl.load(
+                Q + offs_q[:, None] * stride_qs + h * stride_qh + offs_d[None, :], mask=q_ok[:, None], other=0.0
+            )
+            s = tl.dot(qh, kt)
+            if RELU:
+                s = tl.maximum(s, 0.0)
+            wh = tl.load(W + offs_q * stride_ws + h, mask=q_ok, other=0.0)
+            acc += s * wh[:, None]
+        valid = (offs_n[None, :] >= ps[:, None]) & (offs_n[None, :] < pe[:, None])
+        acc = tl.where(valid, acc, float("-inf"))
+    tl.store(out_ptrs, acc, mask=out_ok)
+
+
+@torch.no_grad()
+def _kpool_topk_fused(q, weights, k_pooled, pool_topk, select_k, q_lo, q_hi, use_relu, v_starts, v_ends, k_pos):
+    """``_kpool_topk_in_query_chunks`` with the scores from ``_kpool_score_kernel``.
+
+    Pool ``p`` is valid for a query when ``v_starts <= k_pos[p] < v_ends``; ``k_pos`` (pool end
+    positions) is increasing, so the bounds become pool-index ranges ``[ps, pe)``, which the kernel
+    uses to skip the non-causal tiles. Scores use BF16 inputs with FP32 accumulation instead of the
+    FP32 einsum, so near-ties can select differently.
+    """
+    sq, batch, n_heads, dim = q.shape
+    if q.dtype != torch.bfloat16 or dim & (dim - 1) or dim < 16:
+        return None
+    k_pos = k_pos.contiguous()
+    pool_starts = torch.searchsorted(k_pos, v_starts[q_lo:q_hi].contiguous()).to(torch.int32)
+    pool_ends = torch.searchsorted(k_pos, v_ends[q_lo:q_hi].contiguous()).to(torch.int32)
+    num_pools = k_pooled.size(0)
+    chunk = max(1, min(q_hi - q_lo, _KPOOL_SCORE_CHUNK_ELEMS // max(1, num_pools)))
+    bq, bn = 64, 128
+    for b in range(batch):
+        k_b = k_pooled[:, b].to(torch.bfloat16).contiguous()
+        w_b = weights[:, b].float().contiguous()
+        q_b = q[:, b].contiguous()
+        for q0 in range(q_lo, q_hi, chunk):
+            q1 = min(q_hi, q0 + chunk)
+            ps, pe = pool_starts[q0 - q_lo : q1 - q_lo], pool_ends[q0 - q_lo : q1 - q_lo]
+            scores = torch.empty((q1 - q0, num_pools), dtype=torch.float32, device=q.device)
+            q_c, w_c = q_b[q0:q1], w_b[q0:q1]
+            grid = (triton.cdiv(q1 - q0, bq), triton.cdiv(num_pools, bn))
+            _kpool_score_kernel[grid](
+                q_c,
+                k_b,
+                w_c,
+                ps,
+                pe,
+                scores,
+                q1 - q0,
+                num_pools,
+                q_c.stride(0),
+                q_c.stride(1),
+                k_b.stride(0),
+                w_c.stride(0),
+                scores.stride(0),
+                H=n_heads,
+                D=dim,
+                BQ=bq,
+                BN=bn,
+                RELU=use_relu,
+            )
+            topk_scores, ids = scores.topk(select_k, dim=-1)
+            del scores
+            pool_topk[b, q0 - q_lo : q1 - q_lo, :select_k] = ids.masked_fill_(topk_scores == float("-inf"), -1)
     return pool_topk
 
 
