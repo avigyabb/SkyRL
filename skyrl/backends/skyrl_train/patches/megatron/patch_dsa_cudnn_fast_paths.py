@@ -13,6 +13,11 @@ directly; the cuDNN kernel and its per-row inputs are the same.
 top-k by key index. When the indexer already emits ascending indices (the k-pool indexer does under
 the same flag, see ``dsa_kpool._presort``), check that in one elementwise pass and skip the sort;
 rows that are not ascending fall back to the stock sort.
+
+``SKYRL_DSA_TOPK_SCATTER_COMPACT=1``: ``_compact_valid_topk_indices`` moves each row's valid top-k
+entries to the front with an ``argsort`` of their positions (a radix sort of ``[rows, topk]``).
+The same stable permutation is a scatter: valid entry -> ``cumsum(valid) - 1``, invalid entry ->
+``length + cumsum(~valid) - 1``. Identical output, a few linear passes instead of a sort.
 """
 
 import os
@@ -31,7 +36,8 @@ def apply_dsa_cudnn_fast_paths_patch() -> None:
     if _APPLIED:
         return
     all_rows, presorted = _enabled("SKYRL_DSA_CUDNN_BWD_ALL_ROWS"), _enabled("SKYRL_DSA_TOPK_PRESORTED")
-    if not (all_rows or presorted):
+    scatter_compact = _enabled("SKYRL_DSA_TOPK_SCATTER_COMPACT")
+    if not (all_rows or presorted or scatter_compact):
         return
     from megatron.core.transformer.experimental_attention_variant import dsa_cudnn_kernels
 
@@ -59,4 +65,18 @@ def apply_dsa_cudnn_fast_paths_patch() -> None:
 
         dsa_cudnn_kernels._sort_valid_topk_indices_by_index = _sort_valid_topk_indices_by_index
         logger.info("DSA: cuDNN top-k prep skips the sort-by-index when indices are already ascending")
+    if scatter_compact:
+        import torch
+
+        def _compact_valid_topk_indices(topk_indices):
+            valid = topk_indices >= 0
+            valid_rank = valid.cumsum(dim=-1, dtype=torch.int32)
+            topk_length = valid_rank[..., -1:].contiguous()
+            invalid_rank = (~valid).cumsum(dim=-1, dtype=torch.int32)
+            dest = torch.where(valid, valid_rank - 1, topk_length + invalid_rank - 1).long()
+            compacted = torch.empty_like(topk_indices).scatter_(-1, dest, topk_indices.masked_fill(~valid, -1))
+            return compacted, topk_length.squeeze(-1).contiguous()
+
+        dsa_cudnn_kernels._compact_valid_topk_indices = _compact_valid_topk_indices
+        logger.info("DSA: cuDNN top-k prep compacts valid indices with a scatter instead of an argsort")
     _APPLIED = True

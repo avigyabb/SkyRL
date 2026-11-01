@@ -1184,6 +1184,7 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         "SKYRL_MOE_DEDUP_A2A",
         "SKYRL_DSA_CUDNN_BWD_ALL_ROWS",
         "SKYRL_DSA_TOPK_PRESORTED",
+        "SKYRL_DSA_TOPK_SCATTER_COMPACT",
         "SKYRL_SHARED_EXPERT_SP_LOCAL",
         "SKYRL_MLA_NOPE_NO_COPY",
         "SKYRL_MLA_STRIDED_EINSUM",
