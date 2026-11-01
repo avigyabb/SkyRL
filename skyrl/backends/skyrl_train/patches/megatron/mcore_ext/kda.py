@@ -55,6 +55,12 @@ except ImportError:
 # instead of once per projection and adapter. Exact: see ``_without_sequence_parallel_comm``.
 _GATHER_ONCE = os.environ.get("SKYRL_KDA_GATHER_ONCE", "0").lower() in ("1", "true")
 
+# Opt-in (with ``_GATHER_ONCE``): give the gathered input's consumers -- the q/k/v/b base linears
+# and their LoRA adapters -- separate aliases of it (``fanout``), so its gradient is summed in one
+# pass instead of one pairwise add per extra consumer; the LoRA output is added into the base
+# output in place (Bridge's LoRALinear clones it first).
+_FANOUT_GRAD = os.environ.get("SKYRL_KDA_FANOUT_GRAD", "0").lower() in ("1", "true")
+
 # Opt-in: fla's intra-card context-parallel backend for the inter-chunk state recurrence
 # (``chunk_gated_delta_rule_fwd_h``, run in forward and recomputed in backward). It splits a long
 # sequence into sub-sequences scanned in parallel and merges their states, so a few local heads
@@ -264,6 +270,32 @@ class KimiDeltaAttention(MegatronModule):
             name=(name + ".o_proj") if name is not None else None,
         )
 
+    def _gathered_projections(self, full: torch.Tensor):
+        """q/k/v/b projections of the gathered input with one fused gradient sum (``_FANOUT_GRAD``)."""
+        from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.fanout import fanout
+
+        modules = (self.q_proj, self.k_proj, self.v_proj, self.b_proj)
+        lora = [getattr(m, "adapter", None) is not None and m._adapter_enabled for m in modules]
+        inputs = iter(fanout(full, len(modules) + sum(lora)))
+        outputs = []
+        for module, has_lora in zip(modules, lora):
+            bf16 = module is self.b_proj and self.config.fp8
+            if bf16:
+                import transformer_engine.pytorch as te
+
+                ctx = te.fp8_autocast(enabled=False)
+            else:
+                ctx = contextlib.nullcontext()
+            with ctx:
+                if not has_lora:
+                    outputs.append(module(next(inputs))[0])
+                    continue
+                out, _, _ = module.base_linear_forward(next(inputs))
+                adapter_out = module.adapter_forward(module.adapter, next(inputs))
+            adapter_out = adapter_out.reshape(out.shape)
+            outputs.append(out.add_(adapter_out) if out._base is None else out + adapter_out)
+        return outputs
+
     def _b_proj(self, x: torch.Tensor):
         """``b_proj`` in BF16: its ``heads / TP`` output rows (e.g. 16) are below MXFP8's 32-row block."""
         if not self.config.fp8:
@@ -322,10 +354,13 @@ class KimiDeltaAttention(MegatronModule):
         if _GATHER_ONCE and self.config.sequence_parallel and self.tp_size > 1:
             full = gather_from_sequence_parallel_region(hidden_states, group=self.tp_group)
             with _without_sequence_parallel_comm(self.q_proj, self.k_proj, self.v_proj, self.b_proj):
-                q, _ = self.q_proj(full)
-                k, _ = self.k_proj(full)
-                v, _ = self.v_proj(full)
-                beta, _ = self._b_proj(full)
+                if _FANOUT_GRAD:
+                    q, k, v, beta = self._gathered_projections(full)
+                else:
+                    q, _ = self.q_proj(full)
+                    k, _ = self.k_proj(full)
+                    v, _ = self.v_proj(full)
+                    beta, _ = self._b_proj(full)
             del full
         else:
             q, _ = self.q_proj(hidden_states)

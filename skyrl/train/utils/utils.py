@@ -1173,6 +1173,7 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         "SKYRL_DSA_KPOOL_FUSED_INDEXER",
         "SKYRL_DSA_KPOOL_SHARD_STRIPE",
         "SKYRL_KDA_GATHER_ONCE",
+        "SKYRL_KDA_FANOUT_GRAD",
         "SKYRL_MHC_COMPILE_PROJ_RMS",
         "SKYRL_KDA_INTRACARD_CP",
         "SKYRL_KDA_CONV_BACKEND",
