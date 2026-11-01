@@ -1182,6 +1182,7 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         "SKYRL_DSA_CUDNN_BWD_ALL_ROWS",
         "SKYRL_DSA_TOPK_PRESORTED",
         "SKYRL_SHARED_EXPERT_SP_LOCAL",
+        "SKYRL_MLA_NOPE_NO_COPY",
         "SKYRL_LORA_ROW_ADAPTER_LOCAL",
         # vLLM all-reduce backend switches; multi-node TP engines need FlashInfer / symm-mem off.
         "VLLM_ALLREDUCE_USE_FLASHINFER",
