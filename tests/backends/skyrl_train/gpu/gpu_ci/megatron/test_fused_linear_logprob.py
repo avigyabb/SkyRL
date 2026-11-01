@@ -245,3 +245,35 @@ def test_frozen_weight_skips_weight_grad(tp_group):
     _, gh_ref, _ = _fused_fb(hidden, weight, target, 0, V, tp_group, 16)
     assert weight.grad is None
     torch.testing.assert_close(h.grad, gh_ref)
+
+
+@pytest.mark.parametrize("vstart,vend", [(0, 4096), (1024, 3072)])
+@pytest.mark.parametrize("weight_requires_grad", [True, False])
+def test_triton_rows_matches_torch(tp_group, monkeypatch, vstart, vend, weight_requires_grad):
+    """SKYRL_FUSED_LOGPROB_TRITON_ROWS gives the stock path's log-probs and grads, incl. a vocab shard."""
+    import skyrl.backends.skyrl_train.distributed.megatron.model_utils as model_utils
+
+    device = torch.device("cuda")
+    torch.manual_seed(0)
+    B, S = 2, 50
+    hidden = torch.randn(B, S, H, dtype=torch.bfloat16, device=device)
+    weight = torch.randn(vend - vstart, H, dtype=torch.bfloat16, device=device) * (H**-0.5)
+    target = torch.randint(0, 4096, (B, S), device=device, dtype=torch.long)
+
+    def fb():
+        h = hidden.clone().requires_grad_(True)
+        w = weight.clone().requires_grad_(weight_requires_grad)
+        out = FusedLinearChunkedDistributedLogprob.apply(h, w, target, vstart, vend, 16, tp_group, False)
+        out.backward(_grad_seed(out))
+        return out.detach(), h.grad, w.grad
+
+    ref = fb()
+    monkeypatch.setattr(model_utils, "_LOGPROB_TRITON_ROWS", True)
+    got = fb()
+    torch.testing.assert_close(got[0], ref[0], atol=1e-5, rtol=1e-5)
+    torch.testing.assert_close(got[1], ref[1])
+    if weight_requires_grad:
+        # The per-logit grad is rounded to bf16 from slightly different fp32 values: 1-ulp flips.
+        torch.testing.assert_close(got[2], ref[2], atol=5e-4, rtol=2e-2)
+    else:
+        assert got[2] is None
