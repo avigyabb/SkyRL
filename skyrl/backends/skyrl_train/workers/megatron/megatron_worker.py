@@ -86,6 +86,9 @@ from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_cudnn_fast_paths impo
 from skyrl.backends.skyrl_train.patches.megatron.patch_moe_dedup_alltoall import (
     apply_moe_dedup_alltoall_patch,
 )
+from skyrl.backends.skyrl_train.patches.megatron.patch_shared_expert_sp_local import (
+    apply_shared_expert_sp_local_patch,
+)
 from skyrl.backends.skyrl_train.patches.megatron.patch_packed_per_expert_sharded_state_dict import (
     apply_packed_per_expert_sharded_state_dict_patch,
 )
@@ -169,6 +172,7 @@ apply_shared_expert_lora_tp_patch()
 # After the #6089 backport: falls back to its (scaled) forward for ineligible adapters.
 apply_lora_row_adapter_local_patch()
 apply_moe_dedup_alltoall_patch()
+apply_shared_expert_sp_local_patch()
 apply_dsa_hybrid_indexer_patch()
 apply_dsa_head_full_patch()
 apply_dsa_cudnn_fast_paths_patch()
