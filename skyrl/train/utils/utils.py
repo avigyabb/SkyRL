@@ -1170,6 +1170,7 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         "SKYRL_DSA_INDEXER_TP_SHARD",
         "SKYRL_DSA_HEAD_FULL",
         "SKYRL_DSA_HEAD_FULL_FAST_PERMUTE",
+        "SKYRL_DSA_HEAD_FULL_ZIGZAG",
         "SKYRL_DSA_KPOOL_FUSED_INDEXER",
         "SKYRL_DSA_KPOOL_SHARD_STRIPE",
         "SKYRL_KDA_GATHER_ONCE",
