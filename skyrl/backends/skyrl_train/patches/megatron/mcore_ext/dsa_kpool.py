@@ -299,16 +299,21 @@ def _kpool_topk_fused(q, weights, k_pooled, pool_topk, select_k, q_lo, q_hi, use
     num_pools = k_pooled.size(0)
     chunk = max(1, min(q_hi - q_lo, _KPOOL_SCORE_CHUNK_ELEMS // max(1, num_pools)))
     bq, bn = 64, 128
+    # Pools at or past a chunk's largest ``pe`` are -inf for every row in it, so score and select
+    # over that prefix only (at least ``select_k`` wide): causal chunks scan ~half the pools.
+    starts = list(range(q_lo, q_hi, chunk))
+    chunk_ends = torch.stack([pool_ends[q0 - q_lo : min(q_hi, q0 + chunk) - q_lo].max() for q0 in starts])
+    widths = [min(num_pools, max(select_k, int(w))) for w in chunk_ends.tolist()]
     for b in range(batch):
         k_b = k_pooled[:, b].to(torch.bfloat16).contiguous()
         w_b = weights[:, b].float().contiguous()
         q_b = q[:, b].contiguous()
-        for q0 in range(q_lo, q_hi, chunk):
+        for q0, width in zip(starts, widths):
             q1 = min(q_hi, q0 + chunk)
             ps, pe = pool_starts[q0 - q_lo : q1 - q_lo], pool_ends[q0 - q_lo : q1 - q_lo]
-            scores = torch.empty((q1 - q0, num_pools), dtype=torch.float32, device=q.device)
+            scores = torch.empty((q1 - q0, width), dtype=torch.float32, device=q.device)
             q_c, w_c = q_b[q0:q1], w_b[q0:q1]
-            grid = (triton.cdiv(q1 - q0, bq), triton.cdiv(num_pools, bn))
+            grid = (triton.cdiv(q1 - q0, bq), triton.cdiv(width, bn))
             _kpool_score_kernel[grid](
                 q_c,
                 k_b,
@@ -317,7 +322,7 @@ def _kpool_topk_fused(q, weights, k_pooled, pool_topk, select_k, q_lo, q_hi, use
                 pe,
                 scores,
                 q1 - q0,
-                num_pools,
+                width,
                 q_c.stride(0),
                 q_c.stride(1),
                 k_b.stride(0),

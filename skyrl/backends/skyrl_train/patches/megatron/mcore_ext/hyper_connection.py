@@ -11,6 +11,7 @@ DELETE THIS MODULE once ``TransformerConfig`` carries the input-norm knobs upstr
 """
 
 import os
+from functools import partial
 from typing import Tuple
 
 import torch
@@ -34,6 +35,12 @@ class RMSNormInputHyperConnectionModule(HyperConnectionModule):
                 "use_fused_mhc is not compatible with mhc_norm_eps_inside_sqrt=True."
             )
         self.norm_eps = getattr(config, "mhc_norm_eps", None) or config.layernorm_epsilon
+        if _FUSED_POST_BDA:
+            # Only the input norm is incompatible with use_fused_mhc; megatron's Triton
+            # ``H_res.T @ residual + H_post * x`` kernel is ~3x faster than the compiled bmm (n=4).
+            from megatron.core.fusions.fused_mhc_kernels import fused_h_post_bda
+
+            self._h_post_bda_op = partial(fused_h_post_bda, backend="triton")
 
     def _projection_and_get_norm(self, x: Tensor) -> Tuple[Tensor, Tensor]:
         """Projection + standard RMS normalization.
@@ -70,3 +77,6 @@ def _proj_rms(x: Tensor, weight: Tensor, eps: float) -> Tuple[Tensor, Tensor]:
 # over the [tokens, n*C] stream per mHC site, forward plus recompute plus backward).
 _COMPILE_PROJ_RMS = os.environ.get("SKYRL_MHC_COMPILE_PROJ_RMS", "0").lower() in ("1", "true")
 _proj_rms_compiled = torch.compile(_proj_rms, dynamic=True)
+
+# Opt-in: megatron's fused Triton h_post_bda (see RMSNormInputHyperConnectionModule.__init__).
+_FUSED_POST_BDA = os.environ.get("SKYRL_MHC_FUSED_POST_BDA", "0").lower() in ("1", "true")
