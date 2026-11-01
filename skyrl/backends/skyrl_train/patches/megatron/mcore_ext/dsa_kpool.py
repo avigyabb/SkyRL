@@ -45,6 +45,16 @@ except ImportError:
 
 # Upper bound on elements of one query chunk's per-head FP32 index scores (default 2 GiB).
 _KPOOL_SCORE_CHUNK_ELEMS = int(os.environ.get("SKYRL_DSA_KPOOL_SCORE_CHUNK_ELEMS", 1 << 29))
+
+# Opt-in: emit each row's selected pool ids in ascending order (-1 first), so the expanded token
+# indices are ascending once the cuDNN path compacts out the -1 slots and its sort-by-index becomes
+# an identity (see patch_dsa_cudnn_fast_paths). Sorting [rows, budget] pool ids per rank, before the
+# gather, is ~4x fewer elements than sorting the gathered [rows, index_topk] token ids.
+_KPOOL_PRESORT = os.environ.get("SKYRL_DSA_TOPK_PRESORTED", "0").lower() in ("1", "true")
+
+
+def _presort(pool_ids: torch.Tensor) -> torch.Tensor:
+    return pool_ids.sort(dim=-1).values if _KPOOL_PRESORT else pool_ids
 # SkyRL: score pools with a fused Triton kernel (BF16 inputs, FP32 accumulation, causal tiles only)
 # instead of the FP32 einsum. Not bitwise equal: near-ties in the pool selection can differ.
 # SkyRL: rows per stripe when the indexer's query rows are split across a group (0: contiguous slices).
@@ -457,7 +467,7 @@ def fused_qk_topk_kpool(
                 q, weights, k_pooled, budget, select_k, chunk, q_lo, q_hi, use_relu, mask, v_starts, v_ends, k_pos
             )
         if striped:
-            local = pool_topk.to(torch.int32).contiguous()
+            local = _presort(pool_topk.to(torch.int32)).contiguous()
             gathered = torch.empty((shard_size * batch, rows_per_rank, budget), dtype=torch.int32, device=q.device)
             torch.distributed.all_gather_into_tensor(gathered, local, group=query_shard_group)
             # [shard, batch, n_stripes, stripe, budget] -> [batch, n_stripes, shard, stripe, budget]
@@ -465,7 +475,7 @@ def fused_qk_topk_kpool(
             pool_topk = gathered.reshape(batch, sq, budget).to(torch.int64)
         elif shard_size > 1:
             # Pool ids fit in int32; pad the (possibly short) last slice so shards are equal-sized.
-            local = pool_topk.to(torch.int32)
+            local = _presort(pool_topk.to(torch.int32))
             if local.shape[1] < rows_per_rank:
                 local = torch.nn.functional.pad(local, (0, 0, 0, rows_per_rank - local.shape[1]), value=-1)
             # Concatenated (not stacked) output shape: the one every backend accepts.

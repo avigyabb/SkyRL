@@ -1179,6 +1179,8 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         "SKYRL_MHC_FUSED_POST_BDA",
         "SKYRL_MHC_FUSED_PROJ_RMS",
         "SKYRL_MOE_DEDUP_A2A",
+        "SKYRL_DSA_CUDNN_BWD_ALL_ROWS",
+        "SKYRL_DSA_TOPK_PRESORTED",
         "SKYRL_LORA_ROW_ADAPTER_LOCAL",
         # vLLM all-reduce backend switches; multi-node TP engines need FlashInfer / symm-mem off.
         "VLLM_ALLREDUCE_USE_FLASHINFER",
