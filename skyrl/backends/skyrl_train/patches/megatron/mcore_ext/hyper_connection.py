@@ -49,10 +49,10 @@ class RMSNormInputHyperConnectionModule(HyperConnectionModule):
             x: [s, b, n*C] - n-stream hidden states
         """
         s, b, nC = x.shape
-        if _FUSED_PROJ_RMS and not self.mapping_proj.weight.requires_grad:
-            from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.mhc_proj_rms import FrozenProjRms
+        if _FUSED_PROJ_RMS:
+            from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.mhc_proj_rms import FusedProjRms
 
-            proj, r = FrozenProjRms.apply(x.reshape(s * b, nC), self.mapping_proj.weight, self.norm_eps)
+            proj, r = FusedProjRms.apply(x.reshape(s * b, nC), self.mapping_proj.weight, self.norm_eps)
             return proj.view(s, b, -1), r.view(s, b, 1)
         # The mHC mapping runs in FP32 (the parameters are kept in FP32 and the activations are
         # upcast in _proj_rms); compute_mappings casts the bounded mixing weights back down.
@@ -83,8 +83,8 @@ def _proj_rms(x: Tensor, weight: Tensor, eps: float) -> Tuple[Tensor, Tensor]:
 _COMPILE_PROJ_RMS = os.environ.get("SKYRL_MHC_COMPILE_PROJ_RMS", "0").lower() in ("1", "true")
 _proj_rms_compiled = torch.compile(_proj_rms, dynamic=True)
 
-# Opt-in: one-pass Triton projection + RMS factor when the mapping weight is frozen (LoRA); see
-# ``mhc_proj_rms``. Falls back to the checkpointed path when the weight trains.
+# Opt-in: one-pass Triton projection + RMS factor, with the mapping weight frozen (LoRA) or trained
+# (full fine-tuning); see ``mhc_proj_rms``.
 _FUSED_PROJ_RMS = os.environ.get("SKYRL_MHC_FUSED_PROJ_RMS", "0").lower() in ("1", "true")
 
 # Opt-in: megatron's fused Triton h_post_bda (see RMSNormInputHyperConnectionModule.__init__).
