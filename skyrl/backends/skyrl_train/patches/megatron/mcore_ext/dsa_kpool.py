@@ -484,6 +484,9 @@ def fused_qk_topk_kpool(
             gathered = gathered.view(shard_size, batch, rows_per_rank, budget)
             pool_topk = gathered.permute(1, 0, 2, 3).reshape(batch, shard_size * rows_per_rank, budget)[:, :sq]
             pool_topk = pool_topk.to(torch.int64)
+    if shard_size == 1:
+        # Unsharded (e.g. TP1): same ascending pool order as the sharded branches.
+        pool_topk = _presort(pool_topk)
 
     # Expand [batch * queries, pools] to a fixed token budget.
     rows = pool_topk.shape[0] * pool_topk.shape[1]
