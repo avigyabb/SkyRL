@@ -63,6 +63,12 @@ from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
 from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
     SKYRL_LORA_ADAPTER_NAME,
 )
+from skyrl.backends.skyrl_train.patches.megatron.patch_absorbed_mla_nope_views import (
+    apply_absorbed_mla_nope_views_patch,
+)
+from skyrl.backends.skyrl_train.patches.megatron.patch_absorbed_mla_strided_einsum import (
+    apply_absorbed_mla_strided_einsum_patch,
+)
 from skyrl.backends.skyrl_train.patches.megatron.patch_checkpoint_without_output_frozen_inputs import (
     apply_checkpoint_without_output_frozen_inputs_patch,
 )
@@ -71,6 +77,9 @@ from skyrl.backends.skyrl_train.patches.megatron.patch_clip_grads_mixed_dtype im
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_distopt_mixed_dtype_group_index import (
     apply_distopt_mixed_dtype_group_index_patch,
+)
+from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_cudnn_fast_paths import (
+    apply_dsa_cudnn_fast_paths_patch,
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_head_full import (
     apply_dsa_head_full_patch,
@@ -81,32 +90,23 @@ from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_hybrid_indexer import
 from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_index_share import (
     patch_dsa_index_share,
 )
-from skyrl.backends.skyrl_train.patches.megatron.patch_lora_row_adapter_local import (
-    apply_lora_row_adapter_local_patch,
-)
-from skyrl.backends.skyrl_train.patches.megatron.patch_absorbed_mla_nope_views import (
-    apply_absorbed_mla_nope_views_patch,
-)
-from skyrl.backends.skyrl_train.patches.megatron.patch_absorbed_mla_strided_einsum import (
-    apply_absorbed_mla_strided_einsum_patch,
-)
 from skyrl.backends.skyrl_train.patches.megatron.patch_grad_accum_fusion_te_wgrad import (
     apply_grad_accum_fusion_te_wgrad_patch,
 )
-from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_cudnn_fast_paths import (
-    apply_dsa_cudnn_fast_paths_patch,
+from skyrl.backends.skyrl_train.patches.megatron.patch_lora_row_adapter_local import (
+    apply_lora_row_adapter_local_patch,
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_moe_dedup_alltoall import (
     apply_moe_dedup_alltoall_patch,
-)
-from skyrl.backends.skyrl_train.patches.megatron.patch_shared_expert_sp_local import (
-    apply_shared_expert_sp_local_patch,
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_packed_per_expert_sharded_state_dict import (
     apply_packed_per_expert_sharded_state_dict_patch,
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_shared_expert_lora_tp import (
     apply_shared_expert_lora_tp_patch,
+)
+from skyrl.backends.skyrl_train.patches.megatron.patch_shared_expert_sp_local import (
+    apply_shared_expert_sp_local_patch,
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_sparse_mla_nope import (
     patch_sparse_mla_nope,
@@ -462,23 +462,21 @@ class MegatronWorker:
         for k, v in transformer_config_kwargs.items():
             setattr(provider, k, v)
 
-        # megatron-core rejects mHC (hyper-connection) models under full activation recompute:
-        # the residual it would re-materialize is the n-stream tensor consumed by the mHC
-        # mapping. Its own suggestion -- selective recompute with "mhc" in recompute_modules --
-        # needs the mHC recompute managers, which SkyRL's mHC layer does not implement, so
-        # downgrade to selective recompute of the remaining modules instead of failing.
-        # Tied to the vendored mHC layer: see patches/megatron/README.md (Megatron-LM#7521) for
-        # when to change or delete this.
+        # megatron-core's TransformerConfig rejects mHC (hyper-connection) models under full
+        # activation recompute, because its own mHC layer keeps recompute state in mHC recompute
+        # managers. SkyRL's mHC layer (mcore_ext/mhc_transformer_layer.py) passes the n-stream
+        # [s, b, n*C] residual between layers as its ordinary hidden state, so the block-level
+        # checkpoint (megatron.core.recompute.checkpointed_forward) saves and recomputes it like
+        # any other layer input. Build with recompute off, which passes the config check, and turn
+        # full recompute on in the built model's config (make_megatron_module).
+        # Tied to the vendored mHC layer: see patches/megatron/README.md (Megatron-LM#7521).
+        self._mhc_full_recompute = None
         if getattr(provider, "enable_mhc_connections", False) and provider.recompute_granularity == "full":
-            provider.recompute_granularity = "selective"
-            provider.recompute_modules = [m for m in (provider.recompute_modules or ["core_attn"]) if m != "mhc"]
+            self._mhc_full_recompute = (provider.recompute_method, provider.recompute_num_layers)
+            provider.recompute_granularity = None
+            provider.recompute_modules = None
             provider.recompute_method = None
             provider.recompute_num_layers = None
-            logger.info(
-                "Hyper-connection model: activation recompute downgraded from full to selective "
-                f"(recompute_modules={provider.recompute_modules}); mHC is not compatible with "
-                "full recompute."
-            )
 
         drop_unsupported_recompute_modules(provider)
 
@@ -800,6 +798,17 @@ class MegatronWorker:
         model = self.provider.provide_distributed_model(
             ddp_config=default_ddp_config, wrap_with_ddp=wrap_with_ddp, bf16=bf16
         )
+        if getattr(self, "_mhc_full_recompute", None) is not None:
+            # See init_configs: the mHC model is built without recompute and switched to full here.
+            recompute_method, recompute_num_layers = self._mhc_full_recompute
+            for model_config in {id(c): c for c in [self.provider, *(get_model_config(m) for m in model)]}.values():
+                model_config.recompute_granularity = "full"
+                model_config.recompute_method = recompute_method
+                model_config.recompute_num_layers = recompute_num_layers
+            logger.info(
+                f"Hyper-connection model: full activation recompute (method={recompute_method}, "
+                f"num_layers={recompute_num_layers}) applied to the built model."
+            )
         if self.megatron_config.fp8_exclude_modules:
             validate_fp8_exclude_modules_matched(model, list(self.megatron_config.fp8_exclude_modules))
         if lora_config is not None and getattr(self, "_lora_import_plan", None) is not None:

@@ -53,7 +53,11 @@ mc.moe_router_load_balancing_type = "none"
 mc.moe_enable_routing_replay = True
 tk = mc.transformer_config_kwargs
 tk["sequence_parallel"] = True
-if args.recompute != "none":
+if args.recompute == "full":
+    tk["recompute_granularity"] = "full"
+    tk["recompute_method"] = "uniform"
+    tk["recompute_num_layers"] = 1
+elif args.recompute != "none":
     tk["recompute_granularity"] = "selective"
     tk["recompute_method"] = None
     tk["recompute_num_layers"] = None
