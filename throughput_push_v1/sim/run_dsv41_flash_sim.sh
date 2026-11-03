@@ -45,6 +45,12 @@ uv run --no-sync --extra megatron python -m skyrl.train.entrypoints.main_base \
   trainer.max_prompt_length=$MAX_LEN trainer.algorithm.max_seq_len=$MAX_LEN \
   trainer.train_batch_size=$PROMPTS trainer.policy_mini_batch_size=$PROMPTS \
   trainer.micro_forward_batch_size_per_gpu=1 trainer.micro_train_batch_size_per_gpu=1 \
+  `# As the DSv4.1 recipe: no packed (THD) sequences for DSv4 attention; selective recompute.` \
+  trainer.remove_microbatch_padding=false \
+  trainer.policy.megatron_config.transformer_config_kwargs.recompute_granularity=selective \
+  trainer.policy.megatron_config.transformer_config_kwargs.recompute_modules=[moe,mhc,layernorm] \
+  trainer.policy.megatron_config.transformer_config_kwargs.recompute_method=null \
+  trainer.policy.megatron_config.transformer_config_kwargs.recompute_num_layers=null \
   trainer.epochs=1 trainer.update_epochs_per_batch=1 trainer.eval_interval=-1 trainer.eval_before_train=false \
   trainer.ckpt_interval=-1 trainer.hf_save_interval=-1 trainer.resume_mode=null \
   trainer.policy.optimizer_config.lr=1.0e-6 \
