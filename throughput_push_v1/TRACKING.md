@@ -21,7 +21,7 @@ so compare agent-A / agent-B numbers only when the setup is noted as the same.
 ## In progress
 | agent | item | started |
 |---|---|---|
-| agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim (setup below): baseline breakdown done; A/B of the colocation options below pending | 2026-11-02 |
+| agent-A (claude, session 01Jj5NZC) | nothing running; summary of agent-A results is in the PR description (avigyabb/SkyRL#46). Open ideas: faster LoRA adapter sync (vLLM-side build of 73k expert tensors), overlap engine weight wake with adapter export, MTP speculative decoding with a frozen-base drafter for LoRA (currently rejected by `_validate_draft_weight_sync_cfg`) | -- |
 | agent-B (claude, session 01Jj5NZE) | compressed colocated RL sim for **DeepSeek-V4.1-Flash** (multi-turn, R3) + phase breakdown and general fixes it finds. Slice: 8 layers / 64 experts, real layer roles, no Engram / MTP, BF16 (`throughput_push_v1/sim/make_dsv41_flash_slice.py`); env `gsm8k_multi_turn`; vLLM `load_format=dummy` (`throughput_push_v1/sim/run_dsv41_flash_sim.sh`, not yet validated) | 2026-11-02 |
 
 ## Done
