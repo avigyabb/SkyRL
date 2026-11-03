@@ -21,8 +21,9 @@ so compare agent-A / agent-B numbers only when the setup is noted as the same.
 ## In progress
 | agent | item | started |
 |---|---|---|
-| agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim: real GLM-5.3-Flash bf16, LoRA r64 no-merge, colocated 2x8 B200, TP4/EP16, R3 on, DAPO 16 prompts x 8 samples, 8k resp; per-phase breakdown | 2026-11-02 |
-| agent-A | `trainer.old_logprobs_from_first_minibatch`: first mini-batch's old logprobs from its own training forward (skips the policy logprob forward entirely when 1 mini-batch/step). Code + CPU tests committed; GPU A/B pending | 2026-11-02 |
+| agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim (setup below): baseline breakdown done; A/B of the colocation options below pending | 2026-11-02 |
+| agent-A | R3 + `mlp_chunks_for_training>1` + `moe` recompute crash in GLM-5.3-Flash's chunked MoE (`mcore_ext/mhc_transformer_layer.py`): fix written, verifying grads on a 4-layer slice | 2026-11-02 |
+| agent-A | GPU A/B of `trainer.old_logprobs_from_first_minibatch`, `generator.inference_engine.sleep_keep_weights`, `megatron_config.keep_frozen_weights_on_gpu` (all committed, opt-in, CPU-tested) | 2026-11-02 |
 | agent-B (claude, session 01Jj5NZE) | compressed colocated RL sim for **DeepSeek-V4.1-Flash** (multi-turn, R3) + phase breakdown and general fixes it finds. Slice: 8 layers / 64 experts, real layer roles, no Engram / MTP, BF16 (`throughput_push_v1/sim/make_dsv41_flash_slice.py`); env `gsm8k_multi_turn`; vLLM `load_format=dummy` (`throughput_push_v1/sim/run_dsv41_flash_sim.sh`, not yet validated) | 2026-11-02 |
 
 ## Done
@@ -38,4 +39,18 @@ so compare agent-A / agent-B numbers only when the setup is noted as the same.
 | agent-B | dead ends: TileLang DSA backend (2.5x slower than cuDNN at head-full), cuDNN DSA bwd `block_tile`, overlap_grad_reduce / overlap_param_gather (asserts in SkyRL loop), micro-batch 2 (no per-layer gain), Triton short-conv bwd, in-place LoRA add | -- | -- |
 
 ## Measurement setup
-(filled in by agent-A once the simulator runs; reuse it so numbers are comparable)
+agent-A RL sim (`throughput_push_v1/sim/rl_sim_glm53_flash_lora.sh`): real GLM-5.3-Flash bf16 weights, LoRA r64
+(merge_lora=false), colocated on 2x8 B200, Megatron TP4/EP16, vLLM 2 engines x TP8, R3 on, DAPO-17k prompts,
+16 prompts x 8 samples (one mini-batch), 8k max response, `max_tokens_per_microbatch=8192`, recompute
+`[core_attn,moe]`, `mlp_chunks_for_training=64`. Startup is ~25 min (cold weight load); a step is minutes.
+
+Findings (agent-A, baseline, step 1 = 901 s):
+- `generate` 170 s (128 seqs, mean 3.9k tokens), `fwd_logprobs_values_reward` **689 s**, `policy_train` crashed at 32 s.
+- The 689 s is almost all the first backload of the LoRA-frozen base (~37 GB/GPU) from the file-backed offload
+  (`SKYRL_FROZEN_OFFLOAD_DIR`); the forward itself is ~10 s of compute for ~520k tokens.
+- `/data` does not exist on these nodes, so by default the frozen offload falls back to pinned RAM:
+  ~300 GB/node on top of vLLM's level-1 sleep backup (~620 GB/node). Ray's memory monitor then kills the
+  Megatron workers (node at 1.69 of 1.76 TB). Point `SKYRL_FROZEN_OFFLOAD_DIR` at local disk or keep frozen weights on GPU.
+- R3 + `mlp_chunks_for_training=64` + `moe` recompute (the GLM-5.3-Flash recipe settings with R3 on) crashes in
+  backward: `RuntimeError: Size does not match ... index [2099, 8] ... self [32, 288]` (`router_replay.get_replay_topk`).
+
