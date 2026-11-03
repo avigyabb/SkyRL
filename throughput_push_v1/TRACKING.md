@@ -22,12 +22,14 @@ so compare agent-A / agent-B numbers only when the setup is noted as the same.
 | agent | item | started |
 |---|---|---|
 | agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim (setup below): baseline breakdown done; A/B of the colocation options below pending | 2026-11-02 |
-| agent-A | torch.profiler breakdown of the optimized training step (next bottleneck) | 2026-11-02 |
+| agent-A | opt3 = opt2 + `max_tokens_per_microbatch=16384`; then ablation of `mlp_chunks_for_training` 64 vs 1 under opt1 | 2026-11-02 |
 | agent-B (claude, session 01Jj5NZE) | compressed colocated RL sim for **DeepSeek-V4.1-Flash** (multi-turn, R3) + phase breakdown and general fixes it finds. Slice: 8 layers / 64 experts, real layer roles, no Engram / MTP, BF16 (`throughput_push_v1/sim/make_dsv41_flash_slice.py`); env `gsm8k_multi_turn`; vLLM `load_format=dummy` (`throughput_push_v1/sim/run_dsv41_flash_sim.sh`, not yet validated) | 2026-11-02 |
 
 ## Done
 | agent | change / experiment | result | commit |
 |---|---|---|---|
+| agent-A | **opt2** = opt1b + agent-B's GLM-5.3-Flash kernel flags (`throughput_push_v1/sim/opt2.sh`: head-full DSA, cuDNN DSA, fused k-pool indexer, mHC/KDA fusions, MoE dedup a2a, TF32 override), BF16, recompute `[core_attn,moe_act]`, `moe_permute_fusion`, `bias_activation_fusion`, `lora.sync_mode=memory` | steps 2/3: **225 / 259 s** (vs opt1b 263 / 303, baseline 2103); train 43 / 60 s (vs 81 / 111); ~705 tok/s/GPU; peak 90 GB (vs 111). Generation 156-174 s is now ~70% of the step. `sync_mode=memory` 17-19 s, no faster than disk here (export 4.9 s, send 7.0 s, vLLM register 10.9 s) | config |
+| agent-A | torch.profiler, opt1b training step (rank 0, 64 seqs): GPU busy 69%; elementwise 34% (stock DSA masking), FP32 SIMT sgemm 19% (k-pool indexer einsum on CUDA cores), MoE SendRecv 19%, SP all-gather 8.5%; optimizer step 0.18 s | motivated opt2 | -- |
 | agent-A | **opt1b** = baseline + `trainer.old_logprobs_from_first_minibatch` + `trainer.balance_dp_tokens` + `megatron_config.keep_frozen_weights_on_gpu` + `mlp_chunks_for_training=1` + vLLM `gpu_memory_utilization=0.5` (KV peaks at 6.6% of 44 GB here; at 0.65 the resident frozen weights OOM the engine wake). `sleep_keep_weights` does not fit here (trainer peak 111 GB + engine weights 78 GB) | steps 1-3: **331 / 263 / 303 s** vs baseline 2502 / 2103 s; train 141 / 81 / 111 s vs 1751 / 1437; logprob fwd 0 vs 483-559; backload 0.05 s vs 42-46; 376-391 tok/s/GPU vs 19-22; train/rollout logprob diff 0.003-0.005 | config (`throughput_push_v1/sim/opt1.sh`) |
 | agent-A | R3 + `mlp_chunks_for_training>1` + `moe` recompute crashed in backward (GLM-5.3-Flash mHC `chunked_mlp`): each chunk is checkpointed by the MoE layer and recompute popped the whole micro-batch's routes. Fixed: `chunked_mlp` checkpoints chunks itself with routes bound to the call | slice repro: grad norm 0.7159 (fixed, 64 chunks + recompute) vs 0.7170/0.7161 no recompute, 0.7154 unchunked; old code raises | ffa706b8 |
 | agent-A | timers `timing/colocate_<model>_{backload,offload}`, `timing/inference_engine_sleep` | -- | a462bc7c |
