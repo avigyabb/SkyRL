@@ -1920,6 +1920,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         the ``LoraLoadRequest`` once every node's files are in place.
         """
         import json
+        import time
 
         from megatron.bridge.models.conversion.peft_bridge import (
             build_adapter_config_dict,
@@ -1935,6 +1936,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # only gates the bridge's trailing device-to-host copy (not its
         # collectives), so non-writers skip that copy for tensors they discard.
         keep_state = self._is_lora_sync_writer_rank()
+        started = time.perf_counter()
         # Shared-outer grouped-expert LoRA emits the per-expert side of packed-HF
         # models (e.g. Qwen3.5/3.6 MoE) as one 2D slice per expert under the same
         # expert-agnostic name; collect repeats in emission order (expert 0..E-1)
@@ -1951,6 +1953,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             name: tensors[0] if len(tensors) == 1 else torch.stack(tensors, dim=0)
             for name, tensors in adapter_tensor_lists.items()
         }
+        exported = time.perf_counter()
 
         rank = torch.distributed.get_rank()
         if keep_state:
@@ -2010,8 +2013,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                 json.dump(adapter_config, f, ensure_ascii=False, indent=4)
             os.replace(f"{config_path}.tmp{rank}", config_path)
 
+        written = time.perf_counter()
         # All nodes' files must be in place before the engines re-read them.
         torch.distributed.barrier()
+        barrier_done = time.perf_counter()
 
         if rank == 0:
             # Send LoRA disk loading request to inference engine.
@@ -2024,6 +2029,16 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             else:
                 lora_request = LoraLoadRequest(lora_path=lora_sync_path, lora_name=lora_name)
                 await inference_engine_client.update_named_weights(lora_request)
+            logger.info(
+                "LoRA sync (disk): adapter {!r} {} tensors, exported in {:.2f}s, converted and written in {:.2f}s, "
+                "waited {:.2f}s for other writers, loaded by vLLM in {:.2f}s",
+                lora_name,
+                len(adapter_state),
+                exported - started,
+                written - exported,
+                barrier_done - written,
+                time.perf_counter() - barrier_done,
+            )
 
         torch.distributed.barrier()
 
