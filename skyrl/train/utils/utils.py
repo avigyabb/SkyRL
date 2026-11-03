@@ -466,6 +466,9 @@ def validate_cfg(cfg: SkyRLTrainConfig):
     ), "use_kl_in_reward and use_kl_loss should be mutually exclusive"
     use_ref_model = cfg.trainer.algorithm.use_kl_loss or cfg.trainer.algorithm.use_kl_in_reward
 
+    if cfg.generator.inference_engine.sleep_keep_weights and not cfg.trainer.placement.colocate_all:
+        raise ValueError("generator.inference_engine.sleep_keep_weights requires trainer.placement.colocate_all=true.")
+
     if cfg.trainer.old_logprobs_from_first_minibatch:
         if cfg.trainer.strategy != "megatron":
             raise ValueError("trainer.old_logprobs_from_first_minibatch is only supported by the Megatron backend.")
@@ -1065,6 +1068,9 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
 
     if cfg.generator.inference_engine.backend == "vllm":
         env_vars["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "true"
+        if cfg.generator.inference_engine.sleep_keep_weights:
+            # Read by patches/vllm/patch_sleep_keep_weights.py in every vLLM worker process.
+            env_vars["SKYRL_VLLM_SLEEP_KEEP_WEIGHTS"] = "1"
 
         # NOTE (sumanthrh): In vllm >= 0.9.0, we need to explicitly allow for serialization via pickle
         # for collective RPCs. During weight transfer, we use IPC handles, which contains a `function`

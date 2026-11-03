@@ -471,7 +471,7 @@ def _offload_frozen_param_to_file(name: str, param) -> bool:
 
 
 @torch.no_grad()
-def offload_megatron_model_to_cpu(models, is_lora: bool = False):
+def offload_megatron_model_to_cpu(models, is_lora: bool = False, keep_frozen_on_gpu: bool = False):
     """
     In megatron, the model and optimizer storage are:
     - bf16 parameter data chunked in model parallel group
@@ -480,6 +480,7 @@ def offload_megatron_model_to_cpu(models, is_lora: bool = False):
     - fp32 optimizer state chunked in model and dp group
 
     ``is_lora``: the run trains LoRA adapters only (base weights frozen).
+    ``keep_frozen_on_gpu``: leave frozen weights outside the DDP buffers on the GPU.
     """
     for model_chunk in models:
         if isinstance(model_chunk, DDP):
@@ -502,7 +503,8 @@ def offload_megatron_model_to_cpu(models, is_lora: bool = False):
             use_file_offload = _frozen_offload_enabled()
             for name, param in model_chunk.named_parameters():
                 if (
-                    param.is_cuda
+                    not keep_frozen_on_gpu
+                    and param.is_cuda
                     and not param.requires_grad
                     and "adapter" not in name
                     and param.data.storage().size() > 0
