@@ -11,7 +11,7 @@ directly; the cuDNN kernel and its per-row inputs are the same.
 
 ``SKYRL_DSA_TOPK_PRESORTED=1``: ``_prepare_attention_topk_indices`` argsorts every row's compacted
 top-k by key index. When the indexer already emits ascending indices (the k-pool indexer does under
-the same flag, see ``dsa_kpool._presort``), check that in one elementwise pass and skip the sort;
+the same flag, see ``mcore_ext/dsa_kpool_fast.py``), check that in one elementwise pass and skip the sort;
 rows that are not ascending fall back to the stock sort.
 
 ``SKYRL_DSA_TOPK_SCATTER_COMPACT=1``: ``_compact_valid_topk_indices`` moves each row's valid top-k

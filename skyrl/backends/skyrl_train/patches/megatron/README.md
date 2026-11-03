@@ -131,24 +131,24 @@ This is the riskiest entry. A wrong k-pool selection doesn't raise. It silently 
 different tokens than vLLM once a sequence is longer than `dsa_indexer_topk` (2048).
 
 - **Carried as:**
-  - `mcore_ext/dsa_kpool.py`: the six k-pool kernels, copied from #7522. One deliberate
-    deviation: `fused_qk_topk_kpool` scores and selects in query chunks. Verbatim, it
-    materializes FP32 `[sq, b, heads, sq / kpool]` per-head scores (32 GiB/GPU at 32k), so
-    GLM-5.3-Flash can't train past ~16k. Top-k is per query row, so chunking is exact
-    (`test_kpool_query_chunking_is_exact`); `SKYRL_DSA_KPOOL_SCORE_CHUNK_ELEMS` sets the chunk
-    cap (default 2 GiB of FP32 scores). Past one chunk the loop follows #7522 @ `b27efd8`, which
-    now chunks too: no-grad, in-place ReLU and head weighting, one FP32 cast of the pooled keys, a
-    preallocated selection. Upstream's cap is a fixed 256 MiB; at 512k (65,536 query rows per TP8
-    rank x 131,072 pools, one B200) one selection takes 3.31 s there vs 2.64 s at 2 GiB and
-    2.60 s at 8 GiB, with peak extra memory 0.6 / 2.4 / 8.6 GiB. When removing, carry the
-    configurable cap over unless upstream's default has grown.
-    Second deviation, opt-in with `SKYRL_DSA_INDEXER_TP_SHARD=1` (wired in `glm5_next/dsa.py`):
-    `query_shard_group` splits the query rows across the tensor-parallel group, whose ranks all
-    score the same gathered sequence with the same frozen indexer weights, and all-gathers the
-    pool selections. The scoring is O(sq^2) (every query scores every pool) and was redundant on
-    every TP rank: at 512k tokens, TP8, 64 B200 (TCP NCCL) sharding cut warm fwd+bwd 1545 -> 1094 s,
-    i.e. ~1/3 of the step was replicated indexer scoring. Bitwise-identical selections
-    (`test_dsa_kpool_tp_shard.py`).
+  - `mcore_ext/dsa_kpool.py`: megatron-core's pooled indexer, copied **verbatim** from
+    NVIDIA/Megatron-LM `main` @ `631e146322af` (`_compute_index_scores` and `_kpool_fp8_input`
+    through `fused_qk_topk_kpool`: #7522 and its follow-ups, which also score in query chunks with
+    a 2 GiB cap), with the k-pool hunks of the open NVIDIA/Megatron-LM#8299 applied:
+    `query_shard_group` splits the query rows across the tensor-parallel group and all-gathers
+    the pool selections (`SKYRL_DSA_INDEXER_TP_SHARD=1`, wired in `glm5_next/dsa.py`). The scoring
+    is O(sq^2) and otherwise replicated on every TP rank: at 512k tokens, TP8, 64 B200, sharding
+    cut warm fwd+bwd 1545 -> 1094 s. Do not edit it; keep it byte-identical to upstream.
+  - `mcore_ext/dsa_kpool_fast.py`: SkyRL-only speedups, hooked at the vendored module's function
+    boundaries so they carry over to megatron-core's copy unchanged:
+    - `_kpool_topk_from_score_chunks` replacement: fused Triton scorer over causal tiles with a
+      causal score width (`SKYRL_DSA_KPOOL_FUSED_INDEXER=1`; BF16 inputs, near-ties can differ)
+      and ascending pool ids (`SKYRL_DSA_TOPK_PRESORTED=1`, for `patch_dsa_cudnn_fast_paths`);
+    - `fused_qk_topk_kpool` wrapper: striped query rows for the TP sharding
+      (`SKYRL_DSA_KPOOL_SHARD_STRIPE`), exact;
+    - `SKYRL_DSA_KPOOL_SCORE_CHUNK_ELEMS`: overrides upstream's chunk cap.
+    The fused scorer and the causal width overlap the open NVIDIA/Megatron-LM#8681 (fused score
+    post-processing after the FP32 GEMM); striping would be a follow-up to #8299.
   - `glm5_next/dsa.py`:
     - `Glm5NextDSAIndexer`: k-pool gate/ape parameters and the gate score, hand-merged onto the
       pinned `DSAIndexer`;
@@ -170,10 +170,15 @@ different tokens than vLLM once a sequence is longer than `dsa_indexer_topk` (20
   - `glm5_next/bridge.py`: keep reading `index_kpool` / `index_kpool_always_select_tail` from the
     HF config into the provider. Upstream's parameter names for the compress gate/ape must match
     the bridge mapping.
+  - `mcore_ext/dsa_kpool_fast.py`: point `_base` at
+    `megatron.core.transformer.experimental_attention_variant.dsa` (same function names). If #8299
+    has not landed, keep its hunks as a patch there; if #8681 has, check it composes with the
+    fused scorer (both replace parts of the chunked scoring).
   - Tests:
     - `tests/backends/skyrl_train/patches/megatron/mcore_ext/test_dsa_kpool_math.py` imports
       `mcore_ext.dsa_kpool._kpool_compress_keys`. Repoint it at megatron-core.
-    - `tests/.../gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` (GPU kernel checks): same.
+    - `tests/.../gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` and
+      `test_dsa_kpool_tp_shard.py` (GPU kernel checks): same.
   - Delete `mcore_ext/dsa_kpool.py`.
 - **Verify** (all required):
   - `patches/megatron/mcore_ext/test_dsa_kpool_math.py` (CPU) and `gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` (GPU).
