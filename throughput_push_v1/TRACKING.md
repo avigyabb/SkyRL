@@ -22,12 +22,14 @@ so compare agent-A / agent-B numbers only when the setup is noted as the same.
 | agent | item | started |
 |---|---|---|
 | agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim (setup below): baseline breakdown done; A/B of the colocation options below pending | 2026-11-02 |
-| agent-A | 256k-context RL sim (`throughput_push_v1/sim/long256.sh`: opt2 config on `longprompt_262144` prompts, 4 x 4 samples, 1k responses, `mlp_chunks=4`) | 2026-11-02 |
+| agent-A | cost of R3 (route capture in vLLM + replay in Megatron): opt2 with R3 off | 2026-11-03 |
 | agent-B (claude, session 01Jj5NZE) | compressed colocated RL sim for **DeepSeek-V4.1-Flash** (multi-turn, R3) + phase breakdown and general fixes it finds. Slice: 8 layers / 64 experts, real layer roles, no Engram / MTP, BF16 (`throughput_push_v1/sim/make_dsv41_flash_slice.py`); env `gsm8k_multi_turn`; vLLM `load_format=dummy` (`throughput_push_v1/sim/run_dsv41_flash_sim.sh`, not yet validated) | 2026-11-02 |
 
 ## Done
 | agent | change / experiment | result | commit |
 |---|---|---|---|
+| agent-A | **256k-context RL** (`throughput_push_v1/sim/long256.sh`: opt2 config, `longprompt_262144`, 4 prompts x 4 samples of ~262k tokens, 1k responses, R3 on) | with selective recompute `[core_attn,moe_act]` the first 262k micro-batch dies in an MoE collective (`ncclUnhandledCudaError`, with or without `SKYRL_MOE_DEDUP_A2A`, 4 or 16 MLP chunks: OOM inside NCCL). With **full recompute** (next row) + 16 MLP chunks: step 2 **149 s** (generate 66, fwd/bwd 54 for 4.2M tokens = **4527 tok/s/GPU**, sync 19), peak 84 GB, no padding micro-batches | config + 69dad0c5 |
+| agent-A | full activation recompute for GLM-5.3-Flash: SkyRL used to downgrade `recompute_granularity=full` to selective for mHC models. Now honored (model built without recompute, config switched to full after build) | slice grads: 0.7168 / 0.7141 (full, 1 / 64 chunks, R3) vs 0.7182 none; makes 256k RL fit (row above) | 69dad0c5 |
 | agent-A | ablation: opt1b config with `mlp_chunks_for_training=64` | step 1 forward/backward **1142 s** vs 141 s with 1 chunk (opt1b, incl. one-time backload): chunking at 8k is most of the training speedup, DP balancing the rest. GLM-5.3-Flash recipes still set 64; startup warning added | warning commit below |
 | agent-A | **opt3** = opt2 + `max_tokens_per_microbatch=16384` | steps 2/3: **218 / 255 s** (vs opt2 225 / 259); train 37 / 58 s (vs 43 / 60); 785 / 699 tok/s/GPU; peak 127-130 GB | config |
 | agent-A | **opt2** = opt1b + agent-B's GLM-5.3-Flash kernel flags (`throughput_push_v1/sim/opt2.sh`: head-full DSA, cuDNN DSA, fused k-pool indexer, mHC/KDA fusions, MoE dedup a2a, TF32 override), BF16, recompute `[core_attn,moe_act]`, `moe_permute_fusion`, `bias_activation_fusion`, `lora.sync_mode=memory` | steps 2/3: **225 / 259 s** (vs opt1b 263 / 303, baseline 2103); train 43 / 60 s (vs 81 / 111); ~705 tok/s/GPU; peak 90 GB (vs 111). Generation 156-174 s is now ~70% of the step. `sync_mode=memory` 17-19 s, no faster than disk here (export 4.9 s, send 7.0 s, vLLM register 10.9 s) | config |
