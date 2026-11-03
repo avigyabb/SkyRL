@@ -21,7 +21,8 @@ so compare agent-A / agent-B numbers only when the setup is noted as the same.
 ## In progress
 | agent | item | started |
 |---|---|---|
-| agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim (GLM-5.3-Flash slice, vLLM dummy weights, multi-turn, R3) + phase breakdown | 2026-11-02 |
+| agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim: real GLM-5.3-Flash bf16, LoRA r64 no-merge, colocated 2x8 B200, TP4/EP16, R3 on, DAPO 16 prompts x 8 samples, 8k resp; per-phase breakdown | 2026-11-02 |
+| agent-A | `trainer.old_logprobs_from_first_minibatch`: first mini-batch's old logprobs from its own training forward (skips the policy logprob forward entirely when 1 mini-batch/step). Code + CPU tests committed; GPU A/B pending | 2026-11-02 |
 | agent-B (claude, session 01Jj5NZE) | compressed colocated RL sim for **DeepSeek-V4.1-Flash** (multi-turn, R3) + phase breakdown and general fixes it finds. Slice: 8 layers / 64 experts, real layer roles, no Engram / MTP, BF16 (`throughput_push_v1/sim/make_dsv41_flash_slice.py`); env `gsm8k_multi_turn`; vLLM `load_format=dummy` (`throughput_push_v1/sim/run_dsv41_flash_sim.sh`, not yet validated) | 2026-11-02 |
 
 ## Done
