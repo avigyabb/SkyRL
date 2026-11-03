@@ -148,6 +148,9 @@ class SFTConfig(BaseConfig):
     fused_lm_head_logprob: bool = False
     """Compute the LM head + log-probs in ``logprobs_chunk_size`` token chunks without materializing
     the full ``[T, vocab]`` logits (Megatron). Maps to ``trainer.fused_lm_head_logprob``."""
+    fused_lm_head_logprob_backend: str = "torch"
+    """Kernel for the fused LM head: ``"torch"`` or ``"triton"``. Maps to
+    ``trainer.fused_lm_head_logprob_backend``."""
     logprobs_chunk_size: Optional[int] = 1024
     """Token chunk size for the fused LM head. Maps to ``trainer.logprobs_chunk_size``."""
     record_memory: bool = False
@@ -675,6 +678,7 @@ def build_skyrl_config_for_sft(sft_cfg: SFTConfig) -> SkyRLTrainConfig:
     cfg.trainer.policy.record_memory = sft_cfg.record_memory
     cfg.trainer.policy.language_model_only = sft_cfg.language_model_only
     cfg.trainer.fused_lm_head_logprob = sft_cfg.fused_lm_head_logprob
+    cfg.trainer.fused_lm_head_logprob_backend = sft_cfg.fused_lm_head_logprob_backend
     cfg.trainer.logprobs_chunk_size = sft_cfg.logprobs_chunk_size
     cfg.trainer.policy.torch_profiler_config = sft_cfg.torch_profiler_config
 
