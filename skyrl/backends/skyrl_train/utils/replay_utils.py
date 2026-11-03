@@ -142,11 +142,63 @@ def _get_local_router_layer_indices(model_config, global_num_layers: int, instan
                 layer_index = local_layer_offset + local_router_index + (local_num_layers - len(instances))
             layer_indices.append(layer_index)
 
+    layer_indices = _hybrid_to_decoder_layer_indices(model_config, global_num_layers, layer_indices)
     if any(layer_index < 0 or layer_index >= global_num_layers for layer_index in layer_indices):
         raise ValueError(
             f"Router replay layer indices {layer_indices} out of range for data with {global_num_layers} layers"
         )
     return layer_indices
+
+
+# megatron-core's hybrid_layer_allocation.Symbols: the attention symbols ATTENTION "*", DS_ATTENTION "D", MLA "+" and
+# the DeepSeek-V4 CSA "C" / HCA "H" / WINDOW "W"; PIPE "|" and MTP_SEPARATOR "/" are separators.
+_HYBRID_ATTENTION_SYMBOLS = frozenset("*D+CHW")
+
+
+def _hybrid_to_decoder_layer_indices(model_config, global_num_layers: int, layer_indices: list[int]) -> list[int]:
+    """Map HybridModel layer indices to the inference engine's decoder-layer indices.
+
+    Router ``layer_number`` counts hybrid layers, and vLLM returns routed experts per HF decoder layer. Models whose
+    decoder layers are single hybrid layers (e.g. Nemotron-H) need no mapping. Models whose decoder layer is an
+    attention layer followed by its MLP/MoE layer (DeepSeek-V4/V4.1: ``HECEWE...``; Beam: ``*-*-*E*E...``) have one
+    decoder layer per attention symbol: hybrid layer ``h`` belongs to decoder layer ``(attention symbols in
+    pattern[:h + 1]) - 1``. Decided from the pattern, not the indices: under pipeline parallelism an early stage's
+    hybrid indices all fit below the decoder-layer count and still need mapping.
+    """
+    pattern = getattr(model_config, "hybrid_layer_pattern", None)
+    if not pattern:
+        return layer_indices
+    flat = pattern.split("/")[0].replace("|", "")
+    attention = [symbol in _HYBRID_ATTENTION_SYMBOLS for symbol in flat]
+    if global_num_layers == len(flat) or global_num_layers != sum(attention):
+        return layer_indices
+    return [sum(attention[: h + 1]) - 1 for h in layer_indices]
+
+
+def _check_replay_expert_ids(rollout_expert_indices: PackedTensor, num_experts: int | None) -> None:
+    """Reject expert ids the router cannot hold before they reach its ``gather``.
+
+    An id >= ``num_experts`` otherwise surfaces as an opaque CUDA device-side assert in
+    ``RouterReplay.get_replay_topk`` (``scores.gather``), possibly several kernels later. The
+    error names the offending sample, token, layer and value, so a bad capture can be traced
+    back to the rollout that produced it.
+    """
+    if not num_experts:
+        return
+    values = rollout_expert_indices.values
+    bad = values >= num_experts
+    if not bool(bad.any()):
+        return
+    token, layer, _ = (int(i) for i in bad.nonzero()[0].tolist())
+    cu_seqlens = rollout_expert_indices.cu_seqlens.to(torch.long).cpu()
+    sample = int(torch.searchsorted(cu_seqlens, torch.tensor(token), right=True)) - 1
+    position = token - int(cu_seqlens[sample])
+    length = int(cu_seqlens[sample + 1] - cu_seqlens[sample])
+    raise ValueError(
+        f"Router replay expert ids out of range for {num_experts} experts: {int(bad.sum())} of "
+        f"{values.numel()} entries (max id {int(values.max())}); first at sample {sample}, token "
+        f"{position} of {length}, captured layer {layer}, ids {values[token, layer].tolist()}"
+    )
 
 
 def setup_per_microbatch_replay_forward(
@@ -208,6 +260,7 @@ def setup_per_microbatch_replay_forward(
         raise ValueError("rollout_expert_indices and router_padding_mask must be on the same device")
 
     num_captured_layers, topk = rollout_expert_indices.row_shape
+    _check_replay_expert_ids(rollout_expert_indices, getattr(model_config, "num_moe_experts", None))
     instances = RouterReplay.global_router_replay_instances
     local_layer_indices = _get_local_router_layer_indices(
         model_config,

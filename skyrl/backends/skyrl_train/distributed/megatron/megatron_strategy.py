@@ -275,7 +275,11 @@ class MegatronStrategy(DistributedStrategy):
         ``optimizer is None`` (e.g. ``policy.inference_only_init=True`` flows).
         """
         if offload_model:
-            offload_megatron_model_to_cpu(model, is_lora=self.is_lora)
+            offload_megatron_model_to_cpu(
+                model,
+                is_lora=self.is_lora,
+                keep_frozen_on_gpu=self.megatron_config.keep_frozen_weights_on_gpu,
+            )
         if offload_optimizer:
             offload_megatron_grads_to_cpu(model)
             if optimizer is not None:

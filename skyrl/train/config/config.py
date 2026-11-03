@@ -696,6 +696,14 @@ class MegatronConfig(BaseConfig):
     optimizer is fully offloaded to CPU (``optimizer_cpu_offload=True`` with
     ``optimizer_offload_fraction=1.0``), whose step allocates little GPU memory.
     ``True`` / ``False`` force both empties on / off."""
+    keep_frozen_weights_on_gpu: bool = False
+    """Keep frozen (``requires_grad=False``) weights on the GPU when the colocated policy is offloaded.
+
+    With LoRA these are the base weights, which never change; the default offload frees them and
+    copies them back to the GPU before the next forward. Keeping them resident removes that per-step
+    transfer, but they then occupy GPU memory during generation (pair with
+    ``generator.inference_engine.sleep_keep_weights`` and size ``gpu_memory_utilization`` so the
+    engine's KV cache fits next to them)."""
     model_config_kwargs: dict = field(default_factory=dict)
     """HF-config overrides read from the nested ``model_config`` key only.
     Used for bridge and RoPE resolution. Not a general HF-config override -- use
@@ -1487,6 +1495,14 @@ class InferenceEngineConfig(BaseConfig):
     KV cache is offloaded to CPU and restored so they resume with no abort or prefill
     recompute (at the cost of a GPU<->CPU copy of the KV pool each sync). Requires
     non-colocated and non-LoRA weight sync."""
+    sleep_keep_weights: bool = False
+    """Colocated only. Sleeping the engine frees only its KV cache and keeps its weights on the GPU.
+
+    The default sleep copies the engine's weight shard to pinned host memory and back every step
+    (level 1, LoRA adapter sync) or discards it and relies on the full weight sync to refill it.
+    Keeping it resident removes that per-step transfer and the host copy, but the trainer must fit
+    in the GPU memory left next to the engine weights (lower ``gpu_memory_utilization`` only
+    shrinks the KV cache). A weight sync writes into the resident weights."""
     use_expandable_segments: bool = False
     """Set ``PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`` on the inference-engine
     processes to reduce fragmentation. Independent of the trainer-side
@@ -1786,6 +1802,24 @@ class TrainerConfig(BaseConfig):
     This makes the microbatch packing — and therefore the resulting logprobs/values — identical to
     what forward_backward recomputes, so the PPO ratio (and critic value clipping) is exact at the
     first inner step."""
+    balance_dp_tokens: bool = False
+    """Reorder rows within each mini-batch so every data-parallel rank gets about the same number of tokens.
+
+    Mini-batches are split into equal-sized contiguous chunks per DP rank in prompt order, so the
+    samples of long-response prompts can pile up on one rank while the others wait for it (and pad
+    their micro-batch count to match). With this on, the policy/critic forward and training steps
+    stage each mini-batch in a token-balanced row order (same sample count per rank); forward
+    outputs are returned in the original order. Applies to the per-mini-batch staged paths
+    (``recompute_old_logprobs_per_minibatch``, training)."""
+    old_logprobs_from_first_minibatch: bool = False
+    """Take the first policy mini-batch's "old" logprobs from its own training forward instead of a separate forward pass.
+
+    No optimizer step has run when the first mini-batch trains, so the detached training-forward
+    logprobs are exactly the old logprobs and the PPO ratio is 1 at that step. The policy forward
+    pass then runs only over the remaining mini-batches; with one mini-batch per step
+    (``train_batch_size == policy_mini_batch_size``) it is skipped entirely. Megatron only. Requires
+    ``update_epochs_per_batch=1`` and ``algorithm.use_kl_in_reward=false``, which read the old
+    logprobs outside the first training forward."""
     update_ref_every_epoch: bool = False
     """Re-sync the reference model from the policy model at every epoch boundary."""
     remove_microbatch_padding: bool = True

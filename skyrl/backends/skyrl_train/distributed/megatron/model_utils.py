@@ -16,6 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import warnings
 from math import prod
 from typing import Any, Optional
@@ -274,6 +275,11 @@ class ChunkedDistributedLogprob(torch.autograd.Function):
         return grad_input, None, None, None, None, None, None
 
 
+# Opt-in: compute the fused LM-head log-softmax with one-pass Triton row kernels (see
+# ``logprob_triton``) instead of fp32 chunk copies and separate max/exp/sum passes.
+_LOGPROB_TRITON_ROWS = os.environ.get("SKYRL_FUSED_LOGPROB_TRITON_ROWS", "0").lower() in ("1", "true")
+
+
 class FusedLinearChunkedDistributedLogprob(torch.autograd.Function):
     """Fused LM-head + distributed token-logprob, chunked over the sequence.
 
@@ -328,6 +334,11 @@ class FusedLinearChunkedDistributedLogprob(torch.autograd.Function):
         all_log_probs = []
         all_entropy = []
 
+        if _LOGPROB_TRITON_ROWS and not compute_entropy:
+            return FusedLinearChunkedDistributedLogprob._forward_rows(
+                ctx, hidden, weight, target_mask, masked_target, chunk_size, tp_group, inference_only
+            )
+
         for chunk_idx in range(num_chunks):
             chunk_start = chunk_idx * chunk_size
             chunk_end = min(seq_size, (chunk_idx + 1) * chunk_size)
@@ -381,13 +392,48 @@ class FusedLinearChunkedDistributedLogprob(torch.autograd.Function):
         return log_probs, entropy
 
     @staticmethod
+    def _forward_rows(ctx, hidden, weight, target_mask, masked_target, chunk_size, tp_group, inference_only):
+        """Forward via one-pass Triton row statistics; saves the global log-sum-exp for backward."""
+        from skyrl.backends.skyrl_train.distributed.megatron import logprob_triton
+
+        seq_size = int(hidden.shape[1])
+        stats = torch.empty((3, hidden.shape[0], seq_size), dtype=torch.float32, device=hidden.device)
+        for chunk_start in range(0, seq_size, chunk_size):
+            chunk_end = min(seq_size, chunk_start + chunk_size)
+            logits = torch.matmul(hidden[:, chunk_start:chunk_end, :].to(weight.dtype), weight.t())
+            row_max, row_sumexp, chosen = logprob_triton.row_stats(
+                logits.view(-1, logits.shape[-1]), masked_target[:, chunk_start:chunk_end].reshape(-1)
+            )
+            shape = stats[0, :, chunk_start:chunk_end].shape
+            stats[0, :, chunk_start:chunk_end] = row_max.view(shape)
+            stats[1, :, chunk_start:chunk_end] = row_sumexp.view(shape)
+            stats[2, :, chunk_start:chunk_end] = chosen.view(shape)
+        local_max, local_sumexp, chosen = stats
+        global_max = local_max.clone()
+        torch.distributed.all_reduce(global_max, op=torch.distributed.ReduceOp.MAX, group=tp_group)
+        sumexp = local_sumexp * torch.exp(local_max - global_max)
+        torch.distributed.all_reduce(sumexp, op=torch.distributed.ReduceOp.SUM, group=tp_group)
+        lse = global_max + torch.log(sumexp)
+        log_probs = torch.where(target_mask, 0.0, chosen - lse)
+        torch.distributed.all_reduce(log_probs, op=torch.distributed.ReduceOp.SUM, group=tp_group)
+        if not inference_only:
+            ctx.save_for_backward(hidden, weight, target_mask, masked_target, lse)
+            ctx.chunk_size = chunk_size
+            ctx.tp_group = tp_group
+            ctx.entropy_requires_grad = False
+        return log_probs
+
+    @staticmethod
     def backward(
         ctx: Any,
         *grad_outputs: torch.Tensor,
     ) -> tuple[Optional[torch.Tensor], ...]:
         grad_output = grad_outputs[0]
         grad_entropy = grad_outputs[1] if ctx.entropy_requires_grad else None
-        hidden, weight, target_mask, masked_target = ctx.saved_tensors
+        hidden, weight, target_mask, masked_target, *rest = ctx.saved_tensors
+        lse = rest[0] if rest else None
+        if lse is not None:
+            from skyrl.backends.skyrl_train.distributed.megatron import logprob_triton
         chunk_size = ctx.chunk_size
         tp_group = ctx.tp_group
 
@@ -417,6 +463,27 @@ class FusedLinearChunkedDistributedLogprob(torch.autograd.Function):
             chunk_len = chunk_end - chunk_start
 
             h_chunk = hidden[:, chunk_start:chunk_end, :]
+            if lse is not None:
+                # Row-kernel path: one pass from the saved log-sum-exp, written in the logits dtype.
+                logits = torch.matmul(h_chunk.to(weight.dtype), weight.t())
+                rows = logits.view(-1, partition_vocab_size)
+                grad_logits = logprob_triton.grad_logits_(
+                    rows,
+                    lse[:, chunk_start:chunk_end].reshape(-1),
+                    grad_output[:, chunk_start:chunk_end].reshape(-1),
+                    masked_target[:, chunk_start:chunk_end].reshape(-1),
+                    ~target_mask[:, chunk_start:chunk_end].reshape(-1),
+                    out=rows,
+                ).view_as(logits)
+                grad_hidden[:, chunk_start:chunk_end, :] = torch.matmul(grad_logits, weight)
+                if compute_weight_grad:
+                    grad_weight.add_(
+                        torch.matmul(
+                            grad_logits.reshape(-1, partition_vocab_size).t(),
+                            h_chunk.reshape(-1, hidden_size).to(dtype=grad_logits.dtype),
+                        ).to(torch.float32)
+                    )
+                continue
             logits = torch.matmul(h_chunk.to(weight.dtype), weight.t()).to(dtype=torch.float32)
             distributed_log_probs = _compute_distributed_log_softmax(logits, group=tp_group)
             if ctx.entropy_requires_grad:

@@ -117,11 +117,11 @@ def test_kpool_selects_every_visible_token_below_topk(seqlen):
 
 @pytest.mark.parametrize("seq_lens", [[1000], [300, 517, 183]])
 def test_kpool_query_chunking_is_exact(seq_lens, monkeypatch):
-    """Scoring in query chunks (SkyRL's deviation from #7522) must select the same pools.
+    """Scoring in query chunks (``return_index_scores=False``) must select the same pools.
 
-    The verbatim path materializes O(sq^2) per-head FP32 scores; the chunked path keeps only a
+    The one-shot path materializes O(sq^2) per-head FP32 scores; the chunked path keeps only a
     chunk of them. Top-k is per query row, so forcing many small chunks -- including ones that
-    straddle packed-document boundaries -- must reproduce the single-chunk indices exactly.
+    straddle packed-document boundaries -- must reproduce the one-shot indices exactly.
     """
     from megatron.core.transformer.experimental_attention_variant.dsa_masking import (
         generate_varlen_mask_params_for_positions,
@@ -138,7 +138,7 @@ def test_kpool_query_chunking_is_exact(seq_lens, monkeypatch):
     starts, ends = generate_varlen_mask_params_for_positions(cu, positions)
     q, k, weights, gate, ape = _make_inputs(seqlen, device=device)
 
-    def run():
+    def run(return_index_scores):
         return dsa_kpool.fused_qk_topk_kpool(
             q,
             k,
@@ -151,15 +151,16 @@ def test_kpool_query_chunking_is_exact(seq_lens, monkeypatch):
             varlen_ends=ends,
             cu_seqlens_kv=cu,
             always_select_tail=True,
+            return_index_scores=return_index_scores,
         )
 
-    full_scores, full_indices = run()
-    assert full_scores is not None, "one chunk should cover every query at this size"
+    full_scores, full_indices = run(True)
+    assert full_scores is not None
 
     num_pools = sum(n // POOL_SIZE for n in seq_lens)
     # 37 queries per chunk: not a divisor of any segment length or of the pool size.
-    monkeypatch.setattr(dsa_kpool, "_KPOOL_SCORE_CHUNK_ELEMS", 37 * N_HEADS * num_pools)
-    chunked_scores, chunked_indices = run()
+    monkeypatch.setattr(dsa_kpool, "_KPOOL_SCORE_CHUNK_BYTES", 4 * 37 * N_HEADS * num_pools)
+    chunked_scores, chunked_indices = run(False)
 
     assert chunked_scores is None
     assert torch.equal(chunked_indices, full_indices)
@@ -189,10 +190,11 @@ def _reference_kpool_selection(q, weights, k_pooled, pool_token_base, seq_lens, 
 
 
 @pytest.mark.parametrize("use_relu", [False, True])
-@pytest.mark.parametrize("chunked", [False, True])
+@pytest.mark.parametrize("path", ["one_shot", "chunked", "skyrl_fast"])
 @pytest.mark.parametrize("seq_lens", [[1000], [300, 517, 183], [130, 2, 261]])
-def test_kpool_selection_matches_reference(seq_lens, chunked, use_relu, monkeypatch):
-    """Selection past ``index_topk`` matches a brute-force reference, one-shot and chunked.
+def test_kpool_selection_matches_reference(seq_lens, path, use_relu, monkeypatch):
+    """Selection past ``index_topk`` matches a brute-force reference: one-shot, chunked, and SkyRL's
+    fast layer (fused Triton scorer + presorted pools, ``mcore_ext/dsa_kpool_fast.py``).
 
     ``test_kpool_query_chunking_is_exact`` only shows the two paths agree; this pins both to the
     definition. It checks the properties that define top-k rather than an exact ordering, so FP32
@@ -204,7 +206,7 @@ def test_kpool_selection_matches_reference(seq_lens, chunked, use_relu, monkeypa
         generate_varlen_mask_params_for_positions,
     )
 
-    from skyrl.backends.skyrl_train.patches.megatron.mcore_ext import dsa_kpool
+    from skyrl.backends.skyrl_train.patches.megatron.mcore_ext import dsa_kpool, dsa_kpool_fast
 
     device = "cuda"
     seqlen = sum(seq_lens)
@@ -214,13 +216,19 @@ def test_kpool_selection_matches_reference(seq_lens, chunked, use_relu, monkeypa
     positions = torch.arange(seqlen, device=device)
     starts, ends = generate_varlen_mask_params_for_positions(cu, positions)
     q, k, weights, gate, ape = _make_inputs(seqlen, device=device, seed=len(seq_lens) + 7 * use_relu)
+    chunked = path != "one_shot"
+    if path == "skyrl_fast":
+        monkeypatch.setattr(dsa_kpool_fast, "_FUSED_INDEXER", True)
+        monkeypatch.setattr(dsa_kpool_fast, "_PRESORT", True)
+        monkeypatch.setattr(dsa_kpool, "_kpool_topk_from_score_chunks", dsa_kpool_fast._kpool_topk_from_score_chunks)
 
     k_pooled, pool_token_base = dsa_kpool._kpool_compress_keys_per_seg(k, gate, ape, POOL_SIZE, cu)
     num_pools = k_pooled.size(0)
     if chunked:
         # 37 queries per chunk: not a divisor of any segment length or of the pool size.
-        monkeypatch.setattr(dsa_kpool, "_KPOOL_SCORE_CHUNK_ELEMS", 37 * N_HEADS * num_pools)
-    scores_out, indices = dsa_kpool.fused_qk_topk_kpool(
+        monkeypatch.setattr(dsa_kpool, "_KPOOL_SCORE_CHUNK_BYTES", 4 * 37 * N_HEADS * num_pools)
+    select = dsa_kpool_fast.fused_qk_topk_kpool if path == "skyrl_fast" else dsa_kpool.fused_qk_topk_kpool
+    scores_out, indices = select(
         q,
         k,
         weights,
@@ -233,6 +241,7 @@ def test_kpool_selection_matches_reference(seq_lens, chunked, use_relu, monkeypa
         cu_seqlens_kv=cu,
         use_relu=use_relu,
         always_select_tail=True,
+        return_index_scores=not chunked,
     )
     assert (scores_out is None) == chunked
 
@@ -249,6 +258,8 @@ def test_kpool_selection_matches_reference(seq_lens, chunked, use_relu, monkeypa
             blocks, blocks[:, :1] + offsets
         ), f"query {i}: a selected pool is not {POOL_SIZE} contiguous tokens"
         chosen = [pool_of_start[int(b)] for b in blocks[:, 0]]
+        if path == "skyrl_fast":
+            assert chosen == sorted(chosen), f"query {i}: presorted pools are not ascending: {chosen}"
         assert len(set(chosen)) == len(chosen), f"query {i}: pool selected twice"
         vis = visible[i].nonzero().flatten().tolist()
         assert set(chosen) <= set(
@@ -259,7 +270,9 @@ def test_kpool_selection_matches_reference(seq_lens, chunked, use_relu, monkeypa
         if rest:
             past_budget += 1
             worst_in, best_out = scores[i, chosen].min().item(), scores[i, rest].max().item()
-            tol = 1e-4 * max(1.0, abs(worst_in))
+            # The fused scorer rounds the pooled keys to BF16 (FP32 accumulation), so near-ties
+            # can order differently than the FP64 reference by more than FP32 rounding.
+            tol = (2e-2 if path == "skyrl_fast" else 1e-4) * max(1.0, abs(worst_in))
             assert (
                 worst_in >= best_out - tol
             ), f"query {i}: pool scoring {best_out:.6f} was left out while one scoring {worst_in:.6f} was kept"

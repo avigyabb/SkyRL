@@ -15,7 +15,7 @@ from skyrl.train.config import SkyRLTrainConfig, GeneratorConfig, get_config_as_
 from skyrl.train.utils import validate_cfg
 from skyrl.train.utils.utils import initialize_ray
 from skyrl.train.utils.rate_limiter import RateLimiterConfig
-from ..harbor_generator import HarborGenerator
+from ..harbor_generator import HarborGenerator, StragglerCutoffConfig
 from ..dataset import HarborTaskDataset
 
 # NOTE (sumanthrh): We use a YAML to store the defaults for the Harbor trial configuration
@@ -35,9 +35,11 @@ def _deep_merge(base: dict, overrides: dict) -> dict:
 
 @dataclass
 class HarborGeneratorConfig(GeneratorConfig):
-    """GeneratorConfig with Harbor-specific rate limiting."""
+    """GeneratorConfig with Harbor-specific rate limiting and straggler cutoff."""
 
     rate_limit: RateLimiterConfig = field(default_factory=RateLimiterConfig)
+    straggler_cutoff: StragglerCutoffConfig = field(default_factory=StragglerCutoffConfig)
+    """Synchronous training only: stop waiting for the slowest prompt groups (see ``StragglerCutoffConfig``)."""
 
 
 @dataclass

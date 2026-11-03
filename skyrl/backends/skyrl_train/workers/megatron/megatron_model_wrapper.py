@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 import megatron.core.parallel_state as mpu
 import torch
 import torch.nn as nn
+from loguru import logger
 from megatron.bridge.peft.utils import (
     enable_expert_parallel_grad_sync_in_finalize,
     finalize_model_grads_with_expert_adapter_sync,
@@ -252,6 +253,16 @@ class MegatronModelWrapper:
             else 1
         )
         self._seq_align = mlp_chunks * sp_size if mlp_chunks > 1 else 1
+        max_tokens = getattr(self.cfg, "max_tokens_per_microbatch", -1)
+        if mlp_chunks > 1 and getattr(config, "num_moe_experts", None) and max_tokens and max_tokens > 0:
+            tokens_per_chunk = max_tokens // (sp_size * mlp_chunks)
+            if tokens_per_chunk < 1024 and torch.distributed.get_rank() == 0:
+                logger.warning(
+                    f"mlp_chunks_for_training={mlp_chunks} splits a {max_tokens}-token micro-batch into MoE calls of "
+                    f"~{tokens_per_chunk} tokens per rank; each runs its own expert-parallel all-to-alls, which are "
+                    "latency-bound at that size. Chunking only bounds the MoE dispatch buffers of very long "
+                    "micro-batches; consider a smaller value."
+                )
         # megatron-core's DeepSeek-V4 compressed sparse attention raises on any explicit mask. On the
         # unpacked path remove_left_padding left-aligns every row, so the implicit causal mask
         # already keeps real tokens off the trailing padding; the mask is still used for logprobs.
@@ -690,6 +701,7 @@ class MegatronModelWrapper:
         loss_fn_config: Optional[Dict[str, Any]] = None,
         forward_only: bool = False,
         return_per_token_outputs: bool = True,
+        old_logprobs_from_current: bool = False,
     ) -> List[dict]:
         """
         Run forward-backward over a full mini-batch consisting of multiple micro-batches.
@@ -708,6 +720,8 @@ class MegatronModelWrapper:
             forward_only: If True, run the forward pass without backward (no gradients).
                           Useful for evaluation / loss-only inference paths (e.g., SFT
                           ``forward(loss_fn=...)`` codepath).
+            old_logprobs_from_current: Use the detached logprobs of this forward as the old
+                logprobs (the micro-batches' ``old_action_log_probs`` are ignored).
             return_per_token_outputs: When False, skip building per-token
                 ``loss_fn_outputs`` when callers read only ``metrics``.
 
@@ -932,6 +946,8 @@ class MegatronModelWrapper:
                 )
 
             action_log_probs = token_logprobs[:, -num_actions:]
+            if old_logprobs_from_current:
+                old_action_log_probs = action_log_probs.detach()
 
             # Megatron's canonical positions are next-token predictions, so actions are the last columns.
             action_positions = slice(-num_actions, None)

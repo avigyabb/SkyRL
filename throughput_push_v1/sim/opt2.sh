@@ -1,0 +1,14 @@
+#!/bin/bash
+# opt1 + GLM-5.3-Flash kernel flags (merged from rl-agent-throughput by agent-B), BF16,
+# [core_attn,moe_act] recompute, LoRA adapter sync over CUDA IPC (sync_mode=memory).
+cd "$(dirname "$0")"
+export SKYRL_DSA_HEAD_FULL=1 SKYRL_DSA_KPOOL_FUSED_INDEXER=1 SKYRL_DSA_INDEXER_TP_SHARD=1 SKYRL_DSA_KPOOL_SHARD_STRIPE=256 \
+  SKYRL_KDA_GATHER_ONCE=1 SKYRL_MHC_COMPILE_PROJ_RMS=1 SKYRL_KDA_INTRACARD_CP=1 SKYRL_LORA_ROW_ADAPTER_LOCAL=1 \
+  SKYRL_KDA_CONV_BACKEND=mix SKYRL_FUSED_LOGPROB_TRITON_ROWS=1 SKYRL_MHC_FUSED_POST_BDA=1 SKYRL_MHC_FUSED_PROJ_RMS=1 \
+  SKYRL_MOE_DEDUP_A2A=1 SKYRL_DSA_CUDNN_BWD_ALL_ROWS=1 SKYRL_DSA_TOPK_PRESORTED=1 SKYRL_SHARED_EXPERT_SP_LOCAL=1 \
+  SKYRL_MLA_NOPE_NO_COPY=1 SKYRL_DSA_HEAD_FULL_FAST_PERMUTE=1 SKYRL_MLA_STRIDED_EINSUM=1 SKYRL_KDA_FANOUT_GRAD=1 \
+  SKYRL_DSA_HEAD_FULL_ZIGZAG=1 SKYRL_DSA_TOPK_SCATTER_COMPACT=1 TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1
+T=trainer.policy.megatron_config.transformer_config_kwargs
+NAME=${NAME:-opt2} RECOMPUTE_MODULES=${RECOMPUTE_MODULES:-[core_attn,moe_act]} bash opt1.sh \
+  $T.dsa_kernel_backend=cudnn $T.moe_permute_fusion=true $T.bias_activation_fusion=true \
+  trainer.policy.model.lora.sync_mode=memory "$@"

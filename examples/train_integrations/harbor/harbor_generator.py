@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 import time
 from copy import deepcopy
 from dataclasses import dataclass
@@ -40,6 +41,31 @@ MAX_NUM_RETRIES_PER_TRIAL = 2
 
 
 @dataclass
+class StragglerCutoffConfig:
+    """Stop waiting for the slowest prompt groups of a synchronous generation batch.
+
+    A synchronous GRPO step waits for every trajectory, so with long-tailed agent rollouts (turn counts,
+    sandbox start-up, retries) the slowest few trials set the step time while the inference engines sit
+    mostly idle. Once ``min_group_fraction`` of the batch's prompt groups have all of their trajectories
+    finished, the generator waits at most ``grace_period_s`` more and then cancels the remaining trials.
+    Their groups are loss-masked exactly like groups with a failed trajectory (Harbor stops the cancelled
+    trials' sandboxes). The kept groups skew toward faster tasks, so prefer a high fraction (e.g. 0.9)
+    or fully async training when the tail is the bottleneck.
+
+    ``min_group_fraction=1.0`` (default) disables the cutoff.
+    """
+
+    min_group_fraction: float = 1.0
+    grace_period_s: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.min_group_fraction <= 1.0:
+            raise ValueError(f"min_group_fraction must be in (0, 1], got {self.min_group_fraction}")
+        if self.grace_period_s < 0:
+            raise ValueError(f"grace_period_s must be >= 0, got {self.grace_period_s}")
+
+
+@dataclass
 class HarborTrajectoryOutput:
     """One trajectory's raw output from Harbor.
 
@@ -54,7 +80,7 @@ class HarborTrajectoryOutput:
     rollout_details: Optional[List[RolloutDetail]] = None
     reward: float = 0.0
     num_turns: int = 0
-    # One of: "complete", "context_length", "agent_timeout", "error". Used by
+    # One of: "complete", "context_length", "agent_timeout", "error", "straggler_cut". Used by
     # `build_step_wise_generator_output` to decide whether to skip the entire prompt group.
     stop_reason: str = "complete"
     # End-to-end wall-clock time (seconds) to generate this trajectory. Optional: left as None if
@@ -79,10 +105,14 @@ def build_step_wise_generator_output(
     all_instance_ids = set()
     num_timeout_trajectories = 0
     num_error_trajectories = 0
+    num_straggler_cut_trajectories = 0
     for traj in trajectory_outputs:
         instance_id = traj.trajectory_id.instance_id
         all_instance_ids.add(instance_id)
-        if traj.stop_reason == "agent_timeout":
+        if traj.stop_reason == "straggler_cut":
+            num_straggler_cut_trajectories += 1
+            error_instance_ids.add(instance_id)
+        elif traj.stop_reason == "agent_timeout":
             num_timeout_trajectories += 1
             timeout_instance_ids.add(instance_id)
         elif traj.stop_reason == "error" or traj.rollout_details is None:
@@ -203,6 +233,7 @@ def build_step_wise_generator_output(
 
     rollout_metrics["generate/num_timeout_trajectories"] = num_timeout_trajectories
     rollout_metrics["generate/num_error_trajectories"] = num_error_trajectories
+    rollout_metrics["generate/num_straggler_cut_trajectories"] = num_straggler_cut_trajectories
     rollout_metrics["generate/num_masked_instances"] = len(masked_instance_ids)
 
     return GeneratorOutput(
@@ -299,6 +330,13 @@ class HarborGenerator(GeneratorInterface):
         rate_limit_config = getattr(generator_cfg, "rate_limit", None)
         self._rate_limiter = create_rate_limiter(rate_limit_config)
 
+        cutoff = getattr(generator_cfg, "straggler_cutoff", None)
+        if cutoff is None:
+            cutoff = StragglerCutoffConfig()
+        elif not isinstance(cutoff, StragglerCutoffConfig):
+            cutoff = StragglerCutoffConfig(**dict(cutoff))
+        self._straggler_cutoff = cutoff
+
     def _compute_cache_salt(self) -> Optional[str]:
         """Derive a prefix-cache salt from the current policy version.
 
@@ -345,9 +383,12 @@ class HarborGenerator(GeneratorInterface):
             progress.update(1)
 
         try:
-            async with asyncio.TaskGroup() as tg:
-                for idx, (prompt, trajectory_id) in enumerate(zip(prompts, trajectory_ids)):
-                    tg.create_task(_worker(idx, prompt, trajectory_id))
+            if self._straggler_cutoff.min_group_fraction >= 1.0:
+                async with asyncio.TaskGroup() as tg:
+                    for idx, (prompt, trajectory_id) in enumerate(zip(prompts, trajectory_ids)):
+                        tg.create_task(_worker(idx, prompt, trajectory_id))
+            else:
+                await self._run_with_straggler_cutoff(_worker, prompts, trajectory_ids, all_outputs)
         finally:
             progress.close()
 
@@ -356,6 +397,54 @@ class HarborGenerator(GeneratorInterface):
         )
         output["rollout_metrics"].update(trial_metrics(all_attempts))
         return output
+
+    async def _run_with_straggler_cutoff(self, worker, prompts, trajectory_ids, all_outputs) -> None:
+        """Run ``worker`` for every trajectory; cancel the stragglers per ``self._straggler_cutoff``.
+
+        Cancelled trajectories get ``stop_reason="straggler_cut"`` and are masked with their whole group.
+        """
+        cutoff = self._straggler_cutoff
+        group_of = [tid.instance_id for tid in trajectory_ids]
+        remaining_per_group: dict = {}
+        for group in group_of:
+            remaining_per_group[group] = remaining_per_group.get(group, 0) + 1
+        num_groups = len(remaining_per_group)
+        groups_needed = max(1, math.ceil(cutoff.min_group_fraction * num_groups))
+
+        tasks = {
+            asyncio.create_task(worker(idx, prompt, trajectory_id)): idx
+            for idx, (prompt, trajectory_id) in enumerate(zip(prompts, trajectory_ids))
+        }
+        pending = set(tasks)
+        groups_done = 0
+        deadline = None
+        try:
+            while pending:
+                timeout = None if deadline is None else max(0.0, deadline - time.monotonic())
+                done, pending = await asyncio.wait(pending, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    task.result()  # surface worker bugs, as the TaskGroup path does
+                    group = group_of[tasks[task]]
+                    remaining_per_group[group] -= 1
+                    if remaining_per_group[group] == 0:
+                        groups_done += 1
+                if deadline is None and groups_done >= groups_needed:
+                    deadline = time.monotonic() + cutoff.grace_period_s
+                if deadline is not None and pending and time.monotonic() >= deadline:
+                    break
+        finally:
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+        for task in pending:
+            idx = tasks[task]
+            all_outputs[idx] = HarborTrajectoryOutput(trajectory_id=trajectory_ids[idx], stop_reason="straggler_cut")
+        if pending:
+            logger.info(
+                f"Straggler cutoff: {groups_done}/{num_groups} groups complete; cancelled {len(pending)} "
+                f"trajectories in the remaining groups."
+            )
 
     async def _harbor_agent_loop(
         self,

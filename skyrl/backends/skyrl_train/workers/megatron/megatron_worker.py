@@ -63,6 +63,12 @@ from skyrl.backends.skyrl_train.distributed.megatron.quantization_utils import (
 from skyrl.backends.skyrl_train.inference_servers.remote_inference_client import (
     SKYRL_LORA_ADAPTER_NAME,
 )
+from skyrl.backends.skyrl_train.patches.megatron.patch_absorbed_mla_nope_views import (
+    apply_absorbed_mla_nope_views_patch,
+)
+from skyrl.backends.skyrl_train.patches.megatron.patch_absorbed_mla_strided_einsum import (
+    apply_absorbed_mla_strided_einsum_patch,
+)
 from skyrl.backends.skyrl_train.patches.megatron.patch_checkpoint_without_output_frozen_inputs import (
     apply_checkpoint_without_output_frozen_inputs_patch,
 )
@@ -72,17 +78,38 @@ from skyrl.backends.skyrl_train.patches.megatron.patch_clip_grads_mixed_dtype im
 from skyrl.backends.skyrl_train.patches.megatron.patch_distopt_mixed_dtype_group_index import (
     apply_distopt_mixed_dtype_group_index_patch,
 )
+from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_cudnn_fast_paths import (
+    apply_dsa_cudnn_fast_paths_patch,
+)
+from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_head_full import (
+    apply_dsa_head_full_patch,
+)
 from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_hybrid_indexer import (
     apply_dsa_hybrid_indexer_patch,
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_index_share import (
     patch_dsa_index_share,
 )
+from skyrl.backends.skyrl_train.patches.megatron.patch_grad_accum_fusion_te_wgrad import (
+    apply_grad_accum_fusion_te_wgrad_patch,
+)
+from skyrl.backends.skyrl_train.patches.megatron.patch_bridge_state_small_tensor_cache import (
+    apply_bridge_state_small_tensor_cache_patch,
+)
+from skyrl.backends.skyrl_train.patches.megatron.patch_lora_row_adapter_local import (
+    apply_lora_row_adapter_local_patch,
+)
+from skyrl.backends.skyrl_train.patches.megatron.patch_moe_dedup_alltoall import (
+    apply_moe_dedup_alltoall_patch,
+)
 from skyrl.backends.skyrl_train.patches.megatron.patch_packed_per_expert_sharded_state_dict import (
     apply_packed_per_expert_sharded_state_dict_patch,
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_shared_expert_lora_tp import (
     apply_shared_expert_lora_tp_patch,
+)
+from skyrl.backends.skyrl_train.patches.megatron.patch_shared_expert_sp_local import (
+    apply_shared_expert_sp_local_patch,
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_sparse_mla_nope import (
     patch_sparse_mla_nope,
@@ -140,7 +167,11 @@ from skyrl.backends.skyrl_train.workers.worker_utils import (
     get_microbatch_iterator,
     reduce_metrics,
 )
-from skyrl.env_vars import SKYRL_MEGATRON_RANDOM_INIT, SKYRL_WORKER_NCCL_TIMEOUT_IN_S
+from skyrl.env_vars import (
+    SKYRL_MEGATRON_RANDOM_INIT,
+    SKYRL_OFFLOAD_CHECKPOINT_INPUTS,
+    SKYRL_WORKER_NCCL_TIMEOUT_IN_S,
+)
 from skyrl.train.config.config import MegatronDDPConfig, get_config_as_dict
 from skyrl.train.utils.utils import update_model_config
 from skyrl.utils.tok import get_tokenizer
@@ -158,7 +189,18 @@ from skyrl.backends.skyrl_train.workers.megatron.model_bridges import (
 )
 
 apply_shared_expert_lora_tp_patch()
+# After the #6089 backport: falls back to its (scaled) forward for ineligible adapters.
+apply_lora_row_adapter_local_patch()
+apply_moe_dedup_alltoall_patch()
+apply_shared_expert_sp_local_patch()
 apply_dsa_hybrid_indexer_patch()
+apply_dsa_head_full_patch()
+apply_dsa_cudnn_fast_paths_patch()
+apply_absorbed_mla_nope_views_patch()
+apply_absorbed_mla_strided_einsum_patch()
+apply_grad_accum_fusion_te_wgrad_patch()
+# Weight sync of FP8 / MXFP4 checkpoints: don't re-open a shard per quantization scale (Bridge #6456).
+apply_bridge_state_small_tensor_cache_patch()
 # Output-discarding selective recompute (mhc/layernorm) on frozen inputs, e.g. under LoRA.
 apply_checkpoint_without_output_frozen_inputs_patch()
 # Distributed-optimizer checkpoint index for param groups mixing fp32 and bf16 params (mHC models).
@@ -425,23 +467,21 @@ class MegatronWorker:
         for k, v in transformer_config_kwargs.items():
             setattr(provider, k, v)
 
-        # megatron-core rejects mHC (hyper-connection) models under full activation recompute:
-        # the residual it would re-materialize is the n-stream tensor consumed by the mHC
-        # mapping. Its own suggestion -- selective recompute with "mhc" in recompute_modules --
-        # needs the mHC recompute managers, which SkyRL's mHC layer does not implement, so
-        # downgrade to selective recompute of the remaining modules instead of failing.
-        # Tied to the vendored mHC layer: see patches/megatron/README.md (Megatron-LM#7521) for
-        # when to change or delete this.
+        # megatron-core's TransformerConfig rejects mHC (hyper-connection) models under full
+        # activation recompute, because its own mHC layer keeps recompute state in mHC recompute
+        # managers. SkyRL's mHC layer (mcore_ext/mhc_transformer_layer.py) passes the n-stream
+        # [s, b, n*C] residual between layers as its ordinary hidden state, so the block-level
+        # checkpoint (megatron.core.recompute.checkpointed_forward) saves and recomputes it like
+        # any other layer input. Build with recompute off, which passes the config check, and turn
+        # full recompute on in the built model's config (make_megatron_module).
+        # Tied to the vendored mHC layer: see patches/megatron/README.md (Megatron-LM#7521).
+        self._mhc_full_recompute = None
         if getattr(provider, "enable_mhc_connections", False) and provider.recompute_granularity == "full":
-            provider.recompute_granularity = "selective"
-            provider.recompute_modules = [m for m in (provider.recompute_modules or ["core_attn"]) if m != "mhc"]
+            self._mhc_full_recompute = (provider.recompute_method, provider.recompute_num_layers)
+            provider.recompute_granularity = None
+            provider.recompute_modules = None
             provider.recompute_method = None
             provider.recompute_num_layers = None
-            logger.info(
-                "Hyper-connection model: activation recompute downgraded from full to selective "
-                f"(recompute_modules={provider.recompute_modules}); mHC is not compatible with "
-                "full recompute."
-            )
 
         drop_unsupported_recompute_modules(provider)
 
@@ -706,6 +746,13 @@ class MegatronWorker:
         # Delete along with the patch module once the megatron-core pin includes
         # NVIDIA/Megatron-LM#6793.
         patch_dsa_index_share()
+        if SKYRL_OFFLOAD_CHECKPOINT_INPUTS:
+            # After patch_dsa_index_share, which rebinds the same function.
+            from skyrl.backends.skyrl_train.patches.megatron.patch_offload_checkpoint_inputs import (
+                patch_offload_checkpoint_inputs,
+            )
+
+            patch_offload_checkpoint_inputs()
 
         # Drop the MoE dispatcher's router-probs reference after each MoE forward; under full
         # recompute it otherwise pins every MoE layer's recomputed graph through backward.
@@ -756,6 +803,17 @@ class MegatronWorker:
         model = self.provider.provide_distributed_model(
             ddp_config=default_ddp_config, wrap_with_ddp=wrap_with_ddp, bf16=bf16
         )
+        if getattr(self, "_mhc_full_recompute", None) is not None:
+            # See init_configs: the mHC model is built without recompute and switched to full here.
+            recompute_method, recompute_num_layers = self._mhc_full_recompute
+            for model_config in {id(c): c for c in [self.provider, *(get_model_config(m) for m in model)]}.values():
+                model_config.recompute_granularity = "full"
+                model_config.recompute_method = recompute_method
+                model_config.recompute_num_layers = recompute_num_layers
+            logger.info(
+                f"Hyper-connection model: full activation recompute (method={recompute_method}, "
+                f"num_layers={recompute_num_layers}) applied to the built model."
+            )
         if self.megatron_config.fp8_exclude_modules:
             validate_fp8_exclude_modules_matched(model, list(self.megatron_config.fp8_exclude_modules))
         if lora_config is not None and getattr(self, "_lora_import_plan", None) is not None:
@@ -1318,6 +1376,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         loss_fn: Optional[str] = None,
         loss_fn_config: Optional[Dict[str, Any]] = None,
         return_per_token_outputs: bool = True,
+        old_logprobs_from_current: bool = False,
     ) -> WorkerOutput:
         """
         Perform forward and backward passes for a batch, handling micro-batching internally.
@@ -1335,6 +1394,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             loss_fn_config: Optional config overrides for the loss function.
             return_per_token_outputs: When False, skip building per-token
                 ``loss_fn_outputs`` when callers read only ``metrics``.
+            old_logprobs_from_current: Use this forward's detached logprobs as the old
+                logprobs instead of ``data["action_log_probs"]``. Valid only before the
+                first optimizer step on this batch (see
+                ``trainer.old_logprobs_from_first_minibatch``).
 
         Returns:
             :class:`WorkerOutput` with per-sample ``loss_fn_outputs`` and scalar
@@ -1460,6 +1523,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             loss_fn=loss_fn,
             loss_fn_config=loss_fn_config,
             return_per_token_outputs=return_per_token_outputs,
+            old_logprobs_from_current=old_logprobs_from_current,
         )
 
         if self.empty_cuda_cache_after_backward:
@@ -1500,6 +1564,13 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # Peak CUDA memory over this forward_backward call, max-reduced across ranks.
         status["peak_mem_allocated_gb_max"] = torch.cuda.max_memory_allocated() / 1024**3
         status["peak_mem_reserved_gb_max"] = torch.cuda.max_memory_reserved() / 1024**3
+
+        if SKYRL_OFFLOAD_CHECKPOINT_INPUTS:
+            from skyrl.backends.skyrl_train.patches.megatron.patch_offload_checkpoint_inputs import (
+                release_pinned_offload_cache,
+            )
+
+            release_pinned_offload_cache()
 
         group = mpu.get_data_parallel_group(with_context_parallel=False)
         status = all_reduce_metrics(status, self.strategy, group=group, sum_loss_metrics=True)
@@ -1854,6 +1925,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         the ``LoraLoadRequest`` once every node's files are in place.
         """
         import json
+        import time
 
         from megatron.bridge.models.conversion.peft_bridge import (
             build_adapter_config_dict,
@@ -1869,6 +1941,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
         # only gates the bridge's trailing device-to-host copy (not its
         # collectives), so non-writers skip that copy for tensors they discard.
         keep_state = self._is_lora_sync_writer_rank()
+        started = time.perf_counter()
         # Shared-outer grouped-expert LoRA emits the per-expert side of packed-HF
         # models (e.g. Qwen3.5/3.6 MoE) as one 2D slice per expert under the same
         # expert-agnostic name; collect repeats in emission order (expert 0..E-1)
@@ -1885,6 +1958,7 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             name: tensors[0] if len(tensors) == 1 else torch.stack(tensors, dim=0)
             for name, tensors in adapter_tensor_lists.items()
         }
+        exported = time.perf_counter()
 
         rank = torch.distributed.get_rank()
         if keep_state:
@@ -1944,8 +2018,10 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
                 json.dump(adapter_config, f, ensure_ascii=False, indent=4)
             os.replace(f"{config_path}.tmp{rank}", config_path)
 
+        written = time.perf_counter()
         # All nodes' files must be in place before the engines re-read them.
         torch.distributed.barrier()
+        barrier_done = time.perf_counter()
 
         if rank == 0:
             # Send LoRA disk loading request to inference engine.
@@ -1958,6 +2034,16 @@ class MegatronPolicyWorkerBase(MegatronWorker, PolicyWorkerBase):
             else:
                 lora_request = LoraLoadRequest(lora_path=lora_sync_path, lora_name=lora_name)
                 await inference_engine_client.update_named_weights(lora_request)
+            logger.info(
+                "LoRA sync (disk): adapter {!r} {} tensors, exported in {:.2f}s, converted and written in {:.2f}s, "
+                "waited {:.2f}s for other writers, loaded by vLLM in {:.2f}s",
+                lora_name,
+                len(adapter_state),
+                exported - started,
+                written - exported,
+                barrier_done - written,
+                time.perf_counter() - barrier_done,
+            )
 
         torch.distributed.barrier()
 

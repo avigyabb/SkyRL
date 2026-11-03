@@ -194,3 +194,7 @@ SKYRL_OPTIMIZER_OFFLOAD_TO_DISK_CHUNK_NUMEL = int(
 The optimizer step streams each rank's shard of every DDP bucket in chunks of at most this many elements. A chunk's
 fp32 main params and Adam moments are on the GPU together during the step, so the peak extra GPU memory is about
 12 B x this (2.4 GB by default). Resuming a checkpoint needs the same value it was saved with."""
+
+SKYRL_OFFLOAD_CHECKPOINT_INPUTS = str(os.environ.get("SKYRL_OFFLOAD_CHECKPOINT_INPUTS", "0")).lower() in ("1", "true")
+"""Keep full-recompute checkpoint inputs (one hidden state per layer) in pinned host memory until
+backward needs them. See ``patches/megatron/patch_offload_checkpoint_inputs.py``."""

@@ -206,6 +206,14 @@ from skyrl.backends.skyrl_train.patches.vllm.patch_deepseek_v41_prefill_workspac
 
 apply_deepseek_v41_prefill_workspace_patch()
 
+# generator.inference_engine.sleep_keep_weights: sleep frees only the KV cache. The worker creates its
+# sleep backend lazily on the first sleep, after this module is imported.
+from skyrl.backends.skyrl_train.patches.vllm.patch_sleep_keep_weights import (  # noqa: E402
+    apply_sleep_keep_weights_patch,
+)
+
+apply_sleep_keep_weights_patch()
+
 
 VLLM_NEW_INFERENCE_WORKER_EXTENSION_CLS = f"{__name__}.NewInferenceWorkerWrap"
 

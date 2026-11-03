@@ -466,6 +466,22 @@ def validate_cfg(cfg: SkyRLTrainConfig):
     ), "use_kl_in_reward and use_kl_loss should be mutually exclusive"
     use_ref_model = cfg.trainer.algorithm.use_kl_loss or cfg.trainer.algorithm.use_kl_in_reward
 
+    if cfg.generator.inference_engine.sleep_keep_weights and not cfg.trainer.placement.colocate_all:
+        raise ValueError("generator.inference_engine.sleep_keep_weights requires trainer.placement.colocate_all=true.")
+
+    if cfg.trainer.old_logprobs_from_first_minibatch:
+        if cfg.trainer.strategy != "megatron":
+            raise ValueError("trainer.old_logprobs_from_first_minibatch is only supported by the Megatron backend.")
+        if cfg.trainer.update_epochs_per_batch != 1:
+            raise ValueError(
+                "trainer.old_logprobs_from_first_minibatch requires trainer.update_epochs_per_batch=1, "
+                f"got {cfg.trainer.update_epochs_per_batch}."
+            )
+        if cfg.trainer.algorithm.use_kl_in_reward:
+            raise ValueError(
+                "trainer.old_logprobs_from_first_minibatch requires trainer.algorithm.use_kl_in_reward=false."
+            )
+
     if cfg.trainer.policy.language_model_only:
         assert (
             cfg.generator.inference_engine.language_model_only
@@ -1052,6 +1068,9 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
 
     if cfg.generator.inference_engine.backend == "vllm":
         env_vars["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "true"
+        if cfg.generator.inference_engine.sleep_keep_weights:
+            # Read by patches/vllm/patch_sleep_keep_weights.py in every vLLM worker process.
+            env_vars["SKYRL_VLLM_SLEEP_KEEP_WEIGHTS"] = "1"
 
         # NOTE (sumanthrh): In vllm >= 0.9.0, we need to explicitly allow for serialization via pickle
         # for collective RPCs. During weight transfer, we use IPC handles, which contains a `function`
@@ -1162,9 +1181,36 @@ def prepare_runtime_environment(cfg: SkyRLTrainConfig) -> dict[str, str]:
         "HF_HUB_OFFLINE",
         "HF_ENDPOINT",
         "PYTORCH_CUDA_ALLOC_CONF",
+        # Lets cuBLAS run FP32 GEMMs (e.g. the DSA k-pool indexer scores) on TF32 tensor cores.
+        "TORCH_ALLOW_TF32_CUBLAS_OVERRIDE",
         # Selects the DSA indexer top-k backend under dsa_kernel_backend=cudnn
         # (patches/megatron/patch_dsa_hybrid_indexer.py); read in the Megatron workers.
         "SKYRL_DSA_INDEXER_BACKEND",
+        # GLM-5.3-Flash k-pool indexer query sharding (glm5_next/dsa.py) and head-full sparse
+        # attention (patches/megatron/patch_dsa_head_full.py); read in the Megatron workers.
+        "SKYRL_DSA_INDEXER_TP_SHARD",
+        "SKYRL_DSA_HEAD_FULL",
+        "SKYRL_DSA_HEAD_FULL_FAST_PERMUTE",
+        "SKYRL_DSA_HEAD_FULL_ZIGZAG",
+        "SKYRL_DSA_KPOOL_FUSED_INDEXER",
+        "SKYRL_DSA_KPOOL_SHARD_STRIPE",
+        "SKYRL_KDA_GATHER_ONCE",
+        "SKYRL_KDA_FANOUT_GRAD",
+        "SKYRL_MHC_COMPILE_PROJ_RMS",
+        "SKYRL_KDA_INTRACARD_CP",
+        "SKYRL_KDA_CONV_BACKEND",
+        "SKYRL_FUSED_LOGPROB_TRITON_ROWS",
+        "SKYRL_MHC_FUSED_POST_BDA",
+        "SKYRL_MHC_FUSED_PROJ_RMS",
+        "SKYRL_MOE_DEDUP_A2A",
+        "SKYRL_DSA_CUDNN_BWD_ALL_ROWS",
+        "SKYRL_DSA_TOPK_PRESORTED",
+        "SKYRL_DSA_TOPK_SCATTER_COMPACT",
+        "SKYRL_SHARED_EXPERT_SP_LOCAL",
+        "SKYRL_MLA_NOPE_NO_COPY",
+        "SKYRL_MLA_STRIDED_EINSUM",
+        "SKYRL_GRAD_ACCUM_FUSION_TE_WGRAD",
+        "SKYRL_LORA_ROW_ADAPTER_LOCAL",
         # vLLM all-reduce backend switches; multi-node TP engines need FlashInfer / symm-mem off.
         "VLLM_ALLREDUCE_USE_FLASHINFER",
         "VLLM_ALLREDUCE_USE_SYMM_MEM",
