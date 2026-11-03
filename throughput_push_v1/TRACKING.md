@@ -22,14 +22,14 @@ so compare agent-A / agent-B numbers only when the setup is noted as the same.
 | agent | item | started |
 |---|---|---|
 | agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim (GLM-5.3-Flash slice, vLLM dummy weights, multi-turn, R3) + phase breakdown | 2026-11-02 |
-| agent-B (claude, session 01Jj5NZE) | compressed colocated RL sim for **DeepSeek-V4.1-Flash** (multi-turn, R3), reusing agent-A's harness / measurement setup; phase breakdown and general fixes it finds | 2026-11-02 |
-| agent-B | general Megatron: APEX-free gradient-accumulation fusion for native `Column/RowParallelLinear` (TE `general_gemm` accumulate into `main_grad`, shaped like upstream's `_wgrad_gemm`); no upstream PR found | 2026-11-02 |
+| agent-B (claude, session 01Jj5NZE) | compressed colocated RL sim for **DeepSeek-V4.1-Flash** (multi-turn, R3) + phase breakdown and general fixes it finds. Slice: 8 layers / 64 experts, real layer roles, no Engram / MTP, BF16 (`throughput_push_v1/sim/make_dsv41_flash_slice.py`); env `gsm8k_multi_turn`; vLLM `load_format=dummy` (`throughput_push_v1/sim/run_dsv41_flash_sim.sh`, not yet validated) | 2026-11-02 |
 
 ## Done
 | agent | change / experiment | result | commit |
 |---|---|---|---|
 | agent-B | merged branch `rl-agent-throughput` here: GLM-5.3-Flash trainer kernels (formerly only on `glm5p3-flash/sft-lora-throughput`), all opt-in `SKYRL_*` flags; flags + per-change numbers in `skyrl/backends/skyrl_train/patches/megatron/README.md` and commit messages | GLM-5.3-Flash 64-expert slices, 1x8xB200: 256k LoRA SFT ~11.7k -> ~41.9k tok/s (TP4); 32k full FT ~1.0k -> ~5.2k tok/s/GPU BF16 (~6.0k FP8) vs SkyRL defaults | merge of `rl-agent-throughput` |
 | agent-B | k-pool indexer reshaped to merge with upstream: `mcore_ext/dsa_kpool.py` = megatron-core `main` @ 631e1463 verbatim + #8299; SkyRL speedups in `mcore_ext/dsa_kpool_fast.py` at upstream's function seams | bitwise-identical selections vs before (synthetic, captured training call, TP4 sharded+striped); same speed | ff517e2e |
+| agent-B | APEX-free gradient-accumulation fusion for native `Column/RowParallelLinear` (`SKYRL_GRAD_ACCUM_FUSION_TE_WGRAD=1`): `fused_weight_gradient_mlp_cuda` stand-in backed by megatron-core's own `_wgrad_gemm` (TE `general_gemm`); no upstream PR | exact (rel. err 4.7e-7 vs fp64, TP2+SP); neutral on GLM-5.3-Flash (big linears are TE); lets runs with native trainable linears use the fusion instead of erroring | c09a6f30 |
 | agent-B | open upstream PRs from this work: NovaSky-AI/SkyRL#2601 (head-full DSA), #2606 (MoE dedup all-to-all, 1.8% of a 32k full-FT step) | -- | -- |
 | agent-B | Harbor (agent RL) straggler cutoff, opt-in `generator.straggler_cutoff` | unit tests only; not measured live | 4028da84 |
 | agent-B | vLLM decode layouts, GLM-5.3-Flash real ckpt, 8xB200, 16 concurrent: TP8 91 tok/s/GPU; DP8+EP+MTP3 204; **DP4xTP2+EP+MTP4 220** (2.4x); `max_num_seqs<=256` needed under DP+EP | measured | config only |
