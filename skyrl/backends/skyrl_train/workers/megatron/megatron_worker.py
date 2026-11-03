@@ -90,8 +90,8 @@ from skyrl.backends.skyrl_train.patches.megatron.patch_absorbed_mla_nope_views i
 from skyrl.backends.skyrl_train.patches.megatron.patch_absorbed_mla_strided_einsum import (
     apply_absorbed_mla_strided_einsum_patch,
 )
-from skyrl.backends.skyrl_train.patches.megatron.patch_grad_accum_fusion_te_only import (
-    apply_grad_accum_fusion_te_only_patch,
+from skyrl.backends.skyrl_train.patches.megatron.patch_grad_accum_fusion_te_wgrad import (
+    apply_grad_accum_fusion_te_wgrad_patch,
 )
 from skyrl.backends.skyrl_train.patches.megatron.patch_dsa_cudnn_fast_paths import (
     apply_dsa_cudnn_fast_paths_patch,
@@ -195,7 +195,7 @@ apply_dsa_head_full_patch()
 apply_dsa_cudnn_fast_paths_patch()
 apply_absorbed_mla_nope_views_patch()
 apply_absorbed_mla_strided_einsum_patch()
-apply_grad_accum_fusion_te_only_patch()
+apply_grad_accum_fusion_te_wgrad_patch()
 # Output-discarding selective recompute (mhc/layernorm) on frozen inputs, e.g. under LoRA.
 apply_checkpoint_without_output_frozen_inputs_patch()
 # Distributed-optimizer checkpoint index for param groups mixing fp32 and bf16 params (mHC models).
