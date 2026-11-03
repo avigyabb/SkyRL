@@ -23,12 +23,15 @@ Config fields (shared with ``GatedDeltaNet``): ``linear_num_value_heads`` /
 ``-exp(A_log) * softplus(f + dt_bias)`` gate of the original Kimi Linear).
 """
 
+import contextlib
+import os
 from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.tensor_parallel.mappings import gather_from_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -47,6 +50,63 @@ try:
     HAVE_FLA = True
 except ImportError:
     HAVE_FLA = False
+
+# Opt-in: all-gather the sequence-parallel input once for q/k/v/b_proj (and their LoRA adapters)
+# instead of once per projection and adapter. Exact: see ``_without_sequence_parallel_comm``.
+_GATHER_ONCE = os.environ.get("SKYRL_KDA_GATHER_ONCE", "0").lower() in ("1", "true")
+
+# Opt-in (with ``_GATHER_ONCE``): give the gathered input's consumers -- the q/k/v/b base linears
+# and their LoRA adapters -- separate aliases of it (``fanout``), so its gradient is summed in one
+# pass instead of one pairwise add per extra consumer; the LoRA output is added into the base
+# output in place (Bridge's LoRALinear clones it first).
+_FANOUT_GRAD = os.environ.get("SKYRL_KDA_FANOUT_GRAD", "0").lower() in ("1", "true")
+
+# Opt-in: fla's intra-card context-parallel backend for the inter-chunk state recurrence
+# (``chunk_gated_delta_rule_fwd_h``, run in forward and recomputed in backward). It splits a long
+# sequence into sub-sequences scanned in parallel and merges their states, so a few local heads
+# still fill the SMs. fla enables it only under ``torch.inference_mode()``; the forward it computes
+# is the same, so lift that gate for training. Needs ``cu_seqlens``.
+_INTRACARD_CP = os.environ.get("SKYRL_KDA_INTRACARD_CP", "0").lower() in ("1", "true")
+if _INTRACARD_CP and HAVE_FLA:
+    import fla.ops.common.backends.intracard as _fla_intracard
+
+    os.environ["FLA_INTRACARD_CP"] = "1"
+    _fla_intracard.IntraCardCPBackend.chunk_gated_delta_rule_fwd_h_verifier = (
+        lambda self, *args, cu_seqlens=None, **kwargs: (cu_seqlens is not None, None)
+    )
+
+
+# fla backend for the q/k/v short convolutions: ``triton`` (fla's default), ``mix`` (Triton forward,
+# causal-conv1d CUDA backward) or ``cuda``. All three give the same output; ``mix`` is ~25% faster
+# fwd+bwd at 256k tokens on B200.
+_CONV_BACKEND = os.environ.get("SKYRL_KDA_CONV_BACKEND", "triton")
+
+
+@contextlib.contextmanager
+def _without_sequence_parallel_comm(*modules):
+    """Run column-parallel projections (optionally LoRA-wrapped) on an already-gathered input.
+
+    The TE base linear runs as ``parallel_mode=None`` (no forward all-gather, no backward dgrad
+    reduce-scatter) and the LoRA adapter skips its own gather; each then returns a partial input
+    gradient over its output shard, which the caller's single ``gather_from_sequence_parallel_region``
+    sums in its backward reduce-scatter -- the same sum the per-module reduce-scatters computed.
+    """
+    saved = []
+    for module in modules:
+        base = getattr(module, "to_wrap", module)
+        adapter = getattr(module, "adapter", None)
+        saved.append((base, base.parallel_mode, base.sequence_parallel, adapter))
+        base.parallel_mode, base.sequence_parallel = None, False
+        if adapter is not None:
+            saved[-1] += (adapter.disable_sequence_parallel_comm,)
+            adapter.disable_sequence_parallel_comm = True
+    try:
+        yield
+    finally:
+        for base, mode, sp, adapter, *rest in saved:
+            base.parallel_mode, base.sequence_parallel = mode, sp
+            if adapter is not None:
+                adapter.disable_sequence_parallel_comm = rest[0]
 
 
 @dataclass
@@ -210,6 +270,41 @@ class KimiDeltaAttention(MegatronModule):
             name=(name + ".o_proj") if name is not None else None,
         )
 
+    def _gathered_projections(self, full: torch.Tensor):
+        """q/k/v/b projections of the gathered input with one fused gradient sum (``_FANOUT_GRAD``)."""
+        from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.fanout import fanout
+
+        modules = (self.q_proj, self.k_proj, self.v_proj, self.b_proj)
+        lora = [getattr(m, "adapter", None) is not None and m._adapter_enabled for m in modules]
+        inputs = iter(fanout(full, len(modules) + sum(lora)))
+        outputs = []
+        for module, has_lora in zip(modules, lora):
+            bf16 = module is self.b_proj and self.config.fp8
+            if bf16:
+                import transformer_engine.pytorch as te
+
+                ctx = te.fp8_autocast(enabled=False)
+            else:
+                ctx = contextlib.nullcontext()
+            with ctx:
+                if not has_lora:
+                    outputs.append(module(next(inputs))[0])
+                    continue
+                out, _, _ = module.base_linear_forward(next(inputs))
+                adapter_out = module.adapter_forward(module.adapter, next(inputs))
+            adapter_out = adapter_out.reshape(out.shape)
+            outputs.append(out.add_(adapter_out) if out._base is None else out + adapter_out)
+        return outputs
+
+    def _b_proj(self, x: torch.Tensor):
+        """``b_proj`` in BF16: its ``heads / TP`` output rows (e.g. 16) are below MXFP8's 32-row block."""
+        if not self.config.fp8:
+            return self.b_proj(x)
+        import transformer_engine.pytorch as te
+
+        with te.fp8_autocast(enabled=False):
+            return self.b_proj(x)
+
     @staticmethod
     def _resolve_cu_seqlens(packed_seq_params: Optional[PackedSeqParams]) -> Optional[torch.Tensor]:
         if packed_seq_params is None or packed_seq_params.qkv_format != "thd":
@@ -232,6 +327,7 @@ class KimiDeltaAttention(MegatronModule):
             activation="silu",
             initial_state=None,
             output_final_state=False,
+            backend=_CONV_BACKEND,
             cu_seqlens=cu_seqlens,
         )
         return out
@@ -255,18 +351,32 @@ class KimiDeltaAttention(MegatronModule):
 
         # Column-parallel projections gather the sequence-parallel shard internally, so every
         # per-token/per-sequence op below sees the full sequence ([s, b, local]).
-        q, _ = self.q_proj(hidden_states)
-        k, _ = self.k_proj(hidden_states)
-        v, _ = self.v_proj(hidden_states)
+        if _GATHER_ONCE and self.config.sequence_parallel and self.tp_size > 1:
+            full = gather_from_sequence_parallel_region(hidden_states, group=self.tp_group)
+            with _without_sequence_parallel_comm(self.q_proj, self.k_proj, self.v_proj, self.b_proj):
+                if _FANOUT_GRAD:
+                    q, k, v, beta = self._gathered_projections(full)
+                else:
+                    q, _ = self.q_proj(full)
+                    k, _ = self.k_proj(full)
+                    v, _ = self.v_proj(full)
+                    beta, _ = self._b_proj(full)
+            del full
+        else:
+            q, _ = self.q_proj(hidden_states)
+            k, _ = self.k_proj(hidden_states)
+            v, _ = self.v_proj(hidden_states)
+            beta, _ = self._b_proj(hidden_states)
         f, _ = self.f_b_proj(self.f_a_proj(hidden_states)[0])
         gate, _ = self.g_b_proj(self.g_a_proj(hidden_states)[0])
-        beta, _ = self.b_proj(hidden_states)
 
         # [s, b, ·] -> [b, s, ·] (fla layout; b == 1 for packed sequences).
         q, k, v, f, gate, beta = (t.transpose(0, 1).contiguous() for t in (q, k, v, f, gate, beta))
         batch, seq_len, _ = q.shape
         if cu_seqlens is not None and batch != 1:
             raise ValueError("Packed KDA input expects batch dimension 1.")
+        if _INTRACARD_CP and cu_seqlens is None and batch == 1:
+            cu_seqlens = torch.tensor([0, seq_len], dtype=torch.long, device=q.device)
 
         q = self._conv(self.q_conv1d, q, cu_seqlens)
         k = self._conv(self.k_conv1d, k, cu_seqlens)

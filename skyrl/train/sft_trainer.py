@@ -43,6 +43,10 @@ from skyrl.backends.skyrl_train.training_batch import (
     pad_training_input_batch,
 )
 from skyrl.backends.skyrl_train.utils.io import io
+from skyrl.backends.skyrl_train.utils.packed_tensor import (
+    CU_SEQLENS_DTYPE,
+    PackedTensor,
+)
 from skyrl.backends.skyrl_train.workers.worker import PPORayActorGroup
 from skyrl.backends.skyrl_train.workers.worker_dispatch import WorkerDispatch
 from skyrl.env_vars import SKYRL_RAY_PG_TIMEOUT_IN_S
@@ -66,6 +70,11 @@ from skyrl.train.utils.callbacks import (
     ReleaseOptimizerStateFilesCallback,
     TrainingCallback,
     TrainingControl,
+)
+from skyrl.train.utils.flops import (
+    load_text_config,
+    peak_flops_per_gpu,
+    train_flops_per_token,
 )
 from skyrl.train.utils.ray_gpu_monitor import RayGpuMonitor
 from skyrl.train.utils.tracking import Tracking
@@ -1781,15 +1790,55 @@ class SFTTrainer:
         total_nonpad = batch_size * num_actions
         loss_mask = torch.ones(batch_size, num_actions, dtype=torch.float) / total_nonpad
 
-        batch = TrainingInputBatch(
-            {
-                "sequences": sequences,
-                "attention_mask": attention_mask,
-                "loss_mask": loss_mask,
-            }
-        )
+        fields = {
+            "sequences": sequences,
+            "attention_mask": attention_mask,
+            "loss_mask": loss_mask,
+        }
+        if self.sft_cfg.strategy == "megatron" and self.sft_cfg.megatron_config.moe_enable_routing_replay:
+            fields["rollout_expert_indices"] = self._build_dummy_routes(batch_size, max_length)
+            # Every token has a route, so none is skipped in replay.
+            fields["router_padding_mask"] = torch.zeros(batch_size, max_length, dtype=torch.bool)
+
+        batch = TrainingInputBatch(fields)
         batch.metadata = {"response_length": num_actions}
         return batch
+
+    def _build_dummy_routes(self, batch_size: int, max_length: int) -> PackedTensor:
+        """Random router-replay routes (``[tokens, layers, topk]``, one segment per sequence).
+
+        Each row is a random base expert plus ``topk`` evenly strided offsets, so the experts in a
+        row are distinct and the load is spread over every expert like a balanced router.
+        """
+        with open(os.path.join(self.sft_cfg.model.path, "config.json")) as f:
+            hf_config = json.load(f)
+        text_config = hf_config.get("text_config", hf_config)
+        num_experts = text_config["n_routed_experts"]
+        topk = text_config["num_experts_per_tok"]
+        num_layers = text_config["num_hidden_layers"]
+        num_tokens = batch_size * max_length
+        base = torch.randint(0, num_experts, (num_tokens, num_layers, 1), dtype=torch.int32)
+        offsets = torch.arange(topk, dtype=torch.int32) * (num_experts // topk)
+        routes = ((base + offsets) % num_experts).to(torch.int16)
+        cu_seqlens = torch.arange(0, num_tokens + 1, max_length, dtype=CU_SEQLENS_DTYPE)
+        return PackedTensor(routes, cu_seqlens)
+
+    def _dummy_mfu_constants(self) -> tuple[Optional[float], Optional[float]]:
+        """Model FLOPs per token and per-GPU peak FLOP/s for the dummy run's MFU, or ``(None, None)``."""
+        try:
+            text_config = load_text_config(self.sft_cfg.model.path)
+            flops_per_token = train_flops_per_token(
+                text_config, self.sft_cfg.max_length, lora=self.sft_cfg.model.lora.rank > 0
+            )
+            accelerators = [k.split(":", 1)[1] for k in ray.cluster_resources() if k.startswith("accelerator_type:")]
+            peak_flops = peak_flops_per_gpu(accelerators[0] if accelerators else "")
+        except (KeyError, OSError, ValueError) as e:
+            logger.warning(f"Not reporting MFU: {e}")
+            return None, None
+        logger.info(
+            f"MFU: {flops_per_token / 1e9:.1f} model GFLOP per token, peak {peak_flops / 1e12:.0f} TFLOP/s per GPU"
+        )
+        return flops_per_token, peak_flops
 
     def _train_dummy(self):
         """Dummy training loop for benchmarking. Skips real data, checkpoints, and resume."""
@@ -1797,6 +1846,7 @@ class SFTTrainer:
         batch = self._build_dummy_batch()
         num_steps = self.sft_cfg.dummy_run_max_steps
 
+        flops_per_token, peak_flops = self._dummy_mfu_constants()
         logger.info(
             f"Starting dummy SFT training for {num_steps} steps "
             f"(batch_size={self.sft_cfg.batch_size}, max_length={self.sft_cfg.max_length})..."
@@ -1838,6 +1888,8 @@ class SFTTrainer:
                     "train/actual_num_tokens": actual_num_tokens,
                     "train/total_tokens_processed": self._total_tokens_processed,
                 }
+                if flops_per_token is not None:
+                    log_dict["train/mfu"] = tokens_per_second * flops_per_token / (self._num_training_gpus * peak_flops)
                 log_dict.update({f"timing/{k}": v for k, v in all_timings.items()})
                 log_dict.update({f"memory/{k}": v for k, v in step_result["peak_mem"].items()})
                 if self._ray_gpu_monitor is not None:
@@ -1850,6 +1902,7 @@ class SFTTrainer:
                     f"Step {step}: loss={step_result['loss']:.4f}, "
                     f"grad_norm={step_result['grad_norm']}, "
                     f"tokens_per_second={tokens_per_second:.0f}, "
+                    f"mfu={log_dict.get('train/mfu', float('nan')):.1%}, "
                     f"step_time={all_timings['step']:.2f}s, {peak_mem_str}"
                 )
         finally:

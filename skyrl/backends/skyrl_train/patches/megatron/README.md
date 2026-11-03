@@ -25,6 +25,7 @@ Tests for this folder mirror its layout, so they are found and deleted together 
 | `gpu_ci/patches/megatron/mcore_ext/test_modules_vs_hf.py` | `mcore_ext/kda.py`, `mcore_ext/hyper_connection.py` vs HF |
 | `gpu_ci/patches/megatron/test_dsa_index_share_recompute.py` | `patch_dsa_index_share.py` |
 | `gpu_ci/patches/megatron/test_shared_expert_lora_tp.py` | `patch_shared_expert_lora_tp.py` |
+| `gpu_ci/patches/megatron/test_dsa_head_full.py` | `patch_dsa_head_full.py` all-to-alls vs megatron-core's and an all-gather reference (TP 2 and 4) |
 | `patches/megatron/test_sparse_mla_nope.py` (CPU) | `patch_sparse_mla_nope.py` padding/unpadding, fake kernel |
 | `gpu_ci/patches/megatron/test_sparse_mla_nope.py` (H100) | `patch_sparse_mla_nope.py` vs dense reference, real TileLang kernel |
 | `patches/megatron/test_dsa_hybrid_indexer.py` (CPU) | `patch_dsa_hybrid_indexer.py` hook resolution, fake backends |
@@ -35,6 +36,7 @@ Tests for this folder mirror its layout, so they are found and deleted together 
 | `gpu_ci/patches/megatron/test_checkpoint_without_output_frozen_inputs.py` | `patch_checkpoint_without_output_frozen_inputs.py`; the unpatched case doubles as the landed check |
 | `patches/megatron/qwen4_exp/test_qwen4_exp_modules.py` (CPU) | `qwen4_exp/modules.py` gated residual, final mixer, packed PLE vs HF; PLE row-sharded over EP and under sequence parallelism (gloo) |
 | `patches/megatron/qwen4_exp/test_qwen4_exp_qsa.py` (CPU) | `qwen4_exp/modules.py` QSA indexer selection and sparse attention (outputs + grads, packed) vs HF |
+| `patches/megatron/test_offload_checkpoint_inputs.py` (CPU) | `patch_offload_checkpoint_inputs.py` wraps every importer, fake functions |
 
 The end-to-end GLM-5.3-Flash rows stay with the other models: `glm-5.3-flash-4layer_*` in
 `gpu_ci/megatron/test_megatron_models.py` and `test_megatron_lora_models.py`. When removing a patch,
@@ -129,24 +131,24 @@ This is the riskiest entry. A wrong k-pool selection doesn't raise. It silently 
 different tokens than vLLM once a sequence is longer than `dsa_indexer_topk` (2048).
 
 - **Carried as:**
-  - `mcore_ext/dsa_kpool.py`: the six k-pool kernels, copied from #7522. One deliberate
-    deviation: `fused_qk_topk_kpool` scores and selects in query chunks. Verbatim, it
-    materializes FP32 `[sq, b, heads, sq / kpool]` per-head scores (32 GiB/GPU at 32k), so
-    GLM-5.3-Flash can't train past ~16k. Top-k is per query row, so chunking is exact
-    (`test_kpool_query_chunking_is_exact`); `SKYRL_DSA_KPOOL_SCORE_CHUNK_ELEMS` sets the chunk
-    cap (default 2 GiB of FP32 scores). Past one chunk the loop follows #7522 @ `b27efd8`, which
-    now chunks too: no-grad, in-place ReLU and head weighting, one FP32 cast of the pooled keys, a
-    preallocated selection. Upstream's cap is a fixed 256 MiB; at 512k (65,536 query rows per TP8
-    rank x 131,072 pools, one B200) one selection takes 3.31 s there vs 2.64 s at 2 GiB and
-    2.60 s at 8 GiB, with peak extra memory 0.6 / 2.4 / 8.6 GiB. When removing, carry the
-    configurable cap over unless upstream's default has grown.
-    Second deviation, opt-in with `SKYRL_DSA_INDEXER_TP_SHARD=1` (wired in `glm5_next/dsa.py`):
-    `query_shard_group` splits the query rows across the tensor-parallel group, whose ranks all
-    score the same gathered sequence with the same frozen indexer weights, and all-gathers the
-    pool selections. The scoring is O(sq^2) (every query scores every pool) and was redundant on
-    every TP rank: at 512k tokens, TP8, 64 B200 (TCP NCCL) sharding cut warm fwd+bwd 1545 -> 1094 s,
-    i.e. ~1/3 of the step was replicated indexer scoring. Bitwise-identical selections
-    (`test_dsa_kpool_tp_shard.py`).
+  - `mcore_ext/dsa_kpool.py`: megatron-core's pooled indexer, copied **verbatim** from
+    NVIDIA/Megatron-LM `main` @ `631e146322af` (`_compute_index_scores` and `_kpool_fp8_input`
+    through `fused_qk_topk_kpool`: #7522 and its follow-ups, which also score in query chunks with
+    a 2 GiB cap), with the k-pool hunks of the open NVIDIA/Megatron-LM#8299 applied:
+    `query_shard_group` splits the query rows across the tensor-parallel group and all-gathers
+    the pool selections (`SKYRL_DSA_INDEXER_TP_SHARD=1`, wired in `glm5_next/dsa.py`). The scoring
+    is O(sq^2) and otherwise replicated on every TP rank: at 512k tokens, TP8, 64 B200, sharding
+    cut warm fwd+bwd 1545 -> 1094 s. Do not edit it; keep it byte-identical to upstream.
+  - `mcore_ext/dsa_kpool_fast.py`: SkyRL-only speedups, hooked at the vendored module's function
+    boundaries so they carry over to megatron-core's copy unchanged:
+    - `_kpool_topk_from_score_chunks` replacement: fused Triton scorer over causal tiles with a
+      causal score width (`SKYRL_DSA_KPOOL_FUSED_INDEXER=1`; BF16 inputs, near-ties can differ)
+      and ascending pool ids (`SKYRL_DSA_TOPK_PRESORTED=1`, for `patch_dsa_cudnn_fast_paths`);
+    - `fused_qk_topk_kpool` wrapper: striped query rows for the TP sharding
+      (`SKYRL_DSA_KPOOL_SHARD_STRIPE`), exact;
+    - `SKYRL_DSA_KPOOL_SCORE_CHUNK_ELEMS`: overrides upstream's chunk cap.
+    The fused scorer and the causal width overlap the open NVIDIA/Megatron-LM#8681 (fused score
+    post-processing after the FP32 GEMM); striping would be a follow-up to #8299.
   - `glm5_next/dsa.py`:
     - `Glm5NextDSAIndexer`: k-pool gate/ape parameters and the gate score, hand-merged onto the
       pinned `DSAIndexer`;
@@ -168,10 +170,15 @@ different tokens than vLLM once a sequence is longer than `dsa_indexer_topk` (20
   - `glm5_next/bridge.py`: keep reading `index_kpool` / `index_kpool_always_select_tail` from the
     HF config into the provider. Upstream's parameter names for the compress gate/ape must match
     the bridge mapping.
+  - `mcore_ext/dsa_kpool_fast.py`: point `_base` at
+    `megatron.core.transformer.experimental_attention_variant.dsa` (same function names). If #8299
+    has not landed, keep its hunks as a patch there; if #8681 has, check it composes with the
+    fused scorer (both replace parts of the chunked scoring).
   - Tests:
     - `tests/backends/skyrl_train/patches/megatron/mcore_ext/test_dsa_kpool_math.py` imports
       `mcore_ext.dsa_kpool._kpool_compress_keys`. Repoint it at megatron-core.
-    - `tests/.../gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` (GPU kernel checks): same.
+    - `tests/.../gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` and
+      `test_dsa_kpool_tp_shard.py` (GPU kernel checks): same.
   - Delete `mcore_ext/dsa_kpool.py`.
 - **Verify** (all required):
   - `patches/megatron/mcore_ext/test_dsa_kpool_math.py` (CPU) and `gpu_ci/patches/megatron/mcore_ext/test_dsa_kpool.py` (GPU).
@@ -290,6 +297,23 @@ patches that replace dispatcher methods can't drop it. Applied unconditionally i
 - **Remove:** the module, its call in `make_megatron_module`, and
   `patches/megatron/test_moe_release_dispatcher_probs.py`.
 
+### `patch_offload_checkpoint_inputs.py`: opt-in, not an upstream bug
+
+Wraps `checkpointed_forward` in both modules that import it by name (`transformer_block` and
+`hybrid_block`) in `torch.autograd.graph.save_on_cpu` when
+`SKYRL_OFFLOAD_CHECKPOINT_INPUTS=1`, so full-recompute checkpoint inputs (one hidden state per
+layer) wait in host memory. Applied in `make_megatron_module` after `patch_dsa_index_share()`,
+which rebinds the same function. Pageable by default (exact-size host allocations); pinned with
+`SKYRL_OFFLOAD_CHECKPOINT_INPUTS_PINNED=1` (~4x faster copies, asynchronous), in which case
+`release_pinned_offload_cache()` returns PyTorch's cached pinned blocks at the end of every
+`forward_backward` -- otherwise they stay reserved next to the CPU optimizer's buffers and the
+node runs out of host RAM.
+- **Landed?** Not a fix to retire; delete it if megatron-core grows its own offload of
+  checkpointed layer inputs, or if nobody needs contexts past ~288k tokens per sequence.
+- **Remove:** the module, its call in `make_megatron_module`, the `release_pinned_offload_cache()`
+  call in `forward_backward`, `SKYRL_OFFLOAD_CHECKPOINT_INPUTS` in `skyrl/env_vars.py`, and
+  `patches/megatron/test_offload_checkpoint_inputs.py`.
+
 ### `patch_shared_expert_lora_tp.py`: Megatron-Bridge#6089
 
 Shared-expert LoRA forward scaling under shared-expert overlap. It only activates when
@@ -336,6 +360,19 @@ k-pool indexer (`index_kpool > 1`) selects through `fused_qk_topk_kpool` and byp
 - **Remove:** the module-level `apply_dsa_hybrid_indexer_patch()` call and import in
   `megatron_worker.py`, the `SKYRL_DSA_INDEXER_BACKEND` entry in `prepare_runtime_environment`,
   the module, and its CPU test.
+
+### `patch_dsa_head_full.py` (+ `_block_copy_kernel.py`): SkyRL-only, no upstream counterpart
+
+Opt-in (`SKYRL_DSA_HEAD_FULL=1`, with `SKYRL_DSA_HEAD_FULL_FAST_PERMUTE=1` and
+`SKYRL_DSA_HEAD_FULL_ZIGZAG=1`): wraps the `run_fused_absorbed_sparse_attention` DSA hook in a
+Ulysses-style all-to-all so each TP rank runs all heads on 1/TP of the query rows, instead of
+`heads / TP` heads (padded to the kernel's 16- or 64/128-head tile) on every row. The fast-permute
+flag does the all-to-all's layout moves with one Triton block copy; zigzag balances rows whose cost
+grows with position. Applies to absorbed-MLA DSA (GLM-5 / GLM-5.3, DeepSeek-V3.2) under TP > 1.
+- **Landed?** Not an upstream fix: obsolete once megatron-core's DSA kernels run efficiently at
+  `heads / TP` heads per rank, or megatron-core shards absorbed sparse attention by query rows itself.
+- **Remove:** the `apply_dsa_head_full_patch()` call and import in `megatron_worker.py`, the
+  `SKYRL_DSA_HEAD_FULL*` entries in `prepare_runtime_environment`, and both modules.
 
 ### `patch_checkpoint_without_output_frozen_inputs.py`: no upstream PR yet
 

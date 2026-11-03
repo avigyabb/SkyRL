@@ -23,7 +23,8 @@ from megatron.core.transformer.experimental_attention_variant.dsa import (
     rotate_activation,
 )
 
-from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.dsa_kpool import (
+# Upstream's k-pool indexer (vendored verbatim in ``dsa_kpool``) with SkyRL's opt-in speedups.
+from skyrl.backends.skyrl_train.patches.megatron.mcore_ext.dsa_kpool_fast import (
     fused_qk_topk_kpool,
 )
 
@@ -132,6 +133,9 @@ class Glm5NextDSAttention(DSAttention):
                 cu_seqlens_kv=cu_seqlens_kv,
                 use_relu=use_relu,
                 always_select_tail=indexer.index_kpool_always_select_tail,
+                # Only the indices are used (the indexer loss is rejected above), as in upstream's
+                # DSAttention top-k path: select in query chunks without materializing the scores.
+                return_index_scores=False,
                 query_shard_group=indexer_shard_group,
             )
 
