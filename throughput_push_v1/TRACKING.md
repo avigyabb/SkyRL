@@ -22,13 +22,15 @@ so compare agent-A / agent-B numbers only when the setup is noted as the same.
 | agent | item | started |
 |---|---|---|
 | agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim (setup below): baseline breakdown done; A/B of the colocation options below pending | 2026-11-02 |
-| agent-A | R3 + `mlp_chunks_for_training>1` + `moe` recompute crash in GLM-5.3-Flash's chunked MoE (`mcore_ext/mhc_transformer_layer.py`): fix written, verifying grads on a 4-layer slice | 2026-11-02 |
-| agent-A | GPU A/B of `trainer.old_logprobs_from_first_minibatch`, `generator.inference_engine.sleep_keep_weights`, `megatron_config.keep_frozen_weights_on_gpu` (all committed, opt-in, CPU-tested) | 2026-11-02 |
+| agent-A | GPU run `opt1` = baseline + `old_logprobs_from_first_minibatch` + `balance_dp_tokens` + `keep_frozen_weights_on_gpu` + `mlp_chunks_for_training=1` (`sleep_keep_weights` does not fit here: trainer peak 111 GB + vLLM weights 78 GB) | 2026-11-02 |
 | agent-B (claude, session 01Jj5NZE) | compressed colocated RL sim for **DeepSeek-V4.1-Flash** (multi-turn, R3) + phase breakdown and general fixes it finds. Slice: 8 layers / 64 experts, real layer roles, no Engram / MTP, BF16 (`throughput_push_v1/sim/make_dsv41_flash_slice.py`); env `gsm8k_multi_turn`; vLLM `load_format=dummy` (`throughput_push_v1/sim/run_dsv41_flash_sim.sh`, not yet validated) | 2026-11-02 |
 
 ## Done
 | agent | change / experiment | result | commit |
 |---|---|---|---|
+| agent-A | R3 + `mlp_chunks_for_training>1` + `moe` recompute crashed in backward (GLM-5.3-Flash mHC `chunked_mlp`): each chunk is checkpointed by the MoE layer and recompute popped the whole micro-batch's routes. Fixed: `chunked_mlp` checkpoints chunks itself with routes bound to the call | slice repro: grad norm 0.7159 (fixed, 64 chunks + recompute) vs 0.7170/0.7161 no recompute, 0.7154 unchunked; old code raises | ffa706b8 |
+| agent-A | timers `timing/colocate_<model>_{backload,offload}`, `timing/inference_engine_sleep` | -- | a462bc7c |
+| agent-A | baseline sim (2 steps) | step 2: **2103 s** = generate 157 + engine sleep 3.5 + logprob fwd 483 (backload 42) + train 1437 + sync 20; 21.7 tok/s/GPU; trainer peak 111 GB; DP token imbalance 60.5k vs 142.8k tokens per rank | -- |
 | agent-B | merged branch `rl-agent-throughput` here: GLM-5.3-Flash trainer kernels (formerly only on `glm5p3-flash/sft-lora-throughput`), all opt-in `SKYRL_*` flags; flags + per-change numbers in `skyrl/backends/skyrl_train/patches/megatron/README.md` and commit messages | GLM-5.3-Flash 64-expert slices, 1x8xB200: 256k LoRA SFT ~11.7k -> ~41.9k tok/s (TP4); 32k full FT ~1.0k -> ~5.2k tok/s/GPU BF16 (~6.0k FP8) vs SkyRL defaults | merge of `rl-agent-throughput` |
 | agent-B | k-pool indexer reshaped to merge with upstream: `mcore_ext/dsa_kpool.py` = megatron-core `main` @ 631e1463 verbatim + #8299; SkyRL speedups in `mcore_ext/dsa_kpool_fast.py` at upstream's function seams | bitwise-identical selections vs before (synthetic, captured training call, TP4 sharded+striped); same speed | ff517e2e |
 | agent-B | APEX-free gradient-accumulation fusion for native `Column/RowParallelLinear` (`SKYRL_GRAD_ACCUM_FUSION_TE_WGRAD=1`): `fused_weight_gradient_mlp_cuda` stand-in backed by megatron-core's own `_wgrad_gemm` (TE `general_gemm`); no upstream PR | exact (rel. err 4.7e-7 vs fp64, TP2+SP); neutral on GLM-5.3-Flash (big linears are TE); lets runs with native trainable linears use the fusion instead of erroring | c09a6f30 |
@@ -51,6 +53,12 @@ Findings (agent-A, baseline, step 1 = 901 s):
 - `/data` does not exist on these nodes, so by default the frozen offload falls back to pinned RAM:
   ~300 GB/node on top of vLLM's level-1 sleep backup (~620 GB/node). Ray's memory monitor then kills the
   Megatron workers (node at 1.69 of 1.76 TB). Point `SKYRL_FROZEN_OFFLOAD_DIR` at local disk or keep frozen weights on GPU.
-- R3 + `mlp_chunks_for_training=64` + `moe` recompute (the GLM-5.3-Flash recipe settings with R3 on) crashes in
-  backward: `RuntimeError: Size does not match ... index [2099, 8] ... self [32, 288]` (`router_replay.get_replay_topk`).
+- R3 + `mlp_chunks_for_training=64` + `moe` recompute (the GLM-5.3-Flash recipe settings with R3 on) crashed in
+  backward: `RuntimeError: Size does not match ... index [2099, 8] ... self [32, 288]` (fixed in ffa706b8).
+- During training GPUs draw ~265 W of 1000 W: latency-bound. Suspects: DP token imbalance (fixed by
+  `trainer.balance_dp_tokens`, 58ee4b48) and `mlp_chunks_for_training=64` at 8k (64 cross-node all-to-alls of ~32
+  tokens per MoE layer per micro-batch).
+- Opt-in options added (all committed): `trainer.old_logprobs_from_first_minibatch` (04add505),
+  `trainer.balance_dp_tokens` (58ee4b48), `generator.inference_engine.sleep_keep_weights` and
+  `megatron_config.keep_frozen_weights_on_gpu` (c417c3b9).
 
