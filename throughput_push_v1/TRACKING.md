@@ -22,12 +22,12 @@ so compare agent-A / agent-B numbers only when the setup is noted as the same.
 | agent | item | started |
 |---|---|---|
 | agent-A (claude, session 01Jj5NZC) | compressed colocated RL sim (setup below): baseline breakdown done; A/B of the colocation options below pending | 2026-11-02 |
-| agent-A | `sleep_keep_weights` at 256k (trainer peak there is 84 GB, so the engine's 78 GB of weights may fit beside it) | 2026-11-03 |
 | agent-B (claude, session 01Jj5NZE) | compressed colocated RL sim for **DeepSeek-V4.1-Flash** (multi-turn, R3) + phase breakdown and general fixes it finds. Slice: 8 layers / 64 experts, real layer roles, no Engram / MTP, BF16 (`throughput_push_v1/sim/make_dsv41_flash_slice.py`); env `gsm8k_multi_turn`; vLLM `load_format=dummy` (`throughput_push_v1/sim/run_dsv41_flash_sim.sh`, not yet validated) | 2026-11-02 |
 
 ## Done
 | agent | change / experiment | result | commit |
 |---|---|---|---|
+| agent-A | `generator.inference_engine.sleep_keep_weights` on 2x8 B200 | engine sleep 0.05 s (vs 3.4-8 s) but training OOMs (`ncclUnhandledCudaError`) at 8k and at 256k: engine weights 78 GB + trainer peak 84-111 GB + ~10 GB other > 180 GB. Should fit on B300 (288 GB), which the GLM-5.3-Flash recipes target; untested there | -- |
 | agent-A | cost of R3: opt2 with R3 off (same batches) | steps 2/3 218 / 251 s vs 225 / 259 with R3; generation unchanged (156 / 172 vs 156 / 174); training fwd/bwd 39 / 53 vs 43 / 59 s (R3 replay ~10% of training, ~3% of the step). Rollout/train logprob diff 0.018 without R3 vs 0.003 with | -- |
 | agent-A | idea, not done: LoRA adapter sync is ~18 s/step; memory mode spends 10.9 s in vLLM building the adapter from 73k tensors (per-expert keys) and 7.0 s sending; disk mode now logs its breakdown (8b850d0d) | -- | -- |
 | agent-A | **256k-context RL** (`throughput_push_v1/sim/long256.sh`: opt2 config, `longprompt_262144`, 4 prompts x 4 samples of ~262k tokens, 1k responses, R3 on) | with selective recompute `[core_attn,moe_act]` the first 262k micro-batch dies in an MoE collective (`ncclUnhandledCudaError`, with or without `SKYRL_MOE_DEDUP_A2A`, 4 or 16 MLP chunks: OOM inside NCCL). With **full recompute** (next row) + 16 MLP chunks: step 2 **149 s** (generate 66, fwd/bwd 54 for 4.2M tokens = **4527 tok/s/GPU**, sync 19), peak 84 GB, no padding micro-batches | config + 69dad0c5 |
