@@ -149,6 +149,8 @@ async def main(args) -> None:
         enable_return_routed_experts=bool(args.r3),
         **lora,
     )
+    if args.profile_s:
+        kwargs["profiler_config"] = {"profiler": "torch", "torch_profiler_dir": args.profile_dir}
     kwargs.update(json.loads(args.engine_kwargs))
     args.dp_size = int(kwargs.get("data_parallel_size", 1))
     print(f"[bench] engine kwargs: { {k: v for k, v in kwargs.items() if k != 'model'} }", flush=True)
@@ -171,6 +173,11 @@ async def main(args) -> None:
     tasks = [asyncio.create_task(worker(engine, args, stats, i, stop)) for i in range(args.concurrency)]
     print(f"[bench] {args.concurrency} sessions started; warmup {args.warmup_s}s", flush=True)
     await asyncio.sleep(args.warmup_s)
+    if args.profile_s:
+        await engine.start_profile()
+        await asyncio.sleep(args.profile_s)
+        await engine.stop_profile()
+        print(f"[bench] profiled {args.profile_s}s -> {args.profile_dir}", flush=True)
     stats.counting = True
     t0 = time.time()
     last_gen, last_t = 0, t0
@@ -235,6 +242,8 @@ def parse_args():
     p.add_argument("--measure-s", type=int, default=900)
     p.add_argument("--num-gpus", type=int, default=0, help="GPUs for per-GPU rates (default: --tp)")
     p.add_argument("--final-only", type=int, default=0, help="non-streaming outputs, no detokenization")
+    p.add_argument("--profile-s", type=int, default=0, help="torch-profile this many seconds right after warmup")
+    p.add_argument("--profile-dir", default="/tmp/dsv41_bench_traces")
     p.add_argument(
         "--dp-affinity", type=int, default=1, help="DP attention: 1 pins each session to one DP rank (prefix cache)"
     )
