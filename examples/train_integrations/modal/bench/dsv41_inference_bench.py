@@ -102,6 +102,10 @@ async def session(
             turn_params,
             str(uuid.uuid4()),
             lora_request=getattr(args, "lora_request", None),
+            # DP attention: pin the session to one rank (as SkyRL's consistent_hash router pins it to one DP
+            # server), so its history stays in that rank's prefix cache. vLLM's own DP balancer picks the least
+            # loaded rank per request, and a turn on another rank re-prefills the whole context.
+            data_parallel_rank=(wid % args.dp_size) if getattr(args, "dp_size", 1) > 1 and args.dp_affinity else None,
         ):
             final = out
         generated = list(final.outputs[0].token_ids)
@@ -146,6 +150,7 @@ async def main(args) -> None:
         **lora,
     )
     kwargs.update(json.loads(args.engine_kwargs))
+    args.dp_size = int(kwargs.get("data_parallel_size", 1))
     print(f"[bench] engine kwargs: { {k: v for k, v in kwargs.items() if k != 'model'} }", flush=True)
     engine = AsyncLLM.from_engine_args(AsyncEngineArgs(**kwargs))
 
@@ -230,6 +235,9 @@ def parse_args():
     p.add_argument("--measure-s", type=int, default=900)
     p.add_argument("--num-gpus", type=int, default=0, help="GPUs for per-GPU rates (default: --tp)")
     p.add_argument("--final-only", type=int, default=0, help="non-streaming outputs, no detokenization")
+    p.add_argument(
+        "--dp-affinity", type=int, default=1, help="DP attention: 1 pins each session to one DP rank (prefix cache)"
+    )
     p.add_argument("--desync", type=int, default=0, help="stagger slots: first session ends after a random turn")
     p.add_argument("--engine-kwargs", default="{}", help="JSON merged over the AsyncEngineArgs above")
     return p.parse_args()
